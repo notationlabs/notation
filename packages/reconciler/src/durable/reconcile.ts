@@ -8,6 +8,7 @@ import {
   assertRequiredOutputs,
   collectResourceGraph,
   fillPhysicalNames,
+  findCredentialMarkers,
   validateParams,
   type BaseResource,
   type DurableObject,
@@ -66,7 +67,12 @@ import {
   replaceOrder,
   unknownNames,
 } from "../physical-names";
-import { currentCredentialMarkers, setRecordedOutput } from "../credentials";
+import {
+  currentCredentialMarkers,
+  setRecordedOutput,
+  staleCredentialMarkers,
+  wasGivenCredentials,
+} from "../credentials";
 import { mintNeededCredentials, obtainCredentials } from "./credentials";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
@@ -125,6 +131,11 @@ export type ReconcileOptions = {
    * created again, whatever its params.
    */
   driftRead?: DriftRead;
+  /**
+   * Decides as if the resource's record held no version of the credentials
+   * that it takes, so that deploy gives it their values again.
+   */
+  staleCredentials?: boolean;
 };
 
 /**
@@ -186,7 +197,17 @@ export async function* reconcileResource(
       : undefined,
   );
 
-  let action = decideAction({ resource, stateNode: session.node, params });
+  let action = decideAction({
+    resource,
+    stateNode:
+      options.staleCredentials && session.node
+        ? {
+            ...session.node,
+            params: staleCredentialMarkers(session.node.params),
+          }
+        : session.node,
+    params,
+  });
 
   // Its own scope: when the gate fires, the operation that follows the drift
   // read reads the remote again, and the two reads must not share step keys.
@@ -300,6 +321,28 @@ export async function* reconcileResource(
     options.excludeContributionsFrom ? undefined : options.replaceWithout,
   );
   opts.reconciled.add(resource);
+
+  // A resumed deploy replays an operation that ran before it was resumed,
+  // so the resource holds the value that the operation received then, and a
+  // rotation since has revoked that value. The resource is reconciled again
+  // as one that has not taken the credentials, which updates it.
+  const taken = "patch" in action && updates ? action.patch : params;
+  if (
+    !opts.dryRun &&
+    !options.staleCredentials &&
+    action.decision !== "noop" &&
+    !wasGivenCredentials(resource, taken)
+  ) {
+    const versions = findCredentialMarkers(taken)
+      .map(({ $credential }) => $credential.version)
+      .join(",");
+    yield* reconcileResource(
+      step.scope(`credentials:refresh:${versions}`, `credentials:${versions}`),
+      resource,
+      { ...opts, driftDetection: false },
+      { quietNoop: true, staleCredentials: true },
+    );
+  }
 }
 
 async function* emitDecision(

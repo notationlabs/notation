@@ -44,8 +44,8 @@ export async function* updateResourceOperation(
       (context) =>
         params.resource.update!(
           params.resource.key,
-          revealCredentials(params.patch),
-          revealHeldCredentials(params.resourceParams),
+          revealCredentials(params.patch, params.resource),
+          revealHeldCredentials(params.resourceParams, params.resource),
           operationState(params.resource),
           context,
         ),

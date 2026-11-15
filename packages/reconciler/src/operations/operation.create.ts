@@ -513,7 +513,10 @@ async function* createAttempt(
         // taken out of the result first.
         const { key, credentials, invalid } = await holdCreated(
           resource,
-          await resource.create(revealCredentials(resourceParams), context),
+          await resource.create(
+            revealCredentials(resourceParams, resource),
+            context,
+          ),
         );
         return {
           key: key ? resource.toResult(key) : undefined,

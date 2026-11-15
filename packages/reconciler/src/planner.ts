@@ -18,6 +18,7 @@ import {
 import { isCycle, orderDeployUnits, type DeployUnit } from "./cycles";
 import { createBlocksDelete } from "./delete-cascade";
 import {
+  assertNoHiddenCredential,
   credentialConsumers,
   credentialsToMint,
   mintAction,
@@ -498,6 +499,7 @@ export async function planKnownParams(
   params: Record<string, unknown>;
   unnamed: Record<string, unknown>;
 }> {
+  assertNoHiddenCredential(resource);
   const stateNode = await loadOutput(resource, state);
   const names = nameFields(resource);
   const unnamed = await resource.planParams({ recordedOutputs });

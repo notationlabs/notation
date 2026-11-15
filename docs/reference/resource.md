@@ -560,7 +560,9 @@ The resource that takes the credential receives the value in two places:
 - `create` receives it in its params.
 - `update` receives it in its patch, and in its params, only when the patch holds it. When an update changes another param, the credential's param is `undefined` in the params. An `update` that sends the whole config to the provider has to leave the credential's param out of the request when the patch does not hold it. Otherwise it removes the value at the provider.
 
-The other operations never receive the value: `find` receives the marker in its params, and `delete` in its state. The `state` that `update`, `delete` and `rotate` receive has no property for a credential of the resource itself.
+The other operations never receive the value: `find` receives the marker in its params. The `state` that `update`, `delete` and `rotate` receive has no property for a credential of the resource itself, and `undefined` for a param that takes a credential. A value that `read` returns for a credential is dropped.
+
+A `hidden` param cannot take a credential: state does not record a hidden param, so deploy could not tell which value the resource holds. Plan and deploy fail for it.
 
 Deploy keeps the value in memory only:
 

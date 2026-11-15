@@ -3,6 +3,7 @@ import {
   credentialMarker,
   credentialNames,
   findCredentialMarkers,
+  forEachOutputRef,
   isCredentialMarker,
   mapCredentialMarkers,
   validateValues,
@@ -20,15 +21,26 @@ import type { ResourceAction } from "./plan";
 // still held.
 const held = new Map<string, unknown>();
 
+// The versions whose values an operation of each resource has received, in
+// this process. An operation that is replayed from the journal receives none.
+const given = new WeakMap<BaseResource, Set<string>>();
+
 /**
  * Keeps a credential's value in memory, and returns the version that names
- * it. A string value is removed from error messages from then on.
+ * it. Every string in the value is removed from error messages from then on.
  */
 export function holdCredential(value: unknown): string {
-  if (typeof value === "string") recordSecretValue(value);
+  recordSecretStrings(value);
   const version = randomUUID();
   held.set(version, value);
   return version;
+}
+
+function recordSecretStrings(value: unknown): void {
+  if (typeof value === "string") recordSecretValue(value);
+  else if (value && typeof value === "object") {
+    Object.values(value).forEach(recordSecretStrings);
+  }
 }
 
 export function holdsCredential(version: string | null): boolean {
@@ -69,14 +81,27 @@ export function setRecordedOutput(
   resource.setOutput(withCredentialMarkers(resource, output));
 }
 
+/** `value` without the properties that are credentials of the resource. */
+export function withoutCredentials<T extends {} | null | void>(
+  resource: BaseResource,
+  value: T,
+): T {
+  if (!value) return value;
+  const rest: Record<string, unknown> = { ...value };
+  for (const name of credentialNames(resource.schema)) delete rest[name];
+  return rest as T;
+}
+
 /**
  * The resource's output as `update`, `delete` and `rotate` receive it in
- * `state`: without the credential markers.
+ * `state`: without its own credentials, and with `undefined` in place of
+ * each credential that it takes.
  */
 export function operationState(resource: BaseResource): {} {
-  const output = { ...(resource.output as Record<string, unknown>) };
-  for (const name of credentialNames(resource.schema)) delete output[name];
-  return resource.toState(output);
+  return mapCredentialMarkers(
+    resource.toState(withoutCredentials(resource, resource.output)),
+    () => undefined,
+  ) as {};
 }
 
 /** The credential markers in the resource's output. */
@@ -127,9 +152,10 @@ export async function holdCreated(
 
 /**
  * Copies a value, with the held value in place of each credential marker.
- * Throws for a marker whose value is not held.
+ * Throws for a marker whose value is not held. `taker` is the resource whose
+ * operation receives the copy.
  */
-export function revealCredentials<T>(value: T): T {
+export function revealCredentials<T>(value: T, taker: BaseResource): T {
   return mapCredentialMarkers(value, (marker) => {
     const { resource, name, version } = marker.$credential;
     if (!holdsCredential(version)) {
@@ -137,8 +163,53 @@ export function revealCredentials<T>(value: T): T {
         `Deploy holds no value for the credential ${name} of ${resource}`,
       );
     }
+    if (!given.has(taker)) given.set(taker, new Set());
+    given.get(taker)!.add(version!);
     return held.get(version!);
   }) as T;
+}
+
+/**
+ * Whether an operation of `taker` has received, in this process, the value
+ * of every credential marker in `value`.
+ */
+export function wasGivenCredentials(
+  taker: BaseResource,
+  value: unknown,
+): boolean {
+  return findCredentialMarkers(value).every(
+    ({ $credential }) =>
+      given.get(taker)?.has($credential.version ?? "") ?? false,
+  );
+}
+
+/**
+ * Copies a value, with no version in each credential marker, as in the
+ * record of a resource that has not taken the credential's current value.
+ */
+export function staleCredentialMarkers<T>(value: T): T {
+  return mapCredentialMarkers(value, ({ $credential }) =>
+    credentialMarker($credential.resource, $credential.name, null),
+  ) as T;
+}
+
+/**
+ * Throws when a `hidden` param of the resource takes a credential. State
+ * does not record a hidden param, so every deploy would find that the
+ * resource has not taken the credential's value, and rotate it.
+ */
+export function assertNoHiddenCredential(resource: BaseResource): void {
+  for (const [field, value] of Object.entries(resource.config ?? {})) {
+    const item = resource.schema[field];
+    if (item?.propertyType !== "param" || !item.hidden) continue;
+    forEachOutputRef(value, (ref) => {
+      const name = String(ref.path[0]);
+      if (ref.resource.schema[name]?.propertyType !== "credential") return;
+      throw new Error(
+        `${resource.id} cannot take the credential ${name} of ${ref.resource.id} in ${field}: ${field} is a hidden param, which state does not record`,
+      );
+    });
+  }
 }
 
 /**
@@ -147,11 +218,12 @@ export function revealCredentials<T>(value: T): T {
  */
 export function revealHeldCredentials(
   params: Record<string, unknown>,
+  taker: BaseResource,
 ): Record<string, unknown> {
   const revealed: Record<string, unknown> = {};
   for (const [field, value] of Object.entries(params)) {
     if (unheldCredentials(value).length > 0) continue;
-    revealed[field] = revealCredentials(value);
+    revealed[field] = revealCredentials(value, taker);
   }
   return revealed;
 }

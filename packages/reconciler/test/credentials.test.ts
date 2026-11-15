@@ -36,6 +36,8 @@ type Provider = {
   calls: string[];
   /** The state that the last rotate received. */
   rotateState?: unknown;
+  /** The state that the last update of a secret received. */
+  updateState?: unknown;
   failSecret?: string;
 };
 
@@ -122,7 +124,8 @@ function defineResources(provider: Provider, { rotate }: { rotate: boolean }) {
         }
         provider.secrets.set(params.name, params.Value);
       },
-      update: async (key, patch) => {
+      update: async (key, patch, _params, state) => {
+        provider.updateState = state;
         provider.calls.push(`update ${key.name}`);
         if (provider.failSecret === key.name) {
           throw new Error(`The store refused ${patch.Value}`);
@@ -532,6 +535,73 @@ describe("a deploy that is resumed after it created a credential", () => {
 
     await runtime.nextProcess("second", declare(types, { secrets: ["a"] }));
     expect(provider.secrets.get("a")).toBe("token-value-2");
+    runtime.close();
+  });
+});
+
+describe("a deploy that is resumed after a resource took a credential", () => {
+  it("updates that resource when it rotates the credential for the next one", async () => {
+    const provider = createProvider();
+    const types = defineResources(provider, { rotate: true });
+    const runtime = createRuntime({
+      crashAfterStep: "notation:deploy:secret%3Aa:create:remote:effect:0",
+    });
+    await expect(
+      runtime.deploy("first", declare(types, { secrets: ["a", "b"] })),
+    ).rejects.toThrow("simulated process crash");
+    expect(provider.calls).toEqual(["create token-0", "create a"]);
+
+    await runtime.nextProcess("first", declare(types, { secrets: ["a", "b"] }));
+
+    expect(provider.calls).toEqual([
+      "create token-0",
+      "create a",
+      "rotate token-0",
+      "update a",
+      "create b",
+    ]);
+    expect(provider.secrets.get("a")).toBe("token-value-2");
+    expect(provider.secrets.get("b")).toBe("token-value-2");
+    expect(provider.tokens.get("token-0")).toBe("token-value-2");
+
+    provider.calls.length = 0;
+    await runtime.nextProcess(
+      "second",
+      declare(types, { secrets: ["a", "b"] }),
+    );
+    expect(provider.calls).toEqual([]);
+    runtime.close();
+  });
+});
+
+describe("the state that an operation receives", () => {
+  it("has no marker for a credential that the resource takes", async () => {
+    const provider = createProvider();
+    const types = defineResources(provider, { rotate: true });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a"] }));
+    await runtime.nextProcess(
+      "second",
+      declare(types, { secrets: [{ name: "a", label: "new" }] }),
+    );
+    expect(provider.updateState).toEqual({ name: "a" });
+    runtime.close();
+  });
+});
+
+describe("a hidden param that takes a credential", () => {
+  it("fails the plan", async () => {
+    const provider = createProvider();
+    const types = defineResources(provider, { rotate: true });
+    const resources = declare(types, { secrets: ["a"] });
+    (resources[1]!.schema as any).Value = {
+      ...resources[1]!.schema.Value,
+      hidden: true,
+    };
+    const runtime = createRuntime();
+    await expect(
+      createPlan({ resources, state: runtime.state }),
+    ).rejects.toThrow("Value is a hidden param");
     runtime.close();
   });
 });
