@@ -444,21 +444,6 @@ async function* generateNamesStep(
   );
 }
 
-/** The names of a replacement: a generated name for each `physicalName` param. */
-async function* replacementNamesStep(
-  step: DurableStepRunner,
-  opts: DeployContext,
-  shared: SharedParams,
-): AsyncGenerator<any, Record<string, unknown>, any> {
-  return yield* generateNamesStep(
-    step,
-    opts,
-    shared.resource,
-    nameFields(shared.resource),
-    shared.unnamedParams,
-  );
-}
-
 /**
  * Compares a resource that create took over with the desired params, and
  * updates, replaces or keeps it, as for any recorded resource. Its record
@@ -646,7 +631,13 @@ async function* replaceCreateFirst(
 ): AsyncGenerator<any, void, any> {
   const createStep = step.scope("replace:create");
   const emit = durableEmitter(createStep, opts.emit);
-  const names = yield* replacementNamesStep(createStep, opts, shared);
+  const names = yield* generateNamesStep(
+    createStep,
+    opts,
+    shared.resource,
+    nameFields(shared.resource),
+    shared.unnamedParams,
+  );
   const created = {
     ...shared,
     resourceParams: fillPhysicalNames(shared.unnamedParams, names),
@@ -741,7 +732,13 @@ async function* replaceDeleteFirst(
   });
 
   const createStep = step.scope("replace:create");
-  const names = yield* replacementNamesStep(createStep, opts, shared);
+  const names = yield* generateNamesStep(
+    createStep,
+    opts,
+    shared.resource,
+    nameFields(shared.resource),
+    shared.unnamedParams,
+  );
   const renamed = {
     ...shared,
     resourceParams: fillPhysicalNames(shared.unnamedParams, names),

@@ -177,11 +177,12 @@ export type Contributions<S extends ResolvedSchema> = {
     : never;
 };
 
-/** The params that have `physicalName`, which deploy generates. */
-export type PhysicalNames<S extends ResolvedSchema> = {
-  [
-    K in keyof S as S[K] extends { physicalName: object } ? K : never
-  ]: "generated";
+/** The names of the params that have `physicalName`, which deploy generates. */
+// `keyof` a remapped type, not an indexed access: for a schema with an index
+// signature, the indexed access gives `string`, and then `ConfigParams`
+// refuses every key.
+export type PhysicalNames<S extends ResolvedSchema> = keyof {
+  [K in keyof S as S[K] extends { physicalName: object } ? K : never]: never;
 };
 
 export type State<S extends ResolvedSchema> = MapSchema<

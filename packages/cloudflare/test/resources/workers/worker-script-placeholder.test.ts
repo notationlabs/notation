@@ -56,5 +56,4 @@ describe("WorkerScriptPlaceholder", () => {
       expect(calls.map((call) => call.method)).toEqual(["GET"]);
     }
   });
-
 });

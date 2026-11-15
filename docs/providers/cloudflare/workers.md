@@ -189,13 +189,15 @@ The Worker keeps its name.
 
 ### Gradual rollouts
 
-Cloudflare deploys each upload of a Worker to all traffic, so an upload during a [gradual deployment](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/) ends it. Before each upload to a Worker that exists, deploy reads the Worker's deployments. When the newest deployment splits traffic between more than one version, deploy fails before the upload:
+Cloudflare deploys each upload of a Worker to all traffic, so an upload during a [gradual deployment](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/) ends it. Before each upload to a Worker that exists, deploy reads the Worker's deployments. When the latest deployment splits traffic between more than one version, deploy fails before the upload:
 
 ```text
 The Worker shop--prod--api-3f9a1c2e is in a gradual rollout: 50% on version 3c9e…, 50% on version 81fa…. An upload would end the rollout. Finish or cancel it in Cloudflare, then deploy again.
 ```
 
 The check applies to any upload: a change of code, of bindings, or of a secret. Deploy reads the deployments and then uploads, and Cloudflare has no request that does both. So a rollout that starts between the two requests is ended by the upload.
+
+A Worker that binds a secret from `env` or `dotenv` is uploaded on every deploy, because the version of those sources changes on every deploy. So while that Worker is in a rollout, every deploy of the stage fails.
 
 #### `notation secret set` for a Worker secret
 

@@ -118,12 +118,11 @@ export type InferResourceTypes<S extends ResolvedSchema> = {
 export type ConfigParams<
   T extends ResourceTypes,
   Omitted extends PropertyKey = never,
-> = Omit<T["params"], Omitted | keyof T["collected"] | keyof T["named"]> &
+> = Omit<T["params"], Omitted | keyof T["collected"] | T["named"]> &
   Partial<
     Pick<
       T["params"],
-      Exclude<keyof T["collected"], Omitted | keyof T["named"]> &
-        keyof T["params"]
+      Exclude<keyof T["collected"], Omitted | T["named"]> & keyof T["params"]
     >
   >;
 
