@@ -5,6 +5,7 @@ import { sweepSteps, sweptRecords } from "../orphan-sweep";
 import { assertOrphanDeleteAllowed, decideAction } from "../plan";
 import { loadUnit, planKnownParams } from "../planner";
 import { readRecordedOutputs } from "../recorded-outputs";
+import { assertReplaceRequest, requestedReplace } from "../replace-request";
 import { workflowRegistry, type ResourceRegistry } from "../resource-registry";
 import { reconcileCycle } from "./cycle";
 import { withDeploymentHold } from "./deployment-hold";
@@ -34,6 +35,7 @@ export async function* deploy(
         readRecordedOutputs(opts.resources, opts.state),
       ),
       reconciled: new Set(),
+      replacedOnRequest: new Set(),
     };
     // Reconcile in dependency order, so a resource only runs once its
     // dependencies have converged.
@@ -69,6 +71,13 @@ export async function* deploy(
  * still checks before any change.
  */
 async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
+  const records = await opts.state.values();
+  assertReplaceRequest(opts.requested, {
+    resources: opts.resources,
+    records,
+    deploymentId: opts.state.deploymentId,
+    point: "deploy",
+  });
   const recordedOutputs = await readRecordedOutputs(opts.resources, opts.state);
   for (const unit of orderDeployUnits(opts.resources)) {
     for (const resource of await loadUnit(unit, opts.state)) {
@@ -78,12 +87,19 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
         "deploy",
         recordedOutputs,
       );
-      if (stateNode) decideAction({ resource, stateNode, params });
+      if (stateNode) {
+        decideAction({
+          resource,
+          stateNode,
+          params,
+          requested: requestedReplace(opts.requested, resource.id),
+        });
+      }
     }
   }
   const registry = workflowRegistry(opts);
   for (const stateNode of orphansDeployDeletes(
-    await opts.state.values(),
+    records,
     new Set(opts.resources.map((resource) => resource.id)),
     registry,
   )) {

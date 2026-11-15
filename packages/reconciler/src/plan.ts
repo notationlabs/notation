@@ -1,6 +1,7 @@
 import {
   diffParams,
   type BaseResource,
+  type ParamReplaceField,
   type ParamsDiffDisplay,
   type RejectChange,
   type RejectChangeContext,
@@ -9,6 +10,7 @@ import {
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
 import type { ReplaceOrder } from "./events";
+import { requestReplace, type RequestedReplace } from "./replace-request";
 import {
   resolveResourceClass,
   type ResourceRegistry,
@@ -114,6 +116,11 @@ export type PlanNode = {
    * takes it over.
    */
   mayTakeOver?: true;
+  /**
+   * Set for a resource in code that has a record: the hash that
+   * `--replace <id>@<instance hash>` takes. See `instanceHash`.
+   */
+  instanceHash?: string;
   params: Record<string, unknown>;
   dependsOn: string[];
 };
@@ -149,12 +156,17 @@ export type ResourceAction =
       replaceFields: ReplaceField[];
     };
 
+/**
+ * Decides what deploy does with the resource. With `requested`, a decision
+ * that keeps the resource becomes a replace: see `requestReplace`.
+ */
 export function decideAction(opts: {
   resource: BaseResource;
   stateNode?: StateNode;
   params: Record<string, unknown>;
+  requested?: RequestedReplace;
 }): ResourceAction {
-  const { resource, stateNode, params } = opts;
+  const { resource, stateNode, params, requested } = opts;
   // A create that left a "creating" record may or may not have made the
   // resource. Create runs again, and takes the resource over if the provider
   // reports that it already exists.
@@ -168,16 +180,41 @@ export function decideAction(opts: {
     params,
     { canUpdate: Boolean(resource.update) },
   );
-  assertChangeAllowed(
-    resource.id,
-    resource.rejectChange,
-    stateNode.params,
-    params,
-    { replace: replaceFields.length > 0 },
-  );
-
+  // Before `rejectChange`, so that a class that refuses every replace still
+  // fails a changed param with the param's own message.
   if (replaceFields.length > 0) {
     assertReplaceAllowed(resource, stateNode.params, params, replaceFields);
+  }
+  if (!requested) {
+    assertChangeAllowed(
+      resource.id,
+      resource.rejectChange,
+      stateNode.params,
+      params,
+      { replace: replaceFields.length > 0 },
+    );
+  } else if (!requested.overrideLossProtection) {
+    const message = resource.rejectChange?.(stateNode.params, params, {
+      replace: true,
+      requested: true,
+    });
+    if (message !== undefined) {
+      throw new Error(
+        `${resource.id}: ${message} To replace it, pass --override-loss-protection ${resource.id} with --replace.`,
+      );
+    }
+  }
+
+  if (requested) {
+    return requestReplace(
+      replaceFields.length > 0
+        ? { decision: "replace", patch, diff, replaceFields }
+        : Object.keys(patch).length > 0
+          ? { decision: "update", patch, diff }
+          : { decision: "noop" },
+    );
+  }
+  if (replaceFields.length > 0) {
     return { decision: "replace", patch, diff, replaceFields };
   }
   if (Object.keys(patch).length > 0) {
@@ -195,7 +232,7 @@ function assertReplaceAllowed(
   resource: BaseResource,
   previous: Record<string, unknown>,
   desired: Record<string, unknown>,
-  replaceFields: ReplaceField[],
+  replaceFields: ParamReplaceField[],
 ): void {
   for (const { name, known } of replaceFields) {
     const item = resource.schema[name];

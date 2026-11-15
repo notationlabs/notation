@@ -50,6 +50,12 @@ import {
   unknownNames,
 } from "./physical-names";
 import { readRecordedOutputs } from "./recorded-outputs";
+import {
+  assertReplaceRequest,
+  instanceHash,
+  requestedReplace,
+  type ReplaceRequest,
+} from "./replace-request";
 import { assertSameType } from "./resource-type";
 import { createStepRunner, runOperation } from "./step-runner";
 
@@ -78,6 +84,14 @@ export type CreatePlanOptions = {
   maxOperationAttempts?: number;
   /** As for deploy: the classes of the types that only orphans have. */
   registry?: ResourceRegistry;
+  /** The replaces that the user asked for. */
+  requested?: ReplaceRequest;
+  /**
+   * The key of the deployment's state. With it, each node of a resource in
+   * code that has a record gets its instance hash, and the request's hashes
+   * are checked.
+   */
+  deploymentId?: string;
 };
 
 export async function createPlan({
@@ -87,6 +101,8 @@ export async function createPlan({
   emit,
   maxOperationAttempts,
   registry,
+  requested,
+  deploymentId,
 }: CreatePlanOptions): Promise<Plan> {
   const resourceById = new Map(
     resources.map((resource) => [resource.id, resource]),
@@ -96,6 +112,12 @@ export async function createPlan({
   assertDependenciesPresent(resources);
 
   const stateNodes = await state.values();
+  assertReplaceRequest(requested, {
+    resources,
+    records: stateNodes,
+    deploymentId,
+    point: "plan",
+  });
   const recordedOutputs = await readRecordedOutputs(resources, state);
   // The edges in state as deploy finds them when it replaces a resource.
   // Deploy writes the edges in code for each resource it reaches, so a
@@ -129,10 +151,18 @@ export async function createPlan({
     );
     const { stateNode } = known;
     let { params } = known;
+    const requestedFor = requestedReplace(requested, resource.id);
     let action: ResourceAction = await runOperation(
       applyDriftDetection(createStepRunner(), {
-        action: decideAction({ resource, stateNode, params }),
-        driftDetection: detectDrift,
+        action: decideAction({
+          resource,
+          stateNode,
+          params,
+          requested: requestedFor,
+        }),
+        // A requested replace creates the resource again, so a read of it
+        // would change nothing.
+        driftDetection: requestedFor ? false : detectDrift,
         resource,
         resourceParams: params,
         persistedOutput: stateNode?.output,
@@ -284,6 +314,9 @@ export async function createPlan({
       ...(placeholder ? { placeholder: true as const } : {}),
       ...(decision === "create" && isCreatingRecord(stateNode)
         ? { mayTakeOver: true as const }
+        : {}),
+      ...(deploymentId && stateNode && !isCreatingRecord(stateNode)
+        ? { instanceHash: instanceHash(deploymentId, resource, stateNode) }
         : {}),
       params,
       dependsOn,

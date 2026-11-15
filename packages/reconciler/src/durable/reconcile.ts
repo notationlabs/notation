@@ -73,6 +73,7 @@ import {
   staleCredentialMarkers,
   wasGivenCredentials,
 } from "../credentials";
+import { requestedReplace } from "../replace-request";
 import { mintNeededCredentials, obtainCredentials } from "./credentials";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
@@ -197,6 +198,9 @@ export async function* reconcileResource(
       : undefined,
   );
 
+  const requested = opts.replacedOnRequest.has(resource.id)
+    ? undefined
+    : requestedReplace(opts.requested, resource.id);
   let action = decideAction({
     resource,
     stateNode:
@@ -207,6 +211,7 @@ export async function* reconcileResource(
           }
         : session.node,
     params,
+    requested,
   });
 
   // Its own scope: when the gate fires, the operation that follows the drift
@@ -219,7 +224,7 @@ export async function* reconcileResource(
     if (action.decision === "noop") {
       action = decideDriftAction({ resource, params, driftRead });
     }
-  } else {
+  } else if (!requested) {
     action = yield* applyDriftDetection(driftStep, {
       action,
       driftDetection: opts.driftDetection,
@@ -283,6 +288,9 @@ export async function* reconcileResource(
     }
   }
 
+  if (requested && !keepsResource(action.decision)) {
+    opts.replacedOnRequest.add(resource.id);
+  }
   options.onDecision?.(action.decision);
   if (action.decision !== "noop" || !options.quietNoop) {
     yield* emitDecision(emit, resource, action, {
