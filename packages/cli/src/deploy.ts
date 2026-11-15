@@ -91,14 +91,14 @@ export function secretPrompt(opts: {
 
 /**
  * Throws if a `--replace` has no instance hash, with the plan command that
- * prints the deploy command with the hash. The reconciler also checks this,
- * but does not know the `--config` and `--stage` that the plan command needs
- * so that it plans the same stage.
+ * prints the deploy command with the hash. Skipped on a resume, so that
+ * `assertSameRequest` reports a request that differs from the saved one.
  */
 function assertHashesGiven(
   deployment: Deployment,
   opts: DeployCommandOptions,
 ): void {
+  if (opts.executionId !== undefined) return;
   const missing = opts.requested?.replace.find(
     (target) => target.instanceHash === undefined,
   );

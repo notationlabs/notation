@@ -52,16 +52,23 @@ function assertHashWellFormed(value: string, known: (id: string) => boolean) {
   );
 }
 
-// A source has no primary key, and every other class has one.
-function isSource(resource: { schema: Schema }): boolean {
-  return !Object.values(resource.schema).some(
-    (item) => (item as { primaryKey?: true }).primaryKey,
-  );
+function primaryKeyNames(schema: Schema): string[] {
+  return Object.entries(schema)
+    .filter(([, item]) => (item as { primaryKey?: true }).primaryKey)
+    .map(([name]) => name);
 }
 
-/** The request as flags, in a fixed order. Empty for no request. */
+// A source has no primary key, and every other class has one.
+function isSource(resource: { schema: Schema }): boolean {
+  return primaryKeyNames(resource.schema).length === 0;
+}
+
+/**
+ * The request as flags, in a fixed order, with each repeated flag once.
+ * Empty for no request.
+ */
 export function formatRequest(request: ReplaceRequest | undefined): string {
-  return [
+  const flags = [
     ...(request?.replace ?? [])
       .map(({ id, instanceHash }) =>
         shellQuote(instanceHash ? `${id}@${instanceHash}` : id),
@@ -71,7 +78,8 @@ export function formatRequest(request: ReplaceRequest | undefined): string {
     ...(request?.overrideLossProtection ?? [])
       .map((id) => `--override-loss-protection ${shellQuote(id)}`)
       .sort(),
-  ].join(" ");
+  ];
+  return [...new Set(flags)].join(" ");
 }
 
 const SHELL_SAFE = /^[A-Za-z0-9_./:@=-]+$/;
@@ -95,9 +103,7 @@ export function instanceHash(
   resource: { schema: Schema },
   record: StateNode,
 ): string {
-  const key = Object.entries(resource.schema)
-    .filter(([, item]) => (item as { primaryKey?: true }).primaryKey)
-    .map(([name]) => name)
+  const key = primaryKeyNames(resource.schema)
     .sort()
     .map((name) => [name, record.output[name] ?? null]);
   return createHash("sha256")
@@ -175,9 +181,8 @@ export function assertReplaceRequest(
     }
     if (given === undefined) {
       if (opts.point === "plan") continue;
-      throw new Error(
-        `--replace ${id} needs the instance hash, as --replace ${id}@<instance hash>. Run notation plan with the same --stage and --replace ${id} to print the deploy command with the hash.`,
-      );
+      // The CLI throws first, with the plan command to run.
+      throw new Error(`--replace ${id} has no instance hash.`);
     }
     const actual = instanceHash(opts.deploymentId, resource, record);
     if (actual !== given) {

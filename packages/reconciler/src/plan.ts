@@ -180,8 +180,8 @@ export function decideAction(opts: {
     params,
     { canUpdate: Boolean(resource.update) },
   );
-  // Before `rejectChange`, so that a class that refuses every replace still
-  // fails a changed param with the param's own message.
+  // Before `rejectChange`, so that a requested replace that also changes a
+  // param fails with the param's own message.
   if (replaceFields.length > 0) {
     assertReplaceAllowed(resource, stateNode.params, params, replaceFields);
   }

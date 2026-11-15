@@ -8718,7 +8718,7 @@ describe("requested replace", () => {
 
     options.requested = { replace: [{ id: "orders" }] };
     await expect(runtime.run("requested-hash-2")).rejects.toThrow(
-      "--replace orders needs the instance hash, as --replace orders@<instance hash>.",
+      "--replace orders has no instance hash.",
     );
     options.requested = {
       replace: [{ id: "orders", instanceHash: "00000000" }],

@@ -23,7 +23,9 @@ export async function* deploy(
   // deriveParams again.
   yield* step.run("notation:validate", async () => {
     // Before `decideAction`, so that a wrong ID or hash fails with its own
-    // message, not with a class's refusal of the replace.
+    // message, not with a class's refusal of the replace. This runs before
+    // the hold, so it can fail with "not in state" while another deploy is
+    // in the middle of a delete-first replace of the target. We accept that.
     await checkReplaceRequest(opts);
     await validateKnownParams(opts);
     return null;
@@ -31,10 +33,12 @@ export async function* deploy(
   yield* withDeploymentHold(step, opts, async function* () {
     // Again inside the hold, so that a deploy that waited for another one
     // checks the hashes against the records that the other one left.
-    yield* step.run("notation:replace-request", async () => {
-      await checkReplaceRequest(opts);
-      return null;
-    });
+    if (opts.requested) {
+      yield* step.run("notation:replace-request", async () => {
+        await checkReplaceRequest(opts);
+        return null;
+      });
+    }
     // Read once, inside the hold, so that every `~state` ref reads the
     // records as they were at the start of the deploy, and a resumed deploy
     // reads the same ones.

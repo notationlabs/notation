@@ -12,7 +12,8 @@
  *   notation:validate          deploy's check of known params, before
  *                              any change
  *   notation:replace-request   deploy's check of the `--replace` request,
- *                              inside the deployment hold
+ *                              inside the deployment hold, only with a
+ *                              request
  *   notation:recorded-outputs  the outputs that `~state` refs read, from
  *                              state at the start of the deploy
  *   notation:deploy:<id>:*     per-resource reconciliation steps

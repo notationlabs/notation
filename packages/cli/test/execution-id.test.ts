@@ -161,6 +161,20 @@ describe("replace flags", () => {
     expect(deployApp).not.toHaveBeenCalled();
   });
 
+  it("leaves a --replace with no hash on a resume to the check against the saved request", async () => {
+    deployApp.mockClear();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    await deploy(deployment, {
+      compile: false,
+      logger,
+      executionId: "crashed-execution",
+      requested: replaceRequest({ replace: ["bucket:uploads"] }),
+    });
+
+    expect(deployApp).toHaveBeenCalledOnce();
+  });
+
   it("gives no request without either flag", () => {
     expect(replaceRequest({})).toBeUndefined();
   });

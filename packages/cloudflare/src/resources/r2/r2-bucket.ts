@@ -165,7 +165,7 @@ export const R2Bucket = r2BucketSchema.defineOperations({
   },
 
   rejectChange: refuseReplace(
-    "Replacing this R2 bucket deletes it and creates it again. Cloudflare deletes only an empty bucket, so the replace fails while the bucket has objects.",
+    "Replacing this R2 bucket deletes it and creates it again. Cloudflare deletes only an empty bucket, so the replace fails while the bucket has objects. Delete its objects first.",
   ),
 
   deriveParams: () => ({ AccountId: accountId() }),

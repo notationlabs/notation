@@ -96,6 +96,15 @@ describe("assertSameRequest", () => {
     ).not.toThrow();
   });
 
+  it("accepts a resume that repeats a flag", () => {
+    expect(() =>
+      assertSameRequest("e", saved, {
+        replace: [...saved.replace, saved.replace[0]!],
+        overrideLossProtection: ["bucket", "bucket"],
+      }),
+    ).not.toThrow();
+  });
+
   it("refuses a resume with other flags", () => {
     expect(() =>
       assertSameRequest("e", saved, { replace: [saved.replace[0]!] }),
