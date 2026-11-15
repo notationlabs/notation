@@ -22,13 +22,22 @@ type SecretsStoreSecretParams = {
    * secret. A secret with an explicit name was adopted, so delete leaves it.
    */
   StageScoped: boolean;
-  ValueFrom: SecretValueFrom;
+  /** Where the value comes from. Set this or `Value`. */
+  ValueFrom?: SecretValueFrom;
+  /**
+   * The value, from a credential of another resource, such as
+   * `token.credentials.Value`. State holds a marker in its place.
+   */
+  Value?: string;
 };
 
 export type SecretsStoreSecretSchema = {
   Key: { AccountId: string; StoreId: string; Name: string };
   CreateParams: SecretsStoreSecretParams;
-  UpdateParams: Pick<SecretsStoreSecretParams, "StageScoped" | "ValueFrom">;
+  UpdateParams: Pick<
+    SecretsStoreSecretParams,
+    "StageScoped" | "ValueFrom" | "Value"
+  >;
   ReadResult: { SecretId: string };
 };
 
@@ -70,8 +79,14 @@ const secretsStoreSecretSchema = secretsStoreSecret.defineSchema({
   },
   ValueFrom: {
     propertyType: "param",
-    presence: "required",
+    presence: "optional",
     value: secretValueFromSchema,
+  },
+  Value: {
+    propertyType: "param",
+    presence: "optional",
+    sensitive: true,
+    value: v.string(),
   },
   SecretId: {
     propertyType: "computed",
@@ -81,16 +96,17 @@ const secretsStoreSecretSchema = secretsStoreSecret.defineSchema({
 } as const);
 
 /**
- * Writes the secret's value, fetched with `getValue`. It creates the secret,
- * or overwrites the value of the one that exists. A secret whose value comes
- * from the prompt is written only when it is missing, so that a value set
- * with `notation secret set` is kept.
+ * Writes the secret's value: `Value`, or the value that `getValue` fetches
+ * for `ValueFrom`. It creates the secret, or overwrites the value of the one
+ * that exists. A secret whose value comes from the prompt is written only
+ * when it is missing, so that a value set with `notation secret set` is
+ * kept.
  */
 async function writeValue(params: SecretsStoreSecretParams): Promise<void> {
   const { AccountId, StoreId, Name, ValueFrom } = params;
   const existing = await findSecretByName(AccountId, StoreId, Name);
-  if (existing && ValueFrom.Source === PROMPT_SOURCE) return;
-  const value = (await getValue(ValueFrom.Secret)).unwrap();
+  if (existing && ValueFrom?.Source === PROMPT_SOURCE) return;
+  const value = params.Value ?? (await getValue(ValueFrom!.Secret)).unwrap();
   if (existing) {
     await setSecretValue(AccountId, StoreId, existing.id, value);
   } else {
@@ -103,8 +119,9 @@ async function writeValue(params: SecretsStoreSecretParams): Promise<void> {
  * where the secret is and where its value comes from, and never the value.
  *
  * Create and update write the value. A change to `ValueFrom`, such as a new
- * version from the source, updates the secret. A change to `StageScoped`
- * only changes the record. Read finds the secret by
+ * version from the source, updates the secret. So does a new value of the
+ * credential that `Value` takes. A change to `StageScoped` only changes the
+ * record. Read finds the secret by
  * name, so a secret recreated outside notation shows as a changed
  * `SecretId`, and a deleted one as drift, which the next deploy creates
  * again.
@@ -128,7 +145,9 @@ export const SecretsStoreSecret = secretsStoreSecretSchema
     },
 
     update: async (_key, patch, params) => {
-      if (patch.ValueFrom) await writeValue(params);
+      if (patch.ValueFrom || patch.Value !== undefined) {
+        await writeValue(params);
+      }
     },
 
     delete: async (key, state) => {
@@ -137,10 +156,17 @@ export const SecretsStoreSecret = secretsStoreSecretSchema
     },
   })
   .requireDependencies<SecretsStoreSecretDependencies>()
-  .deriveParams(async ({ deps }) => ({
-    AccountId: deps.store.output.AccountId,
-    StoreId: deps.store.output.StoreId,
-  }));
+  .deriveParams(async ({ id, config, deps }) => {
+    if ((config.ValueFrom === undefined) === (config.Value === undefined)) {
+      throw new Error(
+        `${id} needs either ValueFrom or Value, and not both. ValueFrom names a source, and Value takes a credential of another resource.`,
+      );
+    }
+    return {
+      AccountId: deps.store.output.AccountId,
+      StoreId: deps.store.output.StoreId,
+    };
+  });
 
 export type SecretsStoreSecretInstance = InstanceType<
   typeof SecretsStoreSecret

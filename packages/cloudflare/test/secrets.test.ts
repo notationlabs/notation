@@ -127,7 +127,7 @@ describe("secret", () => {
       "cloudflare/accountToken",
       "deploy",
     );
-    expect(token.token.dependencies.store).toBe(stores[0]);
+    expect(token.secret.dependencies.store).toBe(stores[0]);
   });
 
   it("derives the account and store from the store's output", async () => {
@@ -353,6 +353,25 @@ describe("accountToken", () => {
       ],
     });
   });
+
+  it("declares a secret with the token's name, which takes the token's value", async () => {
+    const graph = await collect(() => {
+      accountToken({ id: "deploy", policies });
+    });
+    const group = groupOf<AccountTokenGroup>(
+      graph,
+      "cloudflare/accountToken",
+      "deploy",
+    );
+
+    expect(group.secret.id).toBe("secret:deploy");
+    expect(group.secret.config).toEqual({
+      Name: "shop--dev--deploy",
+      StageScoped: true,
+      Value: group.token.credentials.Value,
+    });
+    expect(group.secret.getDependencies()).toContain(group.token);
+  });
 });
 
 describe("secretsStore.bind", () => {
@@ -383,7 +402,7 @@ describe("secretsStore.bind", () => {
       graph,
       "cloudflare/accountToken",
       "deploy",
-    ).token;
+    ).secret;
 
     expect(api.script.getDependencies()).toEqual(
       expect.arrayContaining([stripeKey, deployToken]),
@@ -407,8 +426,7 @@ describe("secretsStore.bind", () => {
       AccountId: "acc",
       StoreId: "store",
       Name: "shop--dev--deploy",
-      Policies: policies,
-      TokenId: "t1",
+      StageScoped: true,
       SecretId: "s2",
     });
 

@@ -64,7 +64,8 @@ export function formatPrettyEvent(
 
   switch (event.event) {
     case "reconciler.operation.lifecycle": {
-      const subject = `${event.operation} ${target(event.resourceId, event.resourceType)}`;
+      const credential = event.credential ? ` ${event.credential} of` : "";
+      const subject = `${event.operation}${credential} ${target(event.resourceId, event.resourceType)}`;
       const details: string[] = [];
       if (event.reason) {
         details.push(lifecycleReasons[event.reason] ?? event.reason);
@@ -102,7 +103,10 @@ export function formatPrettyEvent(
       if (event.replaceFields?.length) {
         details.push(
           event.replaceFields
-            .map((field) => (field.known ? field.name : `${field.name}?`))
+            .map((field) => {
+              if (field.credential) return `${field.name} needs a new value`;
+              return field.known ? field.name : `${field.name}?`;
+            })
             .join(", "),
         );
       }

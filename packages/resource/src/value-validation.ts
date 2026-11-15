@@ -2,6 +2,7 @@ import type { Schema } from "./resource.schema";
 import type { StandardSchemaV1 } from "./standard-schema";
 import { isUnknownAfterApply } from "./diff-params";
 import { isPlainObject, missingRequiredOutputs } from "./output-ref";
+import { isCredentialMarker } from "./credential";
 
 /**
  * Where the engine validated a value:
@@ -10,10 +11,11 @@ import { isPlainObject, missingRequiredOutputs } from "./output-ref";
  * - `deploy`: params, before deploy changes anything, and again just before
  *   the resource's own operation.
  * - `create`: the result of the resource's `create`.
+ * - `rotate`: the result of one of the resource's `rotate` operations.
  * - `read`: the result of the resource's `read`.
  */
 export type ValidationPoint =
-  "declaration" | "plan" | "deploy" | "create" | "read";
+  "declaration" | "plan" | "deploy" | "create" | "rotate" | "read";
 
 /** The parts of a resource that validation reads. */
 export type ValidationSubject = {
@@ -50,7 +52,9 @@ export class ValueValidationError extends Error {
     const resource = `${opts.resourceId} (${opts.resourceType})`;
     const site = opts.declaredAt ? `, declared at ${opts.declaredAt}` : "";
     const subject =
-      opts.point === "read" || opts.point === "create"
+      opts.point === "read" ||
+      opts.point === "create" ||
+      opts.point === "rotate"
         ? `The ${opts.point} of ${resource} returned an invalid ${opts.field}${site}`
         : opts.point === "declaration"
           ? `Invalid ${opts.field} for ${resource} when declared${opts.declaredAt ? ` at ${opts.declaredAt}` : ""}`
@@ -230,7 +234,9 @@ function assertValid(
   issues: readonly StandardSchemaV1.Issue[],
 ): void {
   if (issues.length === 0) return;
-  const sensitive = subject.schema[field]?.sensitive === true;
+  const item = subject.schema[field];
+  const sensitive =
+    item?.sensitive === true || item?.propertyType === "credential";
   throw new ValueValidationError({
     resourceId: subject.id,
     resourceType: subject.type,
@@ -262,7 +268,13 @@ export async function validateParams(
 ): Promise<void> {
   assertParamFields(subject, params);
   assertRequiredParams(subject, params);
-  await validateValues(subject, params, point, isUnknownAfterApply);
+  // A credential's value was checked when its resource returned it.
+  await validateValues(
+    subject,
+    params,
+    point,
+    (value) => isUnknownAfterApply(value) || isCredentialMarker(value),
+  );
 }
 
 /** Throws unless every defined value is a param in the schema. */

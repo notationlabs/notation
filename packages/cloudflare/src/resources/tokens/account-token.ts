@@ -1,5 +1,4 @@
 import * as v from "valibot";
-import { recordSecretValue } from "@notation/core";
 import {
   containsOutputRef,
   planLookup,
@@ -8,24 +7,19 @@ import {
   ResourceNotFoundError,
 } from "@notation/resource";
 import { sortedJson } from "@notation/utils";
-import { cloudflareCreate } from "src/api/client";
-import {
-  deleteSecret,
-  findSecretByName,
-  writeSecret,
-} from "src/api/secrets-store";
+import { accountId, cloudflareCreate } from "src/api/client";
 import {
   createToken,
   deleteToken,
   findPermissionGroups,
   findTokensByName,
   getToken,
+  rollToken,
   updateToken,
   type Token,
   type TokenCondition,
   type TokenResources,
 } from "src/api/tokens";
-import type { SecretsStoreInstance } from "src/resources/secrets-store";
 
 export const TOKEN_NAME_MAX_LENGTH = 120;
 
@@ -87,8 +81,6 @@ const timestampSchema = v.pipe(
 
 type AccountTokenParams = {
   AccountId: string;
-  StoreId: string;
-  /** The token's name, and the name of the secret that holds its value. */
   Name: string;
   Policies: AccountTokenPolicy[];
   Condition?: AccountTokenCondition;
@@ -97,17 +89,13 @@ type AccountTokenParams = {
 };
 
 export type AccountTokenSchema = {
-  Key: { AccountId: string; TokenId: string; StoreId: string; Name: string };
+  Key: { AccountId: string; TokenId: string };
   CreateParams: AccountTokenParams;
   UpdateParams: Pick<
     AccountTokenParams,
     "Policies" | "Condition" | "ExpiresOn" | "NotBefore"
   >;
-  ReadResult: { SecretId: string };
-};
-
-export type AccountTokenDependencies = {
-  store: SecretsStoreInstance;
+  ReadResult: {};
 };
 
 const accountToken = resource<AccountTokenSchema>({
@@ -123,18 +111,10 @@ const accountTokenSchema = accountToken.defineSchema({
     secondaryKey: true,
     value: v.string(),
   },
-  StoreId: {
-    propertyType: "param",
-    presence: "required",
-    immutable: true,
-    secondaryKey: true,
-    value: v.string(),
-  },
   Name: {
     propertyType: "param",
     presence: "required",
     immutable: true,
-    secondaryKey: true,
     value: v.pipe(
       v.string(),
       v.minLength(1),
@@ -173,27 +153,23 @@ const accountTokenSchema = accountToken.defineSchema({
     primaryKey: true,
     value: v.string(),
   },
-  SecretId: {
-    propertyType: "computed",
-    presence: "required",
-    value: v.string(),
-  },
+  /**
+   * The token's value. Cloudflare returns it when it creates the token and
+   * when it rolls it, and never otherwise.
+   */
+  Value: { propertyType: "credential", value: v.string() },
 } as const);
 
 /**
- * An account-owned API token, whose value is kept in a secret of the
- * account's Secrets Store. The secret has the token's name. Its record holds
- * where the secret is, and never the value.
+ * An account-owned API token. Its value is the credential `Value`, which
+ * another resource takes with `token.credentials.Value`. State never holds
+ * the value.
  *
- * Create writes the new token's value into the secret in the same step,
- * because Cloudflare returns the value only in the create's response. A
- * create with an unknown outcome deletes the tokens with the name, and runs
- * again. A change to the policies, the condition or the times updates the
- * token in place, and the token keeps its value. Delete deletes the token
- * and its secret.
- *
- * Read fails when the secret is missing, as the value can't be fetched
- * again. The token has to be rotated.
+ * A create with an unknown outcome deletes the tokens with the name, and
+ * runs again, as the value of a token made then is lost. A change to the
+ * policies, the condition or the times updates the token in place, and the
+ * token keeps its value. When a resource that takes the value needs it and
+ * deploy no longer holds it, deploy rolls the token.
  *
  * A change made in the dashboard to the policies or the IP ranges is seen
  * as drift, and the deploy updates the token back to the config. A removed
@@ -201,107 +177,76 @@ const accountTokenSchema = accountToken.defineSchema({
  * token's status, so a token that is disabled in the dashboard stays
  * disabled.
  */
-export const AccountToken = accountTokenSchema
-  .defineOperations({
-    create: async (params) => {
-      const token = await cloudflareCreate(createToken)(params.AccountId, {
-        name: params.Name,
-        policies: policyRequests(params.Policies),
-        condition: conditionRequest(params.Condition),
-        expires_on: params.ExpiresOn,
-        not_before: params.NotBefore,
-      });
-      recordSecretValue(token.value);
-      try {
-        await writeSecret(
-          params.AccountId,
-          params.StoreId,
-          params.Name,
-          token.value,
-        );
-      } catch (error) {
-        // The value is lost when the write fails, so the token is deleted,
-        // and the next deploy creates a new one.
-        try {
-          await deleteToken(params.AccountId, token.id);
-        } catch {
-          throw new Error(
-            `${error instanceof Error ? error.message : String(error)}. The API token ${token.id} that was just created couldn't be deleted. Delete it in the dashboard.`,
-            { cause: error },
-          );
-        }
-        throw error;
-      }
-      return { TokenId: token.id };
-    },
+export const AccountToken = accountTokenSchema.defineOperations({
+  create: async (params) => {
+    const token = await cloudflareCreate(createToken)(params.AccountId, {
+      name: params.Name,
+      policies: policyRequests(params.Policies),
+      condition: conditionRequest(params.Condition),
+      expires_on: params.ExpiresOn,
+      not_before: params.NotBefore,
+    });
+    return { TokenId: token.id, Value: token.value };
+  },
 
-    // Runs when a create may have made a token and its outcome is unknown.
-    // A token made then can't be used, as its value is lost, so every token
-    // with the name is deleted and the create runs again. Replace deletes
-    // the old token before it creates the new one, so no tracked token has
-    // the name.
-    find: async (params) => {
-      const ids = await findTokensByName(params.AccountId, params.Name);
-      await Promise.all(ids.map((id) => deleteToken(params.AccountId, id)));
-      throw new ResourceNotFoundError(
-        "A token made by an earlier create has no value",
-      );
-    },
+  rotate: {
+    Value: (key) => rollToken(key.AccountId, key.TokenId),
+  },
 
-    read: async (key) => {
-      const token = await getToken(key.AccountId, key.TokenId);
-      if (!token) {
-        throw new ResourceNotFoundError("API token was not found");
-      }
-      const secret = await findSecretByName(
-        key.AccountId,
-        key.StoreId,
-        key.Name,
-      );
-      if (!secret) {
-        throw new Error(
-          `The secret ${key.Name}, which holds the value of the API token ${key.TokenId}, isn't in the Secrets Store ${key.StoreId}. Cloudflare returns a token's value only when it creates the token, so the secret can't be written again. Rotate the token: change the id of its accountToken() declaration, and deploy.`,
-        );
-      }
-      return {
-        ...key,
-        SecretId: secret.id,
-        Policies: sortedPolicies(
-          token.policies.map((policy) => ({
-            effect: policy.effect,
-            permissionGroups: policy.permission_groups.map(({ id }) => id),
-            resources: policy.resources,
-          })),
-        ),
-        ...readTimes(token),
-        // `{}` and not undefined, so that drift is seen when the IP ranges
-        // are removed in the dashboard. A config without a condition is not
-        // compared.
-        Condition: sortedCondition(readCondition(token)) ?? {},
-      };
-    },
+  // Runs when a create may have made a token and its outcome is unknown.
+  // A token made then can't be used, as its value is lost, so every token
+  // with the name is deleted and the create runs again. Replace deletes
+  // the old token before it creates the new one, so no tracked token has
+  // the name.
+  find: async (params) => {
+    const ids = await findTokensByName(params.AccountId, params.Name);
+    await Promise.all(ids.map((id) => deleteToken(params.AccountId, id)));
+    throw new ResourceNotFoundError(
+      "A token made by an earlier create has no value",
+    );
+  },
 
-    // The update sends the whole config. It sends an empty condition and null
-    // times when the config doesn't set them, to remove them from the token.
-    update: async (key, _patch, params) => {
-      await updateToken(key.AccountId, key.TokenId, {
-        name: params.Name,
-        policies: policyRequests(params.Policies),
-        condition: conditionRequest(params.Condition) ?? {},
-        expires_on: params.ExpiresOn ?? null,
-        not_before: params.NotBefore ?? null,
-      });
-    },
+  read: async (key) => {
+    const token = await getToken(key.AccountId, key.TokenId);
+    if (!token) {
+      throw new ResourceNotFoundError("API token was not found");
+    }
+    return {
+      ...key,
+      Policies: sortedPolicies(
+        token.policies.map((policy) => ({
+          effect: policy.effect,
+          permissionGroups: policy.permission_groups.map(({ id }) => id),
+          resources: policy.resources,
+        })),
+      ),
+      ...readTimes(token),
+      // `{}` and not undefined, so that drift is seen when the IP ranges
+      // are removed in the dashboard. A config without a condition is not
+      // compared.
+      Condition: sortedCondition(readCondition(token)) ?? {},
+    };
+  },
 
-    delete: async (key) => {
-      await deleteToken(key.AccountId, key.TokenId);
-      await deleteSecret(key.AccountId, key.StoreId, key.Name);
-    },
-  })
-  .requireDependencies<AccountTokenDependencies>()
-  .deriveParams(async ({ config, deps }) => {
-    const { AccountId, StoreId } = deps.store.output;
-    const Policies = await resolvePolicies(AccountId, config.Policies);
+  // The update sends the whole config. It sends an empty condition and null
+  // times when the config doesn't set them, to remove them from the token.
+  update: async (key, _patch, params) => {
+    await updateToken(key.AccountId, key.TokenId, {
+      name: params.Name,
+      policies: policyRequests(params.Policies),
+      condition: conditionRequest(params.Condition) ?? {},
+      expires_on: params.ExpiresOn ?? null,
+      not_before: params.NotBefore ?? null,
+    });
+  },
+
+  delete: async (key) => {
+    await deleteToken(key.AccountId, key.TokenId);
+  },
+
+  deriveParams: async ({ config }) => {
+    const AccountId = accountId();
+    const Policies = await resolvePolicies(AccountId, config.Policies!);
     const derived: Partial<AccountTokenParams> = { Policies };
     // Config still holds output refs when this runs. `planLookup` replaces
     // each one whose resource has an output. A value that still holds an
@@ -317,8 +262,9 @@ export const AccountToken = accountTokenSchema
     }
     // The cast keeps the derived values out of the declared return type, so
     // that config keeps Policies with the groups' names.
-    return { AccountId, StoreId, ...derived } as typeof deps.store.output;
-  });
+    return { AccountId, ...derived } as { AccountId: string };
+  },
+});
 
 export type AccountTokenInstance = InstanceType<typeof AccountToken>;
 

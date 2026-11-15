@@ -31,6 +31,13 @@ export type PlanDecision =
   | "delete-retired"
   | "noop";
 
+/** Whether the decision leaves the resource in place, and so its credentials. */
+export function keepsResource(decision: PlanDecision): boolean {
+  return (
+    decision === "noop" || decision === "update" || decision === "drift-update"
+  );
+}
+
 export type PlanDiff = ParamsDiffDisplay;
 
 export type PlanNode = {
@@ -78,6 +85,19 @@ export type PlanNode = {
    * each of them.
    */
   brokenDependents?: string[];
+  /**
+   * Set when deploy rotates credentials of the resource, because a resource
+   * that takes one needs its value: the names of the credentials. Deploy
+   * updates every resource that takes one of them.
+   */
+  rotates?: string[];
+  /**
+   * Set when deploy fails at this resource: it creates the resource again,
+   * the resource takes these credentials, deploy holds no value for them,
+   * and they have no `rotate` operation. The deploy after it replaces the
+   * resources that have the credentials.
+   */
+  unheldCredentials?: { resource: string; name: string }[];
   /**
    * Set when the resource is in a dependency cycle: the IDs of the other
    * resources in the cycle.

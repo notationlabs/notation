@@ -13,6 +13,12 @@ import {
 import { runPendingOperation } from "./operation.pending";
 import { readResourceOperation } from "./operation.read";
 import { firstDeferredError } from "./deferred-checks";
+import {
+  credentialOutputs,
+  operationState,
+  revealCredentials,
+  revealHeldCredentials,
+} from "../credentials";
 
 export async function* updateResourceOperation(
   step: StepRunner,
@@ -38,15 +44,16 @@ export async function* updateResourceOperation(
       (context) =>
         params.resource.update!(
           params.resource.key,
-          params.patch,
-          params.resourceParams,
-          params.resource.toState(params.resource.output),
+          revealCredentials(params.patch, params.resource),
+          revealHeldCredentials(params.resourceParams, params.resource),
+          operationState(params.resource),
           context,
         ),
       params.maxOperationAttempts,
     );
 
     params.resource.setOutput({
+      ...credentialOutputs(params.resource),
       ...params.resource.key,
       ...params.resourceParams,
     });

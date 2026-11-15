@@ -144,20 +144,23 @@ FunctionName: { propertyType: "param", value: v.string(), presence: "required", 
 
 // computed – output, set by the cloud provider after creation
 FunctionArn: { propertyType: "computed", value: v.string(), presence: "required", primaryKey: true }
+
+// credential – a secret that the provider returns from create, and that is never recorded
+PrivateKey: { propertyType: "credential", value: v.string() }
 ```
 
 ### Common fields
 
 All schema items carry these fields:
 
-| Field          | Type                       | Description                                                       |
-| -------------- | -------------------------- | ----------------------------------------------------------------- |
-| `propertyType` | `"param" \| "computed"`    | Role of the field.                                                |
-| `value`        | `StandardSchemaV1`         | Validator for the field's value. See [Value types](#value-types). |
-| `presence`     | `"required" \| "optional"` | Whether the field must be provided.                               |
-| `sensitive`    | `true?`                    | Redacted in logs.                                                 |
-| `hidden`       | `true?`                    | Excluded from CLI display and state output.                       |
-| `volatile`     | `true?`                    | Expected to change between reads; excluded from diff comparison.  |
+| Field          | Type                                    | Description                                                       |
+| -------------- | --------------------------------------- | ----------------------------------------------------------------- |
+| `propertyType` | `"param" \| "computed" \| "credential"` | Role of the field.                                                |
+| `value`        | `StandardSchemaV1`                      | Validator for the field's value. See [Value types](#value-types). |
+| `presence`     | `"required" \| "optional"`              | Whether the field must be provided. A `credential` has none.      |
+| `sensitive`    | `true?`                                 | Redacted in logs.                                                 |
+| `hidden`       | `true?`                                 | Excluded from CLI display and state output.                       |
+| `volatile`     | `true?`                                 | Expected to change between reads; excluded from diff comparison.  |
 
 ### Flags by property type
 
@@ -172,6 +175,10 @@ All schema items carry these fields:
 **`computed`**
 
 - `primaryKey` – identifies the resource (e.g. `FunctionArn` returned by `create`).
+
+**`credential`**
+
+A credential has no flags. See [Credentials](#credentials).
 
 ### Physical names
 
@@ -294,7 +301,8 @@ An issue in a statement that holds an unknown is still dropped, because the stat
 
 | Field          | Required | Signature / Description                                                                                                                                           |
 | -------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create`       | yes      | `(params, context?) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key.                                                            |
+| `create`       | yes      | `(params, context?) => Promise<CreateResult<S>>` – create the resource, return its computed key and its [credentials](#credentials).                              |
+| `rotate`       | no       | `{ [credential]: (key, state) => Promise<value> }` – issue a new value for a credential. See [Credentials](#credentials).                                         |
 | `find`         | no       | `(params) => Promise<ComputedPrimaryKey<S>>` – find the resource that a create with `params` makes, and return its computed key. See [`find`](#find).             |
 | `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                                              |
 | `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                                                |
@@ -509,6 +517,70 @@ The ref has two effects:
 - Deploy replaces the ref with the queue's real ARN before it calls the provider for `mapping`. A ref to a number becomes a number.
 
 **A ref can only be placed whole.** Turning it into a string throws `OutputRefStringError`, whether in a template string, with `String()` or with `JSON.stringify`. This matters because a string such as `` `${arn}/*` `` would hide the ref, and plan could not tell that the value is unknown. It follows that a ref cannot be a map key: key the entry by something known now, and put the ref inside it. To compute with an output, use `deriveParams` or a [function contribution](#function-contributions), which receive the real output at deploy.
+
+### Credentials
+
+Some providers return a secret only in the response that creates a resource: the value of an API token, or the private key of a GitHub App. A `credential` property holds such a secret. `create` returns it with the computed key:
+
+```ts
+const githubAppSchema = githubApp.defineSchema({
+  Name: { propertyType: "param", presence: "required", value: v.string() },
+  AppId: {
+    propertyType: "computed",
+    presence: "required",
+    primaryKey: true,
+    value: v.string(),
+  },
+  PrivateKey: { propertyType: "credential", value: v.string() },
+});
+
+export const GithubApp = githubAppSchema.defineOperations({
+  create: async (params) => {
+    const app = await createApp(params);
+    return { AppId: app.id, PrivateKey: app.pem };
+  },
+  rotate: {
+    PrivateKey: async (key) => createPrivateKey(key.AppId),
+  },
+  delete: async (key) => deleteApp(key.AppId),
+});
+```
+
+Another resource takes the value with `resource.credentials.<name>`, which is an output ref:
+
+```ts
+new cloudflare.secretsStore.SecretsStoreSecret("secret:app-key", {
+  config: { Name: name, StageScoped: true, Value: app.credentials.PrivateKey },
+  dependencies: { store },
+});
+```
+
+The resource that takes the credential receives the value in two places:
+
+- `create` receives it in its params.
+- `update` receives it in its patch, and in its params, only when the patch holds it. When an update changes another param, the credential's param is `undefined` in the params. An `update` that sends the whole config to the provider has to leave the credential's param out of the request when the patch does not hold it. Otherwise it removes the value at the provider.
+
+The other operations never receive the value: `find` receives the marker in its params. The `state` that `update`, `delete` and `rotate` receive has no property for a credential of the resource itself, and `undefined` for a param that takes a credential. A value that `read` returns for a credential is dropped.
+
+A `hidden` param cannot take a credential: state does not record a hidden param, so deploy could not tell which value the resource holds. Plan and deploy fail for it.
+
+Deploy keeps the value in memory only:
+
+- State, step results and events hold a marker in place of the value. The marker names the resource, the credential and a version.
+- A string value is removed from error messages.
+- `read` never returns a credential, and `resource.output` has no property for it.
+
+A create or a rotate gives the credential a new version. The params of each resource that takes it then differ from its record, so deploy updates it with the new value. More than one resource can take the same credential.
+
+Deploy holds a value only in the process that received it. It gets a new value when a resource that takes the credential needs one and deploy holds none:
+
+1. A resource takes the credential and has no record, because it was added in a later deploy, or because an earlier deploy failed before it created the resource.
+2. The record of a resource that takes the credential holds an older version, because an earlier deploy failed before it updated the resource.
+3. A resource that takes the credential is created again: it is replaced, or drift detection found it gone.
+
+To get a new value, deploy calls the credential's `rotate` operation, which returns a value and makes the provider revoke the one before. Without `rotate`, deploy replaces the resource that has the credential. In cases 1 and 2 it does so before it reaches the resources that take the credential, and plan shows it. In case 3 with `rotate`, deploy rotates when it reaches the resource, and then updates the resources before it that take the credential. Plan shows the rotation and the updates. In case 3 without `rotate`, the deploy fails, and the next deploy replaces the resource that has the credential. Plan shows that the deploy fails at the resource.
+
+The provider revokes the old value when deploy rotates, before any resource has the new one. If the deploy then fails before it updates a resource that takes the credential, that resource holds a revoked value until a later deploy succeeds. That deploy rotates again.
 
 ### State refs
 

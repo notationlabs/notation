@@ -7,6 +7,7 @@ import {
 } from "./operation.types";
 import { runPendingOperation } from "./operation.pending";
 import { findResourceKey } from "./operation.read";
+import { operationState } from "../credentials";
 
 export async function* deleteResourceOperation(
   step: StepRunner,
@@ -41,7 +42,7 @@ export async function* deleteResourceOperation(
         (context) =>
           params.resource.delete(
             params.resource.key,
-            params.resource.toState(params.resource.output),
+            operationState(params.resource),
             context,
             params.deletion,
           ),

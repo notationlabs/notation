@@ -16,6 +16,7 @@ import {
   getErrorDetails,
 } from "./operation.types";
 import { runPendingOperation } from "./operation.pending";
+import { withoutCredentials } from "../credentials";
 
 export async function* readResourceOperation(
   step: StepRunner,
@@ -61,8 +62,12 @@ export async function* readRemoteOperation(
       step,
       "read:remote",
       async (context) =>
-        params.resource.toResult(
-          await params.resource.read!(params.resource.key, context),
+        // The step records what this returns, and state records the read.
+        withoutCredentials(
+          params.resource,
+          params.resource.toResult(
+            await params.resource.read!(params.resource.key, context),
+          ),
         ),
       params.maxOperationAttempts,
     );

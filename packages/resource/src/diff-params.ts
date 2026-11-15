@@ -37,7 +37,16 @@ export function containsUnknownAfterApply(value: unknown): boolean {
  * A field that forces replacement. `known: false` means the desired value, or
  * part of it, is unknown after apply, so the field may force replacement.
  */
-export type ReplaceField = { name: string; known: boolean };
+export type ReplaceField = {
+  name: string;
+  known: boolean;
+  /**
+   * Set when the field is a credential that did not change. A resource that
+   * takes it needs a new value, and the credential has no `rotate`
+   * operation, so the resource is replaced.
+   */
+  credential?: true;
+};
 
 export type ParamsDiffDisplay = {
   added: Record<string, unknown>;

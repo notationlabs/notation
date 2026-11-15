@@ -8,6 +8,7 @@ export * from "./resource-group";
 export * from "./standard-schema";
 export * from "./declared-in";
 export * from "./value-validation";
+export * from "./credential";
 export {
   collectResourceGraph,
   getActiveResourceCollection,
@@ -41,6 +42,7 @@ export {
   PendingOutput,
   StateOutputRef,
   containsOutputRef,
+  forEachOutputRef,
   isOutputRef,
   resolveOutputRefs,
   deployLookup,

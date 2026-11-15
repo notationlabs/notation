@@ -38,6 +38,17 @@ describe("formatPrettyEvent", () => {
     );
   });
 
+  it("names the credential of a rotate", () => {
+    expect(
+      formatPrettyEvent({
+        ...lifecycle,
+        operation: "rotate",
+        credential: "Value",
+        status: "success",
+      }),
+    ).toBe("✓ rotate Value of router-kv cloudflare/kv/namespace");
+  });
+
   it("prints the error of a failed operation on the next line", () => {
     expect(
       formatPrettyEvent({

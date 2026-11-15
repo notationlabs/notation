@@ -88,19 +88,43 @@ function retiredDeleteTime(result: Plan, id: string): string {
 }
 
 function printPlanSummary(result: Plan, logger: Logger) {
-  const changedNodes = result.nodes.filter((node) => node.decision !== "noop");
+  // A resource that only rotates a credential is planned as a noop.
+  const changedNodes = result.nodes.filter(
+    (node) => node.decision !== "noop" || node.rotates,
+  );
 
   for (const node of changedNodes) {
     const order = node.replaceOrder && replaceOrders[node.replaceOrder];
+    const rotateOnly = node.decision === "noop";
+    const symbol = rotateOnly
+      ? "~"
+      : (order?.symbol ?? decisionSymbols[node.decision]);
+    const label = rotateOnly ? "rotate" : node.decision;
     logger.info(
-      `${order?.symbol ?? decisionSymbols[node.decision]} ${node.decision} ${node.type} ${node.id}${order?.label ?? ""}`,
+      `${symbol} ${label} ${node.type} ${node.id}${order?.label ?? ""}`,
     );
+    if (node.rotates) {
+      logger.info(
+        `    ${node.rotates.join(", ")} gets a new value, as a resource that takes it needs one`,
+      );
+    }
+    for (const { resource, name } of node.unheldCredentials ?? []) {
+      logger.info(
+        `    deploy fails here, as it holds no value for ${name} of ${resource}. The deploy after it replaces ${resource}`,
+      );
+    }
     if (node.retiredAt) {
       logger.info(
         `    the instance that a replace retired at ${node.retiredAt}, ${retiredDeleteTime(result, node.id)}`,
       );
     }
     for (const field of node.replaceFields ?? []) {
+      if (field.credential) {
+        logger.info(
+          `    ${field.name} needs a new value, as a resource that takes it needs one, and it has no rotate operation`,
+        );
+        continue;
+      }
       logger.info(
         field.known
           ? `    ${field.name} forces replacement`

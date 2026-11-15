@@ -105,7 +105,12 @@ export type PersistState = (
  * it.
  */
 export type PersistStage =
-  "creating" | "taken-over" | "restored" | `retired:${number}`;
+  | "creating"
+  | "taken-over"
+  | "restored"
+  | `retired:${number}`
+  // Records a credential's new version, or that its value is lost.
+  | `credential:${string}`;
 
 export type RemoveState = () => AsyncGenerator<unknown, void, unknown>;
 

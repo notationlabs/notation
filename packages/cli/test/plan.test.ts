@@ -387,3 +387,88 @@ it("prints that deploy asks for the value of a new secret without a source", asy
     "+ create cloudflare/secrets-store/SecretsStoreSecret secret:stripe-key",
   ]);
 });
+
+it("prints a resource that only rotates a credential", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "token",
+        type: "test/plan/token",
+        decision: "noop",
+        rotates: ["Value"],
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "secret",
+        type: "test/plan/secret",
+        decision: "create",
+        params: {},
+        dependsOn: ["token"],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(1, 4)).toEqual([
+    "~ rotate test/plan/token token",
+    "    Value gets a new value, as a resource that takes it needs one",
+    "+ create test/plan/secret secret",
+  ]);
+});
+
+it("prints why a resource is replaced to get a new credential", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "token",
+        type: "test/plan/token",
+        decision: "replace",
+        replaceFields: [{ name: "Value", known: true, credential: true }],
+        replaceOrder: "delete-first",
+        params: {},
+        dependsOn: [],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines).toContain(
+    "    Value needs a new value, as a resource that takes it needs one, and it has no rotate operation",
+  );
+  expect(lines.join("\n")).not.toContain("forces replacement");
+});
+
+it("prints a resource at which deploy fails for want of a credential", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "secret",
+        type: "test/plan/secret",
+        decision: "replace",
+        replaceFields: [{ name: "name", known: true }],
+        replaceOrder: "delete-first",
+        unheldCredentials: [{ resource: "token", name: "Value" }],
+        params: {},
+        dependsOn: ["token"],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines).toContain(
+    "    deploy fails here, as it holds no value for Value of token. The deploy after it replaces token",
+  );
+});

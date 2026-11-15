@@ -1,6 +1,7 @@
 import {
   assertRequiredOutputs,
   fillPhysicalNames,
+  findCredentialMarkers,
   validateParams,
   type BaseResource,
   type RecordedOutputs,
@@ -16,6 +17,14 @@ import {
 } from "./dependency-graph";
 import { isCycle, orderDeployUnits, type DeployUnit } from "./cycles";
 import { createBlocksDelete } from "./delete-cascade";
+import {
+  assertNoHiddenCredential,
+  credentialConsumers,
+  credentialsToMint,
+  mintAction,
+  setRecordedOutput,
+  takesCredential,
+} from "./credentials";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
 import { sweepSteps, sweptRecords } from "./orphan-sweep";
@@ -24,10 +33,13 @@ import {
   assertOrphanDeleteAllowed,
   decideAction,
   getDependencyIds,
+  keepsResource,
   recordedEdges,
   retiredEdges,
   type Plan,
   type PlanNode,
+  type ResourceAction,
+  UNKNOWN_AFTER_APPLY,
 } from "./plan";
 import { workflowRegistry, type ResourceRegistry } from "./resource-registry";
 import {
@@ -117,7 +129,7 @@ export async function createPlan({
     );
     const { stateNode } = known;
     let { params } = known;
-    const action = await runOperation(
+    let action: ResourceAction = await runOperation(
       applyDriftDetection(createStepRunner(), {
         action: decideAction({ resource, stateNode, params }),
         driftDetection: detectDrift,
@@ -128,6 +140,25 @@ export async function createPlan({
         maxOperationAttempts,
       }),
     );
+
+    // As deploy does before it reaches the resources that take a credential
+    // of this one. See `mintNeededCredentials`.
+    const { rotates, replace } = mintAction(
+      resource,
+      stateNode &&
+        !isCreatingRecord(stateNode) &&
+        keepsResource(action.decision)
+        ? credentialsToMint(
+            resource,
+            stateNode.output,
+            credentialConsumers(resource, resources).map((consumer) => ({
+              resource: consumer,
+              record: stateById.get(consumer.id),
+            })),
+          )
+        : [],
+    );
+    if (replace) action = replace;
 
     const dependsOn = getDependencyIds(resource);
     const replaceFields =
@@ -194,6 +225,16 @@ export async function createPlan({
         unknownNames(resource, known.unnamed),
       );
     }
+    if (rotates.length > 0) {
+      // The new version is unknown until deploy rotates the credential, so
+      // the resources that take it plan an update.
+      resource.setOutput({
+        ...resource.output,
+        ...Object.fromEntries(
+          rotates.map((name) => [name, UNKNOWN_AFTER_APPLY]),
+        ),
+      });
+    }
     edgesById.set(resource.id, dependsOn);
     // A delete-first replace deletes the retired instances, and a create-first
     // replace retires the resource.
@@ -232,6 +273,7 @@ export async function createPlan({
       ...(replaced ? { replaceOrder: order } : {}),
       ...(replacedDependency ? { replacedDependency } : {}),
       ...(brokenDependents.length > 0 ? { brokenDependents } : {}),
+      ...(rotates.length > 0 ? { rotates } : {}),
       ...(cycle
         ? {
             cycle: cycle.members
@@ -248,6 +290,76 @@ export async function createPlan({
     };
   };
 
+  // The resources planned so far, by ID, each with its cycle.
+  const planned = new Map<
+    string,
+    { resource: BaseResource; cycle: DeployUnit | undefined }
+  >();
+
+  // As deploy does when it reaches a resource that it creates again, and
+  // that takes a credential whose value it does not hold. See
+  // `obtainCredentials`. `lists` hold the nodes planned so far.
+  //
+  // The params of `node` hold a marker only for a credential that gets no
+  // new value earlier in the deploy. Plan holds no value, as deploy holds
+  // none for a credential made in an earlier deploy.
+  const planLateRotations = async (node: PlanNode, lists: PlanNode[][]) => {
+    if (keepsResource(node.decision)) return;
+    const find = (id: string) => {
+      for (const list of lists) {
+        const index = list.findIndex(
+          (other) => other.id === id && other.decision !== "delete-retired",
+        );
+        if (index >= 0) return { list, index };
+      }
+      return undefined;
+    };
+    for (const { $credential } of findCredentialMarkers(node.params)) {
+      const { resource: id, name } = $credential;
+      const producer = resourceById.get(id);
+      const at = find(id);
+      if (!producer || !at) continue;
+      const producerNode = at.list[at.index]!;
+      if (producerNode.rotates?.includes(name)) continue;
+      if (!producer.rotate?.[name]) {
+        const unheld = (node.unheldCredentials ??= []);
+        if (!unheld.some((c) => c.resource === id && c.name === name)) {
+          unheld.push({ resource: id, name });
+        }
+        continue;
+      }
+      producerNode.rotates = [...(producerNode.rotates ?? []), name];
+      producer.setOutput({ ...producer.output, [name]: UNKNOWN_AFTER_APPLY });
+      // Deploy updates the resources before this one that take the
+      // credential. The first plan of each read it for drift.
+      for (const [siblingId, sibling] of planned) {
+        if (!takesCredential(sibling.resource, producer, name)) continue;
+        const siblingAt = find(siblingId);
+        const first = siblingAt?.list[siblingAt.index];
+        if (!first || !keepsResource(first.decision)) continue;
+        const again = await planResource(
+          sibling.resource,
+          sibling.cycle,
+          false,
+        );
+        // A resource with drift keeps its node, and its diff gains the
+        // credential.
+        siblingAt!.list[siblingAt!.index] =
+          first.decision === "drift-update" && first.diff && again.diff
+            ? {
+                ...first,
+                params: again.params,
+                diff: {
+                  added: { ...first.diff.added, ...again.diff.added },
+                  deleted: { ...first.diff.deleted, ...again.diff.deleted },
+                  updated: { ...first.diff.updated, ...again.diff.updated },
+                },
+              }
+            : again;
+      }
+    }
+  };
+
   // The records whose retired instances deploy deletes with the record, in a
   // delete-first replace or a cascade, and not at the end of the deploy.
   const deletedWithRecord = new Set<string>();
@@ -256,7 +368,10 @@ export async function createPlan({
     const members = await loadUnit(unit, state);
     const unitNodes: PlanNode[] = [];
     for (const resource of members) {
-      unitNodes.push(await planResource(resource, cycle));
+      const node = await planResource(resource, cycle);
+      unitNodes.push(node);
+      await planLateRotations(node, [unitNodes, nodes]);
+      planned.set(resource.id, { resource, cycle });
     }
     if (cycle) {
       // A member planned before a replaced member took the output of the old
@@ -357,7 +472,7 @@ async function loadOutput(
   // A "creating" record holds no outputs, so dependents plan against unknown
   // outputs, as for a resource with no record.
   if (stateNode && !isCreatingRecord(stateNode)) {
-    resource.setOutput(stateNode.output);
+    setRecordedOutput(resource, stateNode.output);
   }
   return stateNode;
 }
@@ -384,6 +499,7 @@ export async function planKnownParams(
   params: Record<string, unknown>;
   unnamed: Record<string, unknown>;
 }> {
+  assertNoHiddenCredential(resource);
   const stateNode = await loadOutput(resource, state);
   const names = nameFields(resource);
   const unnamed = await resource.planParams({ recordedOutputs });
