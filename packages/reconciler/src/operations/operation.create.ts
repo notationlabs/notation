@@ -568,7 +568,7 @@ function getLookupFunction(
   if (read && !hasComputedPrimaryKey(resource)) {
     return async () => {
       try {
-        await read(resource.keyOf(resourceParams));
+        await read(resource.keyOf(resourceParams), undefined, resourceParams);
       } catch (error) {
         if (ResourceNotFoundError.is(error)) return { status: "not-found" };
         // A pending read reports a resource that exists and has not finished.

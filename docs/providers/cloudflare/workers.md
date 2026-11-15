@@ -170,7 +170,7 @@ Deploy reads each value from its source, and sends it in the upload of the Worke
 - A secret without a source is sent only when the Worker doesn't have it. Deploy asks for the value then, or fails without a terminal. A value set with `notation secret set`, or given at an earlier prompt, is kept. So is a secret by that name that the Worker already has, such as one set with `wrangler secret put`.
 - An upload keeps a secret that it doesn't send, such as one set with `wrangler secret put`. A binding in `bindings` with the name of such a secret replaces it.
 - A value changed in the dashboard or with wrangler stays until deploy next sends the secret.
-- A secret deleted in the dashboard or with wrangler shows as drift. The next `notation deploy` uploads the Worker, and sends the secret again from its source or from the prompt.
+- A secret deleted in the dashboard or with wrangler shows as drift. The next `notation deploy` uploads the Worker, and sends the secret again from its source. If the secret has no source, the next deploy asks for its value, or fails without a terminal.
 
 When a Worker stops binding a secret, deploy deletes the secret from the Worker after the upload of the new code. Cloudflare keeps a secret that an upload leaves out, so the delete is a separate request. When the Worker is removed, deploy deletes the Worker, which deletes its secrets with it.
 

@@ -167,7 +167,7 @@ describe("SQS queue", () => {
       },
     }));
 
-    const result = await queue.read!({ QueueUrl: url });
+    const result = await queue.read!({ QueueUrl: url }, undefined, {} as any);
 
     expect(() =>
       validateValues(queue, queue.toResult(result), "read"),
@@ -207,7 +207,7 @@ describe("SQS queue", () => {
       },
     }));
 
-    const output = await withDlq.read!({ QueueUrl: url }, {} as any);
+    const output = await withDlq.read!({ QueueUrl: url }, {} as any, {} as any);
     const action = decideDriftAction({
       resource: withDlq,
       params: await withDlq.getParams(),
@@ -239,7 +239,7 @@ describe("SQS queue", () => {
       },
     }));
 
-    const result = await queue.read!({ QueueUrl: url });
+    const result = await queue.read!({ QueueUrl: url }, undefined, {} as any);
 
     expect(() =>
       validateValues(queue, queue.toResult(result), "read"),
@@ -269,7 +269,7 @@ describe("SQS queue", () => {
       },
     }));
 
-    const byQueue = await queue.read!({ QueueUrl: url });
+    const byQueue = await queue.read!({ QueueUrl: url }, undefined, {} as any);
 
     expect(() =>
       validateValues(queue, queue.toResult(byQueue), "read"),
@@ -289,7 +289,7 @@ describe("SQS queue", () => {
       },
     }));
 
-    const denyAll = await queue.read!({ QueueUrl: url });
+    const denyAll = await queue.read!({ QueueUrl: url }, undefined, {} as any);
 
     expect(denyAll).toMatchObject({
       RedriveAllowPolicy: { redrivePermission: "denyAll" },
@@ -380,8 +380,8 @@ describe("SQS queue", () => {
       throw queueDoesNotExist();
     });
 
-    await expect(queue.read!({ QueueUrl: url })).rejects.toSatisfy(
-      ResourceNotFoundError.is,
-    );
+    await expect(
+      queue.read!({ QueueUrl: url }, undefined, {} as any),
+    ).rejects.toSatisfy(ResourceNotFoundError.is);
   });
 });

@@ -32,15 +32,17 @@ describe("WorkerScriptPlaceholder", () => {
   it("reads a missing Worker as not found", async () => {
     mockFetch(() => fail(404, 10007, "not found"));
 
-    await expect(placeholder.read!(params)).rejects.toBeInstanceOf(
-      ResourceNotFoundError,
-    );
+    await expect(
+      placeholder.read!(params, undefined, {} as any),
+    ).rejects.toBeInstanceOf(ResourceNotFoundError);
   });
 
   it("reads a Worker that exists", async () => {
     mockFetch(() => ok({}));
 
-    await expect(placeholder.read!(params)).resolves.toEqual(params);
+    await expect(
+      placeholder.read!(params, undefined, {} as any),
+    ).resolves.toEqual(params);
   });
 
   it("deletes the Worker only while it carries the tag", async () => {

@@ -280,7 +280,7 @@ describe("ContainerImage", () => {
     mockRegistry();
     const key = { AccountId: "acc", Repository: "sandbox", Tag: "abc123" };
 
-    await expect(image.read!(key)).resolves.toEqual({
+    await expect(image.read!(key, undefined, {} as any)).resolves.toEqual({
       ...key,
       Image: `registry.cloudflare.com/ext1/sandbox@${DIGEST}`,
     });
@@ -298,7 +298,11 @@ describe("ContainerImage", () => {
     mockRegistry(null);
 
     await expect(
-      image.read!({ AccountId: "acc", Repository: "sandbox", Tag: "abc123" }),
+      image.read!(
+        { AccountId: "acc", Repository: "sandbox", Tag: "abc123" },
+        undefined,
+        {} as any,
+      ),
     ).rejects.toBeInstanceOf(ResourceNotFoundError);
   });
 

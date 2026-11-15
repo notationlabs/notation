@@ -157,7 +157,9 @@ describe("durable execution and replay", () => {
     expect(create).toHaveBeenCalledOnce();
     // The lookup, then the read of the takeover.
     expect(read).toHaveBeenCalledTimes(2);
-    expect(read).toHaveBeenNthCalledWith(1, { name: "app" });
+    expect(read).toHaveBeenNthCalledWith(1, { name: "app" }, undefined, {
+      name: "app",
+    });
     expect(await runtime.state.get("looked-up")).toMatchObject({
       output: { name: "app" },
       version: 2,

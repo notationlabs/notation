@@ -109,7 +109,7 @@ describe("R2Bucket", () => {
     ]);
 
     await bucket.create(euParams);
-    await bucket.read!(euKey);
+    await bucket.read!(euKey, undefined, {} as any);
     await bucket.update!(euKey, {} as any, euParams, euParams);
     await bucket.delete(euKey, {} as any);
 
@@ -171,7 +171,7 @@ describe("R2Bucket", () => {
       }),
     );
 
-    await expect(bucket.read!(key)).resolves.toEqual({
+    await expect(bucket.read!(key, undefined, {} as any)).resolves.toEqual({
       ...key,
       StorageClass: "InfrequentAccess",
     });
@@ -180,7 +180,7 @@ describe("R2Bucket", () => {
   it("reads a bucket without a storage class as Standard", async () => {
     mockFetch(() => ok({ name: "app--dev--uploads" }));
 
-    await expect(bucket.read!(key)).resolves.toEqual({
+    await expect(bucket.read!(key, undefined, {} as any)).resolves.toEqual({
       ...key,
       StorageClass: "Standard",
     });
@@ -226,16 +226,16 @@ describe("R2Bucket", () => {
   it("reads a missing bucket as not found, and deletes it without an error", async () => {
     mockFetch(() => noSuchBucket());
 
-    await expect(bucket.read!(key)).rejects.toBeInstanceOf(
-      ResourceNotFoundError,
-    );
+    await expect(
+      bucket.read!(key, undefined, {} as any),
+    ).rejects.toBeInstanceOf(ResourceNotFoundError);
     await expect(bucket.delete(key, {} as any)).resolves.toBeUndefined();
   });
 
   it("doesn't read a 404 with another code as not found", async () => {
     mockFetch(() => fail(404, 7003, "No route for that URI"));
 
-    const error = await bucket.read!(key).catch((e) => e);
+    const error = await bucket.read!(key, undefined, {} as any).catch((e) => e);
     expect(error).not.toBeInstanceOf(ResourceNotFoundError);
     expect(error.message).toContain("No route for that URI (7003)");
     await expect(bucket.delete(key, {} as any)).rejects.toThrow(

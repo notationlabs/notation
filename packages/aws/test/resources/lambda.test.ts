@@ -46,6 +46,7 @@ it("reads VPC and SnapStart config in the shape they are configured in", async (
   const result = (await lambda.read!(
     { FunctionName: "app" },
     {} as any,
+    {} as any,
   )) as Record<string, unknown>;
 
   expect(result.VpcConfig).toEqual({
@@ -374,6 +375,7 @@ describe("Lambda environment", () => {
     const result: any = await createLambda().read!(
       { FunctionName: "app" },
       {} as any,
+      {} as any,
     );
 
     expect(result.Environment).toEqual({ Variables: { STAGE: "prod" } });
@@ -381,7 +383,11 @@ describe("Lambda environment", () => {
 
   async function driftDecision(lambda: LambdaFunctionInstance) {
     const params = await lambda.getParams();
-    const output = await lambda.read!({ FunctionName: "app" }, {} as any);
+    const output = await lambda.read!(
+      { FunctionName: "app" },
+      {} as any,
+      {} as any,
+    );
     return decideDriftAction({
       resource: lambda,
       params,

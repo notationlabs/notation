@@ -113,7 +113,7 @@ test("read reports the rule's current targets", async () => {
     return { Name: "daily", Arn: "arn:rule" };
   });
 
-  const result = await rule.read!(key);
+  const result = await rule.read!(key, undefined, {} as any);
 
   expect(result).toMatchObject({ Targets: [{ Id: "fn", Arn: "arn:fn" }] });
   expect(() =>
@@ -286,7 +286,7 @@ test("read returns the event pattern in compact form", async () => {
     };
   });
 
-  const result = await rule.read!(key);
+  const result = await rule.read!(key, undefined, {} as any);
 
   expect(result).toMatchObject({
     EventPattern: '{"source":["shop"]}',

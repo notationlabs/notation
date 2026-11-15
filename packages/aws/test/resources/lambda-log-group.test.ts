@@ -151,7 +151,7 @@ describe("LambdaLogGroup read", () => {
       ],
     }));
 
-    await expect(logGroup.read!(key)).resolves.toEqual({
+    await expect(logGroup.read!(key, undefined, {} as any)).resolves.toEqual({
       logGroupName: "/aws/lambda/app",
       retentionInDays: 7,
     });
@@ -162,7 +162,7 @@ describe("LambdaLogGroup read", () => {
       logGroups: [{ logGroupName: "/aws/lambda/app" }],
     }));
 
-    await expect(logGroup.read!(key)).resolves.toEqual({
+    await expect(logGroup.read!(key, undefined, {} as any)).resolves.toEqual({
       logGroupName: "/aws/lambda/app",
       retentionInDays: 0,
     });
@@ -173,7 +173,7 @@ describe("LambdaLogGroup read", () => {
       logGroups: [{ logGroupName: "/aws/lambda/app-2" }],
     }));
 
-    await expect(logGroup.read!(key)).rejects.toSatisfy(
+    await expect(logGroup.read!(key, undefined, {} as any)).rejects.toSatisfy(
       ResourceNotFoundError.is,
     );
   });

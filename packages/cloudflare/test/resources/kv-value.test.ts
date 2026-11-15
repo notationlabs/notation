@@ -312,20 +312,23 @@ describe("KVValue", () => {
   it("reads the value", async () => {
     mockFetch(() => text("v1"));
 
-    await expect(kvValue.read!(key)).resolves.toEqual({ ...key, Value: "v1" });
+    await expect(kvValue.read!(key, undefined, {} as any)).resolves.toEqual({
+      ...key,
+      Value: "v1",
+    });
   });
 
   it("reads a missing key or namespace as not found", async () => {
     mockFetch(() => keyNotFound());
-    await expect(kvValue.read!(key)).rejects.toBeInstanceOf(
-      ResourceNotFoundError,
-    );
+    await expect(
+      kvValue.read!(key, undefined, {} as any),
+    ).rejects.toBeInstanceOf(ResourceNotFoundError);
 
     vi.restoreAllMocks();
     mockFetch(() => namespaceNotFound());
-    await expect(kvValue.read!(key)).rejects.toBeInstanceOf(
-      ResourceNotFoundError,
-    );
+    await expect(
+      kvValue.read!(key, undefined, {} as any),
+    ).rejects.toBeInstanceOf(ResourceNotFoundError);
   });
 
   it("deletes the key, and succeeds when its namespace is gone", async () => {

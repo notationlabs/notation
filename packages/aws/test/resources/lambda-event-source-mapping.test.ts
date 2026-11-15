@@ -141,7 +141,7 @@ describe("LambdaEventSourceMapping", () => {
     mockSend(() => ({ UUID: "uuid", State: "Creating" }));
 
     await expect(
-      createMapping().read!({ UUID: "uuid" }),
+      createMapping().read!({ UUID: "uuid" }, undefined, {} as any),
     ).rejects.toBeInstanceOf(ResourceOperationPendingError);
   });
 
@@ -155,7 +155,11 @@ describe("LambdaEventSourceMapping", () => {
       State: "Disabled",
     }));
 
-    const result = await createMapping().read!({ UUID: "uuid" });
+    const result = await createMapping().read!(
+      { UUID: "uuid" },
+      undefined,
+      {} as any,
+    );
 
     expect(result).toMatchObject({ BatchSize: 10, Enabled: false });
   });
@@ -211,7 +215,11 @@ describe("LambdaEventSourceMapping", () => {
       State: "Enabled",
     }));
 
-    const result = await createMapping().read!({ UUID: "uuid" });
+    const result = await createMapping().read!(
+      { UUID: "uuid" },
+      undefined,
+      {} as any,
+    );
 
     expect(result).toMatchObject({
       FunctionResponseTypes: [],

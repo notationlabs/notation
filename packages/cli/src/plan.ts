@@ -194,9 +194,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 // A secret without a source has `ValueFrom: { Source: PROMPT_SOURCE }`. Plan
 // never asks for the value, so it says that deploy will. A Worker holds its
 // secrets in `Secrets`, by binding name. An update flags an entry that is
-// new or whose `Source` changed. The node can't tell the first deploy after
-// the upgrade from `WorkerSecret`, where every entry is new to state but
-// the Worker has the secrets, so that deploy flags them too.
+// new or whose `Source` changed. A drift update flags an entry whose secret
+// was deleted from the Worker, as the read leaves it out, and deploy asks
+// for it. The node can't tell the first deploy after the upgrade from
+// `WorkerSecret`, where every entry is new to state but the Worker has the
+// secrets, so that deploy flags them too.
 function promptsForValue(node: PlanNode): boolean {
   const secrets = node.params.Secrets as Record<string, ValueFrom> | undefined;
   const prompted = Object.entries(secrets ?? {})

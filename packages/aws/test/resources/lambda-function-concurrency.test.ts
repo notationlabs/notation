@@ -81,7 +81,7 @@ describe("LambdaFunctionConcurrency", () => {
   it("reads the reserved concurrency", async () => {
     mockSend(() => ({ ReservedConcurrentExecutions: 10 }));
 
-    expect(await concurrency().read!(key, {} as any)).toEqual({
+    expect(await concurrency().read!(key, {} as any, {} as any)).toEqual({
       FunctionName: "app--prod--orders",
       ReservedConcurrentExecutions: 10,
     });
@@ -91,9 +91,9 @@ describe("LambdaFunctionConcurrency", () => {
     mockSend(() => ({}));
     const resource = concurrency();
 
-    await expect(resource.read!(key, {} as any)).rejects.toBeInstanceOf(
-      ResourceNotFoundError,
-    );
+    await expect(
+      resource.read!(key, {} as any, {} as any),
+    ).rejects.toBeInstanceOf(ResourceNotFoundError);
 
     const params = await resource.getParams();
     const plan = await createPlan({

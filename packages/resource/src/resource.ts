@@ -158,8 +158,8 @@ export interface BaseResource {
   >;
   read?: (
     key: any,
-    context?: ResourceOperationContext,
-    params?: any,
+    context: ResourceOperationContext | undefined,
+    params: any,
   ) => Promise<{}>;
   update?: (
     key: any,
@@ -295,8 +295,8 @@ export abstract class Resource<
   rotate?: RotateOperations<T>;
   abstract read?: (
     key: T["compoundKey"],
-    context?: ResourceOperationContext,
-    params?: T["params"],
+    context: ResourceOperationContext | undefined,
+    params: T["params"],
   ) => Promise<T["result"]>;
   abstract update?: (
     key: T["compoundKey"],
@@ -989,15 +989,16 @@ export type ResourceOperationsOptions<
    */
   find?: (params: T["params"]) => Promise<T["primaryKey"] & {}>;
   /**
-   * `params` lets a read report which declared parts of the resource are
-   * missing, when the key doesn't name them. They are the desired params,
-   * except for the drift read of a cycle's placeholder, which gets the
-   * params in its state record.
+   * `params` lets a read choose what to observe, such as the declared parts
+   * of the resource that the key doesn't name. A read must never return a
+   * value from `params` as a remote value. A value in `params` can be
+   * unknown at plan. They are the desired params, except for the drift read
+   * of a cycle's placeholder, which gets the params in its state record.
    */
   read?: (
     key: T["compoundKey"],
-    context?: ResourceOperationContext,
-    params?: T["params"],
+    context: ResourceOperationContext | undefined,
+    params: T["params"],
   ) => Promise<T["result"]>;
   /**
    * A param that takes a credential of another resource holds the value in

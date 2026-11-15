@@ -147,7 +147,7 @@ describe("KVNamespace", () => {
   it("reads the title, and leaves out the jurisdiction", async () => {
     mockFetch(() => ok({ id: "ns1", title: params.Title, jurisdiction: "eu" }));
 
-    await expect(namespace.read!(key)).resolves.toEqual({
+    await expect(namespace.read!(key, undefined, {} as any)).resolves.toEqual({
       ...key,
       Title: params.Title,
     });
@@ -157,9 +157,9 @@ describe("KVNamespace", () => {
   it("reads a missing namespace as not found, and deletes it without an error", async () => {
     mockFetch(() => fail(404, 10013, "namespace not found"));
 
-    await expect(namespace.read!(key)).rejects.toBeInstanceOf(
-      ResourceNotFoundError,
-    );
+    await expect(
+      namespace.read!(key, undefined, {} as any),
+    ).rejects.toBeInstanceOf(ResourceNotFoundError);
     await expect(namespace.delete(key, {} as any)).resolves.toBeUndefined();
     expect(calls[1]!.method).toBe("DELETE");
   });
@@ -167,7 +167,9 @@ describe("KVNamespace", () => {
   it("doesn't read a 404 without the not-found code as not found", async () => {
     mockFetch(() => fail(404, 7003, "Could not route to /accounts/acc"));
 
-    const error = await namespace.read!(key).catch((e) => e);
+    const error = await namespace.read!(key, undefined, {} as any).catch(
+      (e) => e,
+    );
     expect(error).not.toBeInstanceOf(ResourceNotFoundError);
     expect(error.message).toContain("failed with status 404");
     await expect(namespace.delete(key, {} as any)).rejects.toThrow(

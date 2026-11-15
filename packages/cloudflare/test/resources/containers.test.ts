@@ -376,13 +376,15 @@ describe("ContainerApplication", () => {
       }),
     );
 
-    await expect(application.read!(key)).resolves.toEqual({
-      AccountId: "acc",
-      ApplicationId: "app1",
-      Name: params.Name,
-      DurableObjectNamespaceId: "ns1",
-      MaxInstances: 5,
-    });
+    await expect(application.read!(key, undefined, {} as any)).resolves.toEqual(
+      {
+        AccountId: "acc",
+        ApplicationId: "app1",
+        Name: params.Name,
+        DurableObjectNamespaceId: "ns1",
+        MaxInstances: 5,
+      },
+    );
     expect(calls[0]!.url).toBe(`${API}/applications/app1`);
   });
 
@@ -391,16 +393,18 @@ describe("ContainerApplication", () => {
       fail(404, 1609, "APPLICATION_NOT_FOUND: Container application not found"),
     );
 
-    await expect(application.read!(key)).rejects.toBeInstanceOf(
-      ResourceNotFoundError,
-    );
+    await expect(
+      application.read!(key, undefined, {} as any),
+    ).rejects.toBeInstanceOf(ResourceNotFoundError);
     await expect(application.delete(key, {} as any)).resolves.toBeUndefined();
   });
 
   it("doesn't read a 404 without the not-found code as not found", async () => {
     mockFetch(() => fail(404, 7003, "Could not route to /accounts/acc/x"));
 
-    const error = await application.read!(key).catch((e) => e);
+    const error = await application.read!(key, undefined, {} as any).catch(
+      (e) => e,
+    );
     expect(error).not.toBeInstanceOf(ResourceNotFoundError);
     expect(error.message).toContain("Could not route");
     await expect(application.delete(key, {} as any)).rejects.toThrow(
@@ -735,9 +739,15 @@ describe("ContainerRegistry", () => {
   it("reads the registry from the list, and reads one that is not listed as not found", async () => {
     mockFetch(() => ok([{ domain: "docker.io", kind: "DockerHub" }]));
 
-    await expect(registry.read!(key)).resolves.toEqual(key);
+    await expect(registry.read!(key, undefined, {} as any)).resolves.toEqual(
+      key,
+    );
     await expect(
-      registry.read!({ AccountId: "acc", Domain: "ghcr.io" }),
+      registry.read!(
+        { AccountId: "acc", Domain: "ghcr.io" },
+        undefined,
+        {} as any,
+      ),
     ).rejects.toBeInstanceOf(ResourceNotFoundError);
   });
 

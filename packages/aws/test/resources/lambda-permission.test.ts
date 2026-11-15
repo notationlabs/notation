@@ -129,7 +129,7 @@ describe("LambdaPermission", () => {
       }),
     }));
 
-    expect(await permission().read!(key)).toMatchObject({
+    expect(await permission().read!(key, undefined, {} as any)).toMatchObject({
       Action: "lambda:InvokeFunction",
       Principal: "events.amazonaws.com",
       SourceArn: "arn:aws:events:us-west-2:123456789012:rule/daily",
@@ -138,9 +138,9 @@ describe("LambdaPermission", () => {
 
   it("reads a statement that is not in the policy as not found", async () => {
     mockSend(() => ({ Policy: JSON.stringify({ Statement: [] }) }));
-    await expect(permission().read!(key)).rejects.toSatisfy(
-      ResourceNotFoundError.is,
-    );
+    await expect(
+      permission().read!(key, undefined, {} as any),
+    ).rejects.toSatisfy(ResourceNotFoundError.is);
   });
 
   it("reads a function with no policy as not found", async () => {
@@ -150,9 +150,9 @@ describe("LambdaPermission", () => {
         $metadata: {},
       });
     });
-    await expect(permission().read!(key)).rejects.toSatisfy(
-      ResourceNotFoundError.is,
-    );
+    await expect(
+      permission().read!(key, undefined, {} as any),
+    ).rejects.toSatisfy(ResourceNotFoundError.is);
   });
 
   it("deletes a statement that is already gone", async () => {

@@ -152,6 +152,31 @@ async function waitUntilReadable(account: string, scriptName: string) {
   }
 }
 
+// Cloudflare's list of a Worker's secrets can lag behind the upload that
+// sets them. The read after the upload records only the listed secrets, so a
+// name missing from the list would be lost from state, and a later removal of
+// it from config would never delete it.
+async function waitUntilSecretsListed(
+  account: string,
+  scriptName: string,
+  secrets: SecretTextBinding[],
+) {
+  if (secrets.length === 0) return;
+  const deadline = Date.now() + READABLE_WITHIN_MS;
+  for (;;) {
+    const listed = await listScriptSecretNames(account, scriptName);
+    const missing = secrets.filter((secret) => !listed.has(secret.name));
+    if (missing.length === 0) return;
+    if (Date.now() >= deadline) {
+      const names = missing.map((secret) => secret.name).join(", ");
+      throw new Error(
+        `Cloudflare accepted the upload of the Worker ${scriptName}, but still left the secrets ${names} out of its list ${READABLE_WITHIN_MS / 1_000} seconds later`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, READABLE_RETRY_MS));
+  }
+}
+
 const workerScript = resource<WorkerScriptSchema>({
   type: WORKER_SCRIPT_TYPE,
   provider: "@notation/cloudflare/resources",
@@ -310,12 +335,18 @@ export const WorkerScript = workerScriptSchema
       await cloudflareCreate(async () => {
         await upload(params, [], found, secrets, { tags: [] });
         await waitUntilReadable(params.AccountId, params.ScriptName);
+        await waitUntilSecretsListed(
+          params.AccountId,
+          params.ScriptName,
+          secrets,
+        );
       })();
     },
 
     // Returns the entries of `Secrets` whose secret the Worker still has, so
     // that a secret deleted outside notation shows as drift, and the update
-    // sends it again.
+    // sends it again. Cloudflare never returns a secret's value, so only a
+    // missing name is detected, not a changed value.
     read: async (key, _context, params) => {
       const settings = await getScriptSettings(key.AccountId, key.ScriptName);
       if (!settings) {
@@ -346,6 +377,11 @@ export const WorkerScript = workerScriptSchema
       const found = await findTransfers(params, previous);
       const secrets = await secretBindings(params, true);
       await upload(params, previous, found, secrets);
+      await waitUntilSecretsListed(
+        params.AccountId,
+        params.ScriptName,
+        secrets,
+      );
       const bound = new Set([
         ...Object.keys(params.Secrets ?? {}),
         ...(params.Bindings ?? []).map((binding) => binding.name),
