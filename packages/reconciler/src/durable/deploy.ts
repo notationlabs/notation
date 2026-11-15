@@ -22,19 +22,17 @@ export async function* deploy(
   // A step, so that a resumed execution does not run every resource's
   // deriveParams again.
   yield* step.run("notation:validate", async () => {
+    // Before `decideAction`, so that a wrong ID or hash fails with its own
+    // message, not with a class's refusal of the replace.
+    await checkReplaceRequest(opts);
     await validateKnownParams(opts);
     return null;
   });
   yield* withDeploymentHold(step, opts, async function* () {
-    // Inside the hold, so that a deploy that waited for another one checks
-    // the hashes against the records that the other one left.
+    // Again inside the hold, so that a deploy that waited for another one
+    // checks the hashes against the records that the other one left.
     yield* step.run("notation:replace-request", async () => {
-      assertReplaceRequest(opts.requested, {
-        resources: opts.resources,
-        records: await opts.state.values(),
-        deploymentId: opts.state.deploymentId,
-        point: "deploy",
-      });
+      await checkReplaceRequest(opts);
       return null;
     });
     // Read once, inside the hold, so that every `~state` ref reads the
@@ -63,6 +61,16 @@ export async function* deploy(
     }
 
     yield* sweepOrphans(step, deployOpts);
+  });
+}
+
+async function checkReplaceRequest(opts: DurableDeployOptions): Promise<void> {
+  if (!opts.requested) return;
+  assertReplaceRequest(opts.requested, {
+    resources: opts.resources,
+    records: await opts.state.values(),
+    deploymentId: opts.state.deploymentId,
+    point: "deploy",
   });
 }
 

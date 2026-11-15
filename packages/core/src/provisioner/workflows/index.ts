@@ -1,7 +1,9 @@
 export {
   createLoggerReconcilerSubscriber,
   createNdjsonEventEmitter,
+  formatRequest,
   parseReplaceTarget,
+  shellQuote,
   type Logger,
   type ReconcilerEvent,
   type ReconcilerEventEmitter,

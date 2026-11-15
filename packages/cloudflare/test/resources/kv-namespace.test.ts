@@ -279,15 +279,22 @@ describe("KVNamespace", () => {
       });
     });
 
-    it("is refused for any replace, and allows every other change", () => {
+    it("is refused only when requested", () => {
       const rejectChange = KVNamespace.rejectChange!;
+      expect(
+        rejectChange(
+          { ...params, ...key } as any,
+          { ...params, ...key } as any,
+          { replace: true, requested: true },
+        ),
+      ).toBe("Replacing this KV namespace would delete it and its keys.");
       expect(
         rejectChange(
           { ...params, ...key } as any,
           { ...params, ...key } as any,
           { replace: true },
         ),
-      ).toBe("Replacing this KV namespace would delete it and its keys.");
+      ).toBeUndefined();
       expect(
         rejectChange(
           { ...params, ...key } as any,

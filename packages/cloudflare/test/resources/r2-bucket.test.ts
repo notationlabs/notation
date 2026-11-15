@@ -304,7 +304,7 @@ describe("R2Bucket", () => {
           requested: { replace: [{ id: "bucket:uploads" }] },
         }),
       ).rejects.toThrow(
-        "bucket:uploads: Replacing this R2 bucket would delete it and its objects. To replace it, pass --override-loss-protection bucket:uploads with --replace.",
+        "bucket:uploads: Replacing this R2 bucket deletes it and creates it again. Cloudflare deletes only an empty bucket, so the replace fails while the bucket has objects. To replace it, pass --override-loss-protection bucket:uploads with --replace.",
       );
     });
 
@@ -327,11 +327,19 @@ describe("R2Bucket", () => {
       });
     });
 
-    it("is refused for any replace, and allows every other change", () => {
+    it("is refused only when requested", () => {
       const rejectChange = R2Bucket.rejectChange!;
       expect(
+        rejectChange(params as any, params as any, {
+          replace: true,
+          requested: true,
+        }),
+      ).toBe(
+        "Replacing this R2 bucket deletes it and creates it again. Cloudflare deletes only an empty bucket, so the replace fails while the bucket has objects.",
+      );
+      expect(
         rejectChange(params as any, params as any, { replace: true }),
-      ).toBe("Replacing this R2 bucket would delete it and its objects.");
+      ).toBeUndefined();
       expect(
         rejectChange(params as any, params as any, { replace: false }),
       ).toBeUndefined();

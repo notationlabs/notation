@@ -3,6 +3,7 @@ import {
   planApp,
   PROMPT_SOURCE,
   resolveDeploymentId,
+  shellQuote,
   type Deployment,
   type Plan,
   type PlanNode,
@@ -72,9 +73,10 @@ export async function plan(
   });
   printPlanSummary(result, logger);
   if (opts.requested) {
-    const config = opts.config === undefined ? "" : ` --config ${opts.config}`;
+    const config =
+      opts.config === undefined ? "" : ` --config ${shellQuote(opts.config)}`;
     logger.info(
-      `\nTo deploy this plan:\n  notation deploy${config} --stage ${deployment.stage} ${requestFlags(result, opts.requested)}`,
+      `\nTo deploy this plan:\n  notation deploy${config} --stage ${shellQuote(deployment.stage)} ${requestFlags(result, opts.requested)}`,
     );
   }
 }

@@ -1,6 +1,7 @@
 import * as durable from "@notation/reconciler/durable";
 import {
   createLoggerReconcilerSubscriber,
+  formatRequest,
   type ReconcilerEventEmitter,
   type ReplaceRequest,
   type ResourceRegistry,
@@ -129,18 +130,4 @@ export function assertSameRequest(
       ? `Execution ${executionId} was started with ${started}. Leave out --replace, or pass the same flags.`
       : `Execution ${executionId} was started without --replace. Leave out --replace and --override-loss-protection.`,
   );
-}
-
-/** The request as flags, in a fixed order. Empty for no request. */
-export function formatRequest(request: ReplaceRequest | undefined): string {
-  return [
-    ...(request?.replace ?? [])
-      .map(({ id, instanceHash }) =>
-        instanceHash ? `--replace ${id}@${instanceHash}` : `--replace ${id}`,
-      )
-      .sort(),
-    ...(request?.overrideLossProtection ?? [])
-      .map((id) => `--override-loss-protection ${id}`)
-      .sort(),
-  ].join(" ");
 }

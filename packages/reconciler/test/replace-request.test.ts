@@ -170,10 +170,10 @@ describe("parseReplaceTarget", () => {
     });
   });
 
-  it("fails on a hash that is not 8 hex characters", () => {
-    expect(() => parseReplaceTarget("orders@xyz")).toThrow(
-      "--replace orders@xyz is not <resource id>@<instance hash>",
-    );
+  it("reads a value whose part after the last @ is not 8 hex characters as an ID", () => {
+    expect(parseReplaceTarget("orders@xyz")).toEqual({ id: "orders@xyz" });
+    expect(parseReplaceTarget("orders@")).toEqual({ id: "orders@" });
+    expect(parseReplaceTarget("@3c1f9a02")).toEqual({ id: "@3c1f9a02" });
   });
 });
 

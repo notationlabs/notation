@@ -8730,6 +8730,40 @@ describe("requested replace", () => {
     runtime.close();
   });
 
+  it("fails a wrong hash with its own message on a class that refuses the replace", async () => {
+    const Bucket = resource({
+      type: "test/durable/protected",
+      provider: "test",
+    })
+      // Cast: as in `defineQueues`.
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => undefined,
+        rejectChange: (_previous: any, _desired: any, context: any) =>
+          context.requested ? "Replacing this bucket deletes it." : undefined,
+      });
+    const bucket = new Bucket("bucket", { config: { name: "b" } as any });
+    const options: { requested?: ReplaceRequest } = {};
+    const runtime = createRuntime([bucket], "requested-protected", options);
+    await runtime.run("requested-protected-1");
+
+    options.requested = {
+      replace: [{ id: "bucket", instanceHash: "00000000" }],
+    };
+    await expect(runtime.run("requested-protected-2")).rejects.toThrow(
+      /^bucket has the instance hash [0-9a-f]{8} in this stage, not 00000000\.$/,
+    );
+    runtime.close();
+  });
+
   it("checks the hash inside the hold, so a deploy that waited with the same request fails", async () => {
     let block = false;
     let unblock!: () => void;

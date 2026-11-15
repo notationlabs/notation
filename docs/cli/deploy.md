@@ -25,7 +25,7 @@ Deploy replaces a resource by itself only when a param that forces replacement c
 notation deploy --stage prod --replace lambda:orders:role@3c1f9a02
 ```
 
-The part before the last `@` is the resource ID as state records it. For a resource that a construct declared, that is the ID that the construct made, such as `worker:api:subdomain` for the workers.dev subdomain of `$worker({ id: "api" })`.
+The part before the last `@` is the resource ID as state records it. When the part after the last `@` is not 8 hex characters, the whole value is the ID, with no hash. For a resource that a construct declared, that is the ID that the construct made, such as `worker:api:subdomain` for the workers.dev subdomain of `$worker({ id: "api" })`.
 
 The part after the `@` is the instance hash: the first 8 hex characters of a SHA-256 of the state key `<app>:<stage>` and the resource's primary key. Deploy fails, before it changes anything, when the hash does not match:
 
@@ -52,19 +52,21 @@ Deploy fails, before it changes anything, when:
 
 ### Loss protection
 
-Some classes refuse a replace, because the replace deletes data. The R2 bucket and the KV namespace are two of them:
+Some classes refuse a replace that `--replace` asks for, because the replace deletes data. The R2 bucket and the KV namespace are two of them:
 
 ```text
-✗ bucket:uploads: Replacing this R2 bucket would delete it and its objects. To replace it, pass --override-loss-protection bucket:uploads with --replace.
+✗ kv:cache: Replacing this KV namespace would delete it and its keys. To replace it, pass --override-loss-protection kv:cache with --replace.
 ```
 
 `--override-loss-protection <id>` turns off this check for one resource that `--replace` also names:
 
 ```sh
-notation deploy --replace bucket:uploads@5d0a7c13 --override-loss-protection bucket:uploads
+notation deploy --replace kv:cache@5d0a7c13 --override-loss-protection kv:cache
 ```
 
 The flag turns off only the check of the named resource's class. A param whose change would replace the resource still fails with its own message, and a dependent whose replace is refused still fails the deploy.
+
+With the flag, the replace of a KV namespace deletes its keys. The replace of an R2 bucket deletes the bucket first, and Cloudflare deletes only an empty bucket. So the deploy fails at the delete while the bucket has objects, and the bucket and its objects stay. Delete the objects first to replace the bucket.
 
 ### Resuming
 

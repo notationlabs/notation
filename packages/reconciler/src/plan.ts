@@ -186,17 +186,19 @@ export function decideAction(opts: {
     assertReplaceAllowed(resource, stateNode.params, params, replaceFields);
   }
   if (!requested?.overrideLossProtection) {
-    const message = resource.rejectChange?.(stateNode.params, params, {
-      replace: Boolean(requested) || replaceFields.length > 0,
-      ...(requested ? { requested: true as const } : {}),
-    });
-    if (message !== undefined) {
-      throw new Error(
-        requested
-          ? `${resource.id}: ${message} To replace it, pass --override-loss-protection ${resource.id} with --replace.`
-          : `${resource.id}: ${message}`,
-      );
-    }
+    assertChangeAllowed(
+      resource.id,
+      resource.rejectChange,
+      stateNode.params,
+      params,
+      {
+        replace: Boolean(requested) || replaceFields.length > 0,
+        ...(requested ? { requested: true as const } : {}),
+      },
+      requested
+        ? `To replace it, pass --override-loss-protection ${resource.id} with --replace.`
+        : undefined,
+    );
   }
 
   if (requested || replaceFields.length > 0) {
@@ -237,16 +239,21 @@ function assertReplaceAllowed(
   }
 }
 
-/** Throws the message of `rejectChange`, if it returns one. */
+/**
+ * Throws the message of `rejectChange`, if it returns one, followed by
+ * `hint`.
+ */
 export function assertChangeAllowed(
   id: string,
   rejectChange: RejectChange<any> | undefined,
   previous: Record<string, unknown>,
   desired: Record<string, unknown> | undefined,
   context: RejectChangeContext,
+  hint?: string,
 ): void {
   const message = rejectChange?.(previous, desired, context);
-  if (message !== undefined) throw new Error(`${id}: ${message}`);
+  if (message === undefined) return;
+  throw new Error(hint ? `${id}: ${message} ${hint}` : `${id}: ${message}`);
 }
 
 /**

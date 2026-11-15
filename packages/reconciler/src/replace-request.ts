@@ -26,19 +26,41 @@ const INSTANCE_HASH = /^[0-9a-f]{8}$/;
 
 /**
  * Reads `<id>@<instance hash>`. The ID is the part before the last `@`. A
- * value with no `@` is an ID with no hash.
+ * value with no `@`, or whose part after the last `@` is not 8 hex
+ * characters, is an ID with no hash.
  */
 export function parseReplaceTarget(value: string): ReplaceTarget {
   const at = value.lastIndexOf("@");
-  if (at < 0) return { id: value };
   const id = value.slice(0, at);
   const instanceHash = value.slice(at + 1);
-  if (!id || !INSTANCE_HASH.test(instanceHash)) {
-    throw new Error(
-      `--replace ${value} is not <resource id>@<instance hash>. The instance hash is 8 hex characters. notation plan --replace <resource id> prints the command with the hash.`,
-    );
-  }
+  if (at <= 0 || !INSTANCE_HASH.test(instanceHash)) return { id: value };
   return { id, instanceHash };
+}
+
+/** The request as flags, in a fixed order. Empty for no request. */
+export function formatRequest(request: ReplaceRequest | undefined): string {
+  return [
+    ...(request?.replace ?? [])
+      .map(({ id, instanceHash }) =>
+        shellQuote(instanceHash ? `${id}@${instanceHash}` : id),
+      )
+      .map((value) => `--replace ${value}`)
+      .sort(),
+    ...(request?.overrideLossProtection ?? [])
+      .map((id) => `--override-loss-protection ${shellQuote(id)}`)
+      .sort(),
+  ].join(" ");
+}
+
+const SHELL_SAFE = /^[A-Za-z0-9_./:@=-]+$/;
+
+/**
+ * The value as one shell word. A value with a character outside
+ * `[A-Za-z0-9_./:@=-]` is put in single quotes.
+ */
+export function shellQuote(value: string): string {
+  if (SHELL_SAFE.test(value)) return value;
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 /**

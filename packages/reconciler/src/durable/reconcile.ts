@@ -842,6 +842,9 @@ async function* deleteBlockingDependents(
       continue;
     }
     if (!declared.rejectChange) continue;
+    // As the planner does, which decides a requested dependent with
+    // `decideAction` and skips its cascade check.
+    if (requestedReplace(opts.requested, id)?.overrideLossProtection) continue;
     // A step, as deriveParams is user code and need not be deterministic.
     const params = yield* step.run(
       `params:${encodeURIComponent(id)}`,

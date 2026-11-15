@@ -15,6 +15,8 @@ const { planApp } = vi.hoisted(() => ({
 vi.mock("@notation/core", async (importOriginal) => ({
   formatRequest: (await importOriginal<typeof import("@notation/core")>())
     .formatRequest,
+  shellQuote: (await importOriginal<typeof import("@notation/core")>())
+    .shellQuote,
   createLoggerReconcilerSubscriber: () => () => undefined,
   planApp,
   PROMPT_SOURCE: "prompt",
@@ -521,6 +523,38 @@ it("prints a requested replace, and the deploy command with the instance hash", 
   ]);
   expect(lines.at(-1)).toBe(
     "\nTo deploy this plan:\n  notation deploy --config jobs.config.ts --stage prod --replace lambda:orders:role@3c1f9a02 --override-loss-protection lambda:orders:role",
+  );
+});
+
+it("quotes a value in the deploy command that the shell would split or expand", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "queue:it's",
+        type: "test/plan/queue",
+        decision: "replace",
+        replaceFields: [{ requested: true, known: true }],
+        instanceHash: "3c1f9a02",
+        params: {},
+        dependsOn: [],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(
+    { ...deployment, stage: "pr 12" },
+    {
+      logger,
+      requested: { replace: [{ id: "queue:it's" }] },
+      config: "my app/notation.config.ts",
+    },
+  );
+
+  expect(lines.at(-1)).toBe(
+    "\nTo deploy this plan:\n  notation deploy --config 'my app/notation.config.ts' --stage 'pr 12' --replace 'queue:it'\\''s@3c1f9a02'",
   );
 });
 
