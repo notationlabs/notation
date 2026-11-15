@@ -14,6 +14,7 @@ import {
   reconcileResource,
   type ReconcileOptions,
 } from "./reconcile";
+import { withCredentialMarkers } from "../credentials";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import type { DeployContext } from "./types";
 import type { DurableStep } from "./sdk";
@@ -195,7 +196,7 @@ async function* checkPlaceholder(
   if (!session.node || isCreatingRecord(session.node)) {
     return { recorded: false };
   }
-  resource.setOutput(session.node.output);
+  resource.setOutput(withCredentialMarkers(resource, session.node.output));
   if (!(opts.driftDetection ?? true) || !resource.read) {
     return { recorded: true };
   }

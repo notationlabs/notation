@@ -164,13 +164,21 @@ export async function* createResourceOperation(
     // recorded with the outputs known at that point.
     const deferredError = yield* firstDeferredError([
       async function* () {
+        const invalid = created.invalid ?? [];
+        if (invalid.length > 0) {
+          throw new SchemaStructureError(
+            resource,
+            "create returned a value that its validator rejects for these credentials",
+            invalid,
+          );
+        }
         const missing = credentials.filter(
           (name) => created.credentials?.[name] === undefined,
         );
         if (missing.length === 0) return;
         throw new SchemaStructureError(
           resource,
-          "create did not return a valid value for these credentials",
+          "create did not return these credentials",
           missing,
         );
       },
@@ -463,6 +471,8 @@ type CreateAttemptResult = {
   key?: DurableObject;
   lookedUp?: true;
   credentials?: Record<string, string>;
+  /** The credentials whose value from create failed its validator. */
+  invalid?: string[];
 };
 
 /**
@@ -503,13 +513,14 @@ async function* createAttempt(
       try {
         // The effect records what this returns, so the credentials are
         // taken out of the result first.
-        const { key, credentials } = await holdCreated(
+        const { key, credentials, invalid } = await holdCreated(
           resource,
           await resource.create(revealCredentials(resourceParams), context),
         );
         return {
           key: key ? resource.toResult(key) : undefined,
           ...(credentials ? { credentials } : {}),
+          ...(invalid ? { invalid } : {}),
         };
       } catch (error) {
         // The effect records the error. See `runPendingOperation`.

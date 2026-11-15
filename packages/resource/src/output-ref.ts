@@ -225,14 +225,6 @@ export const planLookup: OutputLookup = (token) => {
   if (isMissingRequiredOutput(token.resource.schema, output, key)) {
     return { known: false };
   }
-  // A record written before the credential was added to the type has no
-  // marker for it. Deploy gets a value before a resource takes it.
-  if (
-    token.resource.schema[key]?.propertyType === "credential" &&
-    output[key] === undefined
-  ) {
-    return { known: false };
-  }
   return { known: true, value: readPath(output, token.path) };
 };
 

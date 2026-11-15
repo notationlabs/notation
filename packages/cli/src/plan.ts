@@ -96,12 +96,21 @@ function printPlanSummary(result: Plan, logger: Logger) {
   for (const node of changedNodes) {
     const order = node.replaceOrder && replaceOrders[node.replaceOrder];
     const rotateOnly = node.decision === "noop";
+    const symbol = rotateOnly
+      ? "~"
+      : (order?.symbol ?? decisionSymbols[node.decision]);
+    const label = rotateOnly ? "rotate" : node.decision;
     logger.info(
-      `${rotateOnly ? "~" : (order?.symbol ?? decisionSymbols[node.decision])} ${rotateOnly ? "rotate" : node.decision} ${node.type} ${node.id}${order?.label ?? ""}`,
+      `${symbol} ${label} ${node.type} ${node.id}${order?.label ?? ""}`,
     );
     if (node.rotates) {
       logger.info(
         `    ${node.rotates.join(", ")} gets a new value, as a resource that takes it needs one`,
+      );
+    }
+    for (const { resource, name } of node.unheldCredentials ?? []) {
+      logger.info(
+        `    deploy fails here, as it holds no value for ${name} of ${resource}. The deploy after it replaces ${resource}`,
       );
     }
     if (node.retiredAt) {

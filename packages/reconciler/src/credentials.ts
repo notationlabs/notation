@@ -9,6 +9,7 @@ import {
   type BaseResource,
   type CredentialMarker,
 } from "@notation/resource";
+import type { ResourceAction } from "./plan";
 import { isCreatingRecord, type StateNode } from "@notation/state";
 import { recordSecretValue } from "@notation/utils";
 
@@ -69,17 +70,22 @@ export function credentialOutputs(
 /**
  * Takes the credentials out of a create result, and holds their values.
  * Returns the rest of the result, and the version of each credential. A
- * credential that create did not return, or whose value fails its validator,
- * gets no version.
+ * credential that create did not return gets no version. Nor does one whose
+ * value fails its validator, which `invalid` names.
  */
 export async function holdCreated(
   resource: BaseResource,
   result: {} | void,
-): Promise<{ key: {} | void; credentials?: Record<string, string> }> {
+): Promise<{
+  key: {} | void;
+  credentials?: Record<string, string>;
+  invalid?: string[];
+}> {
   const names = credentialNames(resource.schema);
   if (names.length === 0 || !result) return { key: result };
   const key: Record<string, unknown> = { ...result };
   const credentials: Record<string, string> = {};
+  const invalid: string[] = [];
   for (const name of names) {
     const value = key[name];
     delete key[name];
@@ -87,11 +93,12 @@ export async function holdCreated(
     try {
       await validateValues(resource, { [name]: value }, "create");
     } catch {
+      invalid.push(name);
       continue;
     }
     credentials[name] = holdCredential(value);
   }
-  return { key, credentials };
+  return { key, credentials, ...(invalid.length > 0 ? { invalid } : {}) };
 }
 
 /**
@@ -206,4 +213,41 @@ export function credentialsToMint(
         ),
     );
   });
+}
+
+/** The resources that take a credential of `producer`. */
+export function credentialConsumers(
+  producer: BaseResource,
+  resources: readonly BaseResource[],
+): BaseResource[] {
+  if (credentialNames(producer.schema).length === 0) return [];
+  return resources.filter(
+    (candidate) =>
+      candidate !== producer && takesCredential(candidate, producer),
+  );
+}
+
+/**
+ * How deploy gets a new value for each of the credentials `names` of
+ * `producer`. It rotates them when each has a `rotate` operation. Otherwise
+ * it replaces the producer, and `replace` is the action for that.
+ */
+export function mintAction(
+  producer: BaseResource,
+  names: string[],
+): {
+  rotates: string[];
+  replace?: Extract<ResourceAction, { decision: "replace" }>;
+} {
+  const unrotatable = names.filter((name) => !producer.rotate?.[name]);
+  if (unrotatable.length === 0) return { rotates: names };
+  return {
+    rotates: [],
+    replace: {
+      decision: "replace",
+      patch: {},
+      diff: { added: {}, deleted: {}, updated: {} },
+      replaceFields: unrotatable.map((name) => ({ name, known: true })),
+    },
+  };
 }

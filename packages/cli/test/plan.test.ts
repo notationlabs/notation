@@ -420,3 +420,29 @@ it("prints a resource that only rotates a credential", async () => {
     "+ create test/plan/secret secret",
   ]);
 });
+
+it("prints a resource at which deploy fails for want of a credential", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "secret",
+        type: "test/plan/secret",
+        decision: "replace",
+        replaceFields: [{ name: "name", known: true }],
+        replaceOrder: "delete-first",
+        unheldCredentials: [{ resource: "token", name: "Value" }],
+        params: {},
+        dependsOn: ["token"],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines).toContain(
+    "    deploy fails here, as it holds no value for Value of token. The deploy after it replaces token",
+  );
+});

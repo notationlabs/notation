@@ -13,8 +13,10 @@ import {
 } from "@notation/core";
 import { createPlan, type ReconcilerEvent } from "@notation/reconciler";
 import * as durable from "@notation/reconciler/durable";
-import { collectResourceGraph } from "@notation/resource";
+import { collectResourceGraph, resource } from "@notation/resource";
+import * as v from "valibot";
 import { secret } from "src/secrets-store";
+import { secretsStoreGroup } from "src/secrets-store/store";
 import { accountToken } from "src/tokens";
 
 const SENTINEL = "sentinel-7c1e5d0a-value";
@@ -343,6 +345,121 @@ describe("an account token in a deploy", () => {
 
     expect((error as Error).message).toContain("invalid secret value <hidden>");
     expect(await recorded()).not.toContain(TOKEN_VALUE);
+  });
+});
+
+describe("an account token that an earlier version deployed", () => {
+  const param = { propertyType: "param", presence: "required" } as const;
+  const key = { ...param, immutable: true, secondaryKey: true } as const;
+  const computed = { propertyType: "computed", presence: "required" } as const;
+
+  // The type as it was before the token's value became a credential: the
+  // token wrote its own secret, and its record holds StoreId and SecretId.
+  type EarlierParams = {
+    AccountId: string;
+    StoreId: string;
+    Name: string;
+    Policies: unknown[];
+  };
+  type EarlierKey = Omit<EarlierParams, "Policies"> & { TokenId: string };
+
+  const EarlierAccountToken = resource<{
+    Key: EarlierKey;
+    CreateParams: EarlierParams;
+    UpdateParams: Pick<EarlierParams, "Policies">;
+    ReadResult: { SecretId: string };
+  }>({
+    type: "cloudflare/tokens/AccountToken",
+    provider: "@notation/cloudflare/resources",
+  })
+    .defineSchema({
+      AccountId: { ...key, value: v.string() },
+      StoreId: { ...key, value: v.string() },
+      Name: { ...key, value: v.string() },
+      Policies: { ...param, value: v.array(v.unknown()) },
+      TokenId: { ...computed, primaryKey: true, value: v.string() },
+      SecretId: { ...computed, value: v.string() },
+    } as const)
+    .defineOperations({
+      create: async (params) => {
+        tokens.set("t1", "earlier-value");
+        secrets.set(params.Name, {
+          id: `id-${params.Name}`,
+          value: "earlier-value",
+        });
+        return { TokenId: "t1" };
+      },
+      read: async (key) => ({ ...key, SecretId: `id-${key.Name}` }),
+      delete: async () => {},
+    })
+    .requireDependencies<{
+      store: ReturnType<typeof secretsStoreGroup>["store"];
+    }>()
+    .deriveParams(async ({ deps }) => ({
+      AccountId: deps.store.output.AccountId,
+      StoreId: deps.store.output.StoreId,
+    }));
+
+  it("keeps the token, rolls its value, and writes the value over the secret", async () => {
+    declared = () => {
+      new EarlierAccountToken("token:deploy", {
+        config: {
+          Name: "shop--dev--deploy",
+          Policies: [
+            {
+              effect: "allow",
+              permissionGroups: ["g1"],
+              resources: { "com.cloudflare.api.account.acc": "*" },
+            },
+          ],
+        },
+        dependencies: { store: secretsStoreGroup().store },
+      });
+    };
+    await deploy("first");
+    expect((await runtime.state.get("token:deploy"))!.output).toMatchObject({
+      StoreId: "st",
+      SecretId: "id-shop--dev--deploy",
+    });
+    expect(await runtime.state.get("secret:deploy")).toBeUndefined();
+
+    declared = () =>
+      accountToken({
+        id: "deploy",
+        policies: [
+          {
+            effect: "allow",
+            permissionGroups: ["Workers Scripts Write"],
+            resources: { "com.cloudflare.api.account.acc": "*" },
+          },
+        ],
+      });
+    const planned = await plan();
+    expect(
+      planned.nodes.map(({ id, decision, rotates }) => ({
+        id,
+        decision,
+        rotates,
+      })),
+    ).toEqual([
+      { id: "token:deploy", decision: "noop", rotates: ["Value"] },
+      { id: "secrets-store", decision: "noop", rotates: undefined },
+      { id: "secret:deploy", decision: "create", rotates: undefined },
+    ]);
+
+    await deploy("second");
+
+    expect([...tokens]).toEqual([["t1", `${TOKEN_VALUE}-1`]]);
+    expect(secrets.get("shop--dev--deploy")?.value).toBe(`${TOKEN_VALUE}-1`);
+    expect((await runtime.state.get("secret:deploy"))!.params.Value).toEqual(
+      (await runtime.state.get("token:deploy"))!.output.Value,
+    );
+
+    expect((await plan()).nodes.map((node) => node.decision)).toEqual([
+      "noop",
+      "noop",
+      "noop",
+    ]);
   });
 });
 

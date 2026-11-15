@@ -1,17 +1,17 @@
 import {
   credentialMarker,
-  credentialNames,
   isCredentialMarker,
   validateValues,
   type BaseResource,
-  type ReplaceField,
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
 import { scrubError } from "@notation/utils";
 import {
+  credentialConsumers,
   credentialsToMint,
   holdCredential,
   holdsCredential,
+  mintAction,
   takesCredential,
   unheldCredentials,
 } from "../credentials";
@@ -20,7 +20,7 @@ import {
   getErrorDetails,
   toPersistedState,
 } from "../operations";
-import { getDependencyIds } from "../plan";
+import { getDependencyIds, type ResourceAction } from "../plan";
 import {
   openStateSession,
   reconcileResource,
@@ -38,8 +38,8 @@ type RecordedSession = Extract<ResourceStateSession, { node: StateNode }>;
  *
  * A credential with a `rotate` operation is rotated, and its new version is
  * recorded at once, as the provider has revoked the value before it. For a
- * credential without one, the fields that force a replace of `resource` are
- * returned, and nothing is changed. A dry run rotates nothing.
+ * credential without one, the action that replaces `resource` is returned,
+ * and nothing is changed. A dry run rotates nothing.
  *
  * Returns the session with the record that the rotations left.
  */
@@ -51,14 +51,13 @@ export async function* mintNeededCredentials(
   dependsOn: string[],
 ): AsyncGenerator<
   any,
-  { session: RecordedSession; replaceFields?: ReplaceField[] },
+  {
+    session: RecordedSession;
+    replace?: Extract<ResourceAction, { decision: "replace" }>;
+  },
   any
 > {
-  if (credentialNames(resource.schema).length === 0) return { session };
-  const consumers = opts.resources.filter(
-    (candidate) =>
-      candidate !== resource && takesCredential(candidate, resource),
-  );
+  const consumers = credentialConsumers(resource, opts.resources);
   if (consumers.length === 0) return { session };
 
   const needed = yield* step.run("credentials:needed", async () =>
@@ -73,17 +72,12 @@ export async function* mintNeededCredentials(
       ),
     ),
   );
-  const unrotatable = needed.filter((name) => !resource.rotate?.[name]);
-  if (unrotatable.length > 0) {
-    return {
-      session,
-      replaceFields: unrotatable.map((name) => ({ name, known: true })),
-    };
-  }
+  const { rotates, replace } = mintAction(resource, needed);
+  if (replace) return { session, replace };
   if (opts.dryRun) return { session };
 
   let current = session;
-  for (const name of needed) {
+  for (const name of rotates) {
     const scope = step.scope(`credential:${name}`);
     const version = yield* rotateStep(scope, opts, resource, name);
     current = yield* recordCredential(

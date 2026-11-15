@@ -85,6 +85,13 @@ export type PlanNode = {
    */
   rotates?: string[];
   /**
+   * Set when deploy fails at this resource: it creates the resource again,
+   * the resource takes these credentials, deploy holds no value for them,
+   * and they have no `rotate` operation. The deploy after it replaces the
+   * resources that have the credentials.
+   */
+  unheldCredentials?: { resource: string; name: string }[];
+  /**
    * Set when the resource is in a dependency cycle: the IDs of the other
    * resources in the cycle.
    */

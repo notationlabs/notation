@@ -555,7 +555,14 @@ new cloudflare.secretsStore.SecretsStoreSecret("secret:app-key", {
 });
 ```
 
-The operations of the resource that takes the credential receive the value in their params. Deploy keeps the value in memory only:
+The resource that takes the credential receives the value in two places:
+
+- `create` receives it in its params.
+- `update` receives it in its patch, and in its params, only when the patch holds it. When an update changes another param, the credential's param is `undefined` in the params. An `update` that sends the whole config to the provider has to leave the credential's param out of the request when the patch does not hold it. Otherwise it removes the value at the provider.
+
+`find`, `read` and `delete` receive the marker, and never the value.
+
+Deploy keeps the value in memory only:
 
 - State, step results and events hold a marker in place of the value. The marker names the resource, the credential and a version.
 - A string value is removed from error messages.
@@ -569,9 +576,9 @@ Deploy holds a value only in the process that received it. It gets a new value w
 2. The record of a resource that takes the credential holds an older version, because an earlier deploy failed before it updated the resource.
 3. A resource that takes the credential is created again: it is replaced, or drift detection found it gone.
 
-To get a new value, deploy calls the credential's `rotate` operation, which returns a value and makes the provider revoke the one before. Without `rotate`, deploy replaces the resource that has the credential. In cases 1 and 2 it does so before it reaches the resources that take the credential, and plan shows it. In case 3 with `rotate`, deploy rotates when it reaches the resource, and then updates the resources before it that take the credential. In case 3 without `rotate`, the deploy fails, and the next deploy replaces the resource that has the credential.
+To get a new value, deploy calls the credential's `rotate` operation, which returns a value and makes the provider revoke the one before. Without `rotate`, deploy replaces the resource that has the credential. In cases 1 and 2 it does so before it reaches the resources that take the credential, and plan shows it. In case 3 with `rotate`, deploy rotates when it reaches the resource, and then updates the resources before it that take the credential. Plan shows the rotation and the updates. In case 3 without `rotate`, the deploy fails, and the next deploy replaces the resource that has the credential. Plan shows that the deploy fails at the resource.
 
-An `update` receives a credential in its params only when its patch holds it.
+The provider revokes the old value when deploy rotates, before any resource has the new one. If the deploy then fails before it updates a resource that takes the credential, that resource holds a revoked value until a later deploy succeeds. That deploy rotates again.
 
 ### State refs
 

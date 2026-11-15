@@ -240,14 +240,7 @@ export async function* reconcileResource(
       dependsOn,
     );
     session = minted.session;
-    if (minted.replaceFields) {
-      action = {
-        decision: "replace",
-        patch: {},
-        diff: { added: {}, deleted: {}, updated: {} },
-        replaceFields: minted.replaceFields,
-      };
-    }
+    if (minted.replace) action = minted.replace;
   }
 
   // An update receives the credentials in its patch. Every other operation
@@ -528,7 +521,9 @@ async function* recoverOutputs(
     emit: durableEmitter(readStep, opts.emit),
     maxOperationAttempts: shared.maxOperationAttempts,
   });
-  resource.setOutput({ ...session.node.output, ...readResult });
+  resource.setOutput(
+    withCredentialMarkers(resource, { ...session.node.output, ...readResult }),
+  );
 
   const missing = findMissingOutputs(resource, resource.output);
   if (!opts.dryRun) {

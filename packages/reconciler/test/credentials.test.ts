@@ -395,6 +395,97 @@ describe("a resource that is replaced and takes a credential", () => {
   });
 });
 
+describe("a plan with a resource that is replaced and takes a credential", () => {
+  const renamed = (types: ReturnType<typeof defineResources>) => {
+    const [token, a] = declare(types, { secrets: ["a"] });
+    return [
+      token!,
+      a!,
+      new types.Secret("secret:b", {
+        config: { name: "b2", Value: (token as any).credentials.Value },
+      }),
+    ];
+  };
+
+  it("shows the rotation, and the update of the resources before it", async () => {
+    const types = defineResources(createProvider(), { rotate: true });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a", "b"] }));
+
+    const plan = await createPlan({
+      resources: renamed(types),
+      state: runtime.state,
+    });
+
+    const [token, a, b] = plan.nodes;
+    expect(token).toMatchObject({ decision: "noop", rotates: ["Value"] });
+    expect(a).toMatchObject({ decision: "update" });
+    expect(b).toMatchObject({ decision: "replace" });
+    expect(b!.unheldCredentials).toBeUndefined();
+    runtime.close();
+  });
+
+  it("shows that deploy fails at the resource without rotate", async () => {
+    const types = defineResources(createProvider(), { rotate: false });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a", "b"] }));
+
+    const plan = await createPlan({
+      resources: renamed(types),
+      state: runtime.state,
+    });
+
+    const [token, a, b] = plan.nodes;
+    expect(token).toMatchObject({ decision: "noop" });
+    expect(token!.rotates).toBeUndefined();
+    expect(a).toMatchObject({ decision: "noop" });
+    expect(b).toMatchObject({
+      decision: "replace",
+      unheldCredentials: [{ resource: "token", name: "Value" }],
+    });
+    runtime.close();
+  });
+});
+
+describe("a create that returns a credential its validator rejects", () => {
+  it("fails with the credential's name, and records the resource", async () => {
+    const Token = resource<{
+      Key: { id: string };
+      CreateParams: {};
+      UpdateParams: {};
+      ReadResult: {};
+    }>({ type: "test/credentials/InvalidToken", provider: "test" })
+      .defineSchema({
+        id: {
+          propertyType: "computed",
+          presence: "required",
+          primaryKey: true,
+          value: v.string(),
+        },
+        Value: {
+          propertyType: "credential",
+          value: v.pipe(v.string(), v.minLength(20)),
+        },
+      } as const)
+      .defineOperations({
+        create: async () => ({ id: "token-0", Value: "short-value" }),
+        delete: async () => {},
+      });
+    const runtime = createRuntime();
+
+    const error = await runtime
+      .deploy("first", [new Token("token", { config: {} })])
+      .catch((e: Error) => e);
+
+    expect((error as Error).message).toContain(
+      "create returned a value that its validator rejects for these credentials: Value",
+    );
+    expect((error as Error).message).not.toContain("short-value");
+    expect((await runtime.state.get("token"))?.output.id).toBe("token-0");
+    runtime.close();
+  });
+});
+
 describe("a deploy that is resumed after it created a credential", () => {
   const crashAfterStep = "notation:deploy:token:create:remote:effect:0";
 

@@ -101,7 +101,7 @@ export const worker = $worker({
 - A change to the policies or the condition updates the token, which keeps its value.
 - If the IP ranges or the policies are changed in the dashboard, deploy changes them back to the declaration.
 - Plan looks up the ID of each permission group by its name, and compares the IDs with the token's. A name can belong to more than one group, one for each scope. Then the scope of the policy's `resources` picks the group: `com.cloudflare.api.account.<account id>` picks the account group, and `com.cloudflare.api.account.zone.<zone id>` picks the zone group. If the resources have more than one scope, plan fails and lists the groups. Give each scope its own policy.
-- When deploy has to write the secret and no longer holds the value, it rolls the token: the token keeps its ID and gets a new value, and Cloudflare rejects the old one. This happens when an earlier deploy created the token and failed before it wrote the secret, and when drift detection finds that the secret is gone.
+- When deploy has to write the secret and no longer holds the value, it rolls the token: the token keeps its ID and gets a new value, and Cloudflare rejects the old one. This happens when an earlier deploy created the token and failed before it wrote the secret, and when drift detection finds that the secret is gone. If the write of the secret then fails, the secret holds a value that Cloudflare rejects until a deploy succeeds.
 - Destroy deletes the token and its secret.
 - `notation secret set` and `notation secret delete` refuse a token's secret.
 
