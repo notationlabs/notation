@@ -8875,6 +8875,134 @@ describe("requested replace", () => {
     ]);
     runtime.close();
   });
+
+  /**
+   * A delete-first bucket whose class refuses a replace, and a binding whose
+   * records block the bucket's delete, whose class also refuses a replace.
+   */
+  function defineBuckets() {
+    const calls: string[] = [];
+    const refuse = (_previous: any, _desired: any, context: any) =>
+      context.replace ? "Replacing this deletes data." : undefined;
+    const Bucket = resource({
+      type: "test/durable/requested-bucket",
+      provider: "test",
+    })
+      // Cast: as in `defineQueues`.
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async (params: any) => {
+          calls.push(`create bucket ${params.name}`);
+        },
+        delete: async (key: any) => {
+          calls.push(`delete bucket ${key.name}`);
+        },
+        rejectChange: refuse,
+      });
+    const Binding = resource({
+      type: "test/durable/requested-binding",
+      provider: "test",
+      blocksDeleteOf: [Bucket.type],
+    })
+      // Cast: as in `defineQueues`.
+      .defineSchema({
+        bucket: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async (params: any) => {
+          calls.push(`create binding ${params.bucket}`);
+        },
+        delete: async (key: any) => {
+          calls.push(`delete binding ${key.bucket}`);
+        },
+        rejectChange: refuse,
+      });
+    const bucket = new Bucket("bucket", { config: { name: "b" } as any });
+    const binding = new Binding("binding", {
+      config: { bucket: bucket.outputRef("name") } as any,
+    });
+    return { calls, bucket, binding };
+  }
+
+  async function targets(
+    runtime: ReturnType<typeof createRuntime>,
+    deploymentId: string,
+    resources: BaseResource[],
+  ) {
+    return Promise.all(
+      resources.map(async (resource) => ({
+        id: resource.id,
+        instanceHash: instanceHash(
+          deploymentId,
+          resource,
+          (await runtime.state.get(resource.id))!,
+        ),
+      })),
+    );
+  }
+
+  it("replaces delete-first a resource whose class refuses the replace, with --override-loss-protection", async () => {
+    const { calls, bucket } = defineBuckets();
+    const deploymentId = "requested-override";
+    const options: { requested?: ReplaceRequest } = {};
+    const runtime = createRuntime([bucket], deploymentId, options);
+    await runtime.run(`${deploymentId}-1`);
+    calls.length = 0;
+    const replace = await targets(runtime, deploymentId, [bucket]);
+
+    options.requested = { replace };
+    await expect(runtime.run(`${deploymentId}-2`)).rejects.toThrow(
+      "bucket: Replacing this deletes data. To replace it, pass --override-loss-protection bucket with --replace.",
+    );
+    expect(calls).toEqual([]);
+
+    options.requested = { replace, overrideLossProtection: ["bucket"] };
+    await runtime.run(`${deploymentId}-3`);
+    expect(calls).toEqual(["delete bucket b", "create bucket b"]);
+    runtime.close();
+  });
+
+  it("deletes a requested dependent that blocks the delete of another replaced resource, and creates it again once", async () => {
+    const { calls, bucket, binding } = defineBuckets();
+    const deploymentId = "requested-blocking";
+    const options: { requested?: ReplaceRequest } = {};
+    const runtime = createRuntime([bucket, binding], deploymentId, options);
+    await runtime.run(`${deploymentId}-1`);
+    calls.length = 0;
+    const replace = await targets(runtime, deploymentId, [bucket, binding]);
+
+    // The binding's own refusal, with the flag that overrides it.
+    options.requested = { replace, overrideLossProtection: ["bucket"] };
+    await expect(runtime.run(`${deploymentId}-2`)).rejects.toThrow(
+      "binding: Replacing this deletes data. To replace it, pass --override-loss-protection binding with --replace.",
+    );
+    expect(calls).toEqual([]);
+
+    options.requested = {
+      replace,
+      overrideLossProtection: ["bucket", "binding"],
+    };
+    await runtime.run(`${deploymentId}-3`);
+    expect(calls).toEqual([
+      "delete binding b",
+      "delete bucket b",
+      "create bucket b",
+      "create binding b",
+    ]);
+    runtime.close();
+  });
 });
 
 function createRuntime(

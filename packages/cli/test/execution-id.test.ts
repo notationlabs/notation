@@ -15,17 +15,19 @@ const { deployApp, destroyApp } = vi.hoisted(() => ({
   destroyApp: vi.fn(async (_opts: AppOptions) => undefined),
 }));
 
-vi.mock("@notation/core", () => ({
-  createLoggerReconcilerSubscriber: () => () => undefined,
-  createNdjsonEventEmitter: () => () => undefined,
-  deployApp,
-  destroyApp,
-  parseReplaceTarget: (value: string) => {
-    const [id, instanceHash] = value.split("@");
-    return { id, instanceHash };
-  },
-  resolveDeploymentId: (d: Deployment) => `${d.app}:${d.stage}`,
-}));
+vi.mock("@notation/core", async (importOriginal) => {
+  const core = await importOriginal<typeof import("@notation/core")>();
+  return {
+    createLoggerReconcilerSubscriber: () => () => undefined,
+    createNdjsonEventEmitter: () => () => undefined,
+    deployApp,
+    destroyApp,
+    formatRequest: core.formatRequest,
+    parseReplaceTarget: core.parseReplaceTarget,
+    shellQuote: core.shellQuote,
+    resolveDeploymentId: (d: Deployment) => `${d.app}:${d.stage}`,
+  };
+});
 vi.mock("../src/compile", () => ({ compile: vi.fn(async () => undefined) }));
 
 const { deploy, replaceRequest } = await import("../src/deploy");
@@ -140,6 +142,23 @@ describe("replace flags", () => {
     expect(deployApp).toHaveBeenCalledWith(
       expect.objectContaining({ requested }),
     );
+  });
+
+  it("fails a --replace with no hash with the plan command for the same config and stage", async () => {
+    deployApp.mockClear();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    await expect(
+      deploy(deployment, {
+        compile: false,
+        logger,
+        config: "infra/notation config.ts",
+        requested: replaceRequest({ replace: ["bucket:uploads"] }),
+      }),
+    ).rejects.toThrow(
+      "--replace bucket:uploads needs the instance hash, as --replace bucket:uploads@<instance hash>. Run notation plan --config 'infra/notation config.ts' --stage prod --replace bucket:uploads to print the deploy command with the hash.",
+    );
+    expect(deployApp).not.toHaveBeenCalled();
   });
 
   it("gives no request without either flag", () => {

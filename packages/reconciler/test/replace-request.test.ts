@@ -175,6 +175,13 @@ describe("parseReplaceTarget", () => {
     expect(parseReplaceTarget("orders@")).toEqual({ id: "orders@" });
     expect(parseReplaceTarget("@3c1f9a02")).toEqual({ id: "@3c1f9a02" });
   });
+
+  it("reads an uppercase hash as lowercase", () => {
+    expect(parseReplaceTarget("orders@3C1F9A02")).toEqual({
+      id: "orders",
+      instanceHash: "3c1f9a02",
+    });
+  });
 });
 
 describe("createPlan with a requested replace", () => {
@@ -310,6 +317,48 @@ describe("createPlan with a requested replace", () => {
         ]),
       ).rejects.toThrow(
         "orders has a create that an earlier deploy did not finish. Run deploy without --replace to recover it first.",
+      );
+    });
+
+    it("when the hash after a known ID is hex of the wrong length", async () => {
+      await expect(
+        plan({ replace: [parseReplaceTarget("orders@3c1f9a0")] }),
+      ).rejects.toThrow(
+        "The instance hash 3c1f9a0 of orders is malformed. An instance hash is 8 hex characters.",
+      );
+    });
+
+    it("when the resource is a source", async () => {
+      const Source = resource({ type: "test/replace/source", provider: "test" })
+        .defineSchema({
+          key: {
+            propertyType: "param",
+            presence: "required",
+            value: v.string(),
+          },
+        } as any)
+        .defineOperations({
+          create: async () => undefined,
+          update: async () => undefined,
+          delete: async () => undefined,
+        });
+
+      await expect(
+        createPlan({
+          resources: [
+            new Source("env:stripe-key", { config: { key: "k" } as any }),
+          ],
+          state: new MemoryStateBackend({
+            "env:stripe-key": record("env:stripe-key", Source.type, {
+              key: "k",
+            }),
+          }),
+          driftDetection: false,
+          deploymentId,
+          requested: { replace: [{ id: "env:stripe-key" }] },
+        }),
+      ).rejects.toThrow(
+        "env:stripe-key is a source, and a source is never replaced. Nothing exists at a provider to replace.",
       );
     });
 

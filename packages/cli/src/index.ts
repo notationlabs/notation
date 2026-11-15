@@ -111,6 +111,7 @@ program
       compile: options.compile,
       driftDetection: options.driftDetection,
       requested: replaceRequest(options),
+      config: options.config,
       // Without --json, a person may still be at the terminal.
       promptSecrets: options.promptSecrets || options.json !== true,
     });

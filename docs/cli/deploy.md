@@ -25,15 +25,15 @@ Deploy replaces a resource by itself only when a param that forces replacement c
 notation deploy --stage prod --replace lambda:orders:role@3c1f9a02
 ```
 
-The part before the last `@` is the resource ID as state records it. When the part after the last `@` is not 8 hex characters, the whole value is the ID, with no hash. For a resource that a construct declared, that is the ID that the construct made, such as `worker:api:subdomain` for the workers.dev subdomain of `$worker({ id: "api" })`.
+The part before the last `@` is the resource ID as state records it. For a resource that a construct declared, that is the ID that the construct made, such as `worker:api:subdomain` for the workers.dev subdomain of `$worker({ id: "api" })`. When the part after the last `@` is not 8 hex characters, the whole value is the ID, with no hash.
 
-The part after the `@` is the instance hash: the first 8 hex characters of a SHA-256 of the state key `<app>:<stage>` and the resource's primary key. Deploy fails, before it changes anything, when the hash does not match:
+The part after the `@` is the instance hash: the first 8 hex characters of a SHA-256 of the state key `<app>:<stage>` and the resource's primary key. Uppercase hex characters are read as lowercase. Deploy fails, before it changes anything, when the hash does not match:
 
 ```text
 ✗ lambda:orders:role has the instance hash 9e04b7d1 in this stage, not 3c1f9a02.
 ```
 
-The hash is important because it ties the command to one resource in one stage. A command copied from the plan of another stage fails, because the state key differs. A command run again after the resource was replaced fails too when the key is generated or assigned by the provider, because the key differs. Deploy fails when `--replace` has no hash. To get the command with the hash, run [`notation plan --replace <id>`](./plan.md#replacing-a-resource).
+The hash is important because it ties the command to one resource in one stage. A command copied from the plan of another stage fails, because the state key differs. A command run again after the resource was replaced fails too when the key is generated or assigned by the provider, because the key differs. Deploy fails when `--replace` has no hash. To get the command with the hash, run [`notation plan --stage <stage> --replace <id>`](./plan.md#replacing-a-resource) for the same stage.
 
 Deploy replaces the resource as it would for a changed param:
 
@@ -43,12 +43,17 @@ Deploy replaces the resource as it would for a changed param:
 
 Deploy fails, before it changes anything, when:
 
-| Case                                                                    | Error                                                                                                                      |
-| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| The ID is not in state                                                  | `lambda:orders:role is not in state, so there is nothing to replace. Deploy will create it.`                               |
-| The ID is in state, but not in code                                     | `lambda:orders:role is no longer in code. Deploy will delete it.`                                                          |
-| An earlier deploy did not finish the create of the resource             | `lambda:orders:role has a create that an earlier deploy did not finish. Run deploy without --replace to recover it first.` |
-| `--override-loss-protection` names a resource that `--replace` does not | `--override-loss-protection bucket:uploads needs --replace bucket:uploads.`                                                |
+| Case                                                                     | Error                                                                                                                                                                                                           |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The ID is not in state, but is in code                                   | `lambda:orders:role is not in state, so there is nothing to replace. Deploy will create it.`                                                                                                                    |
+| The ID is not in state or in code                                        | `lambda:orders:role is not in state or in code, so there is nothing to replace.`                                                                                                                                |
+| The ID is in state, but not in code                                      | `lambda:orders:role is no longer in code. Deploy will delete it.`                                                                                                                                               |
+| An earlier deploy did not finish the create of the resource              | `lambda:orders:role has a create that an earlier deploy did not finish. Run deploy without --replace to recover it first.`                                                                                      |
+| The resource is a source                                                 | `value:stripe-key is a source, and a source is never replaced. Nothing exists at a provider to replace.`                                                                                                        |
+| `--replace` has no hash                                                  | `--replace lambda:orders:role needs the instance hash, as --replace lambda:orders:role@<instance hash>. Run notation plan --stage prod --replace lambda:orders:role to print the deploy command with the hash.` |
+| The part after the last `@` is hex of the wrong length, after a known ID | `The instance hash 3c1f9a0 of lambda:orders:role is malformed. An instance hash is 8 hex characters.`                                                                                                           |
+| The hash does not match                                                  | `lambda:orders:role has the instance hash 9e04b7d1 in this stage, not 3c1f9a02.`                                                                                                                                |
+| `--override-loss-protection` names a resource that `--replace` does not  | `--override-loss-protection bucket:uploads needs --replace bucket:uploads.`                                                                                                                                     |
 
 ### Loss protection
 

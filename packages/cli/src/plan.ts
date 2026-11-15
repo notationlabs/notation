@@ -73,12 +73,18 @@ export async function plan(
   });
   printPlanSummary(result, logger);
   if (opts.requested) {
-    const config =
-      opts.config === undefined ? "" : ` --config ${shellQuote(opts.config)}`;
     logger.info(
-      `\nTo deploy this plan:\n  notation deploy${config} --stage ${shellQuote(deployment.stage)} ${requestFlags(result, opts.requested)}`,
+      `\nTo deploy this plan:\n  notation deploy ${targetFlags(deployment, opts.config)} ${requestFlags(result, opts.requested)}`,
     );
   }
+}
+
+/** `--config` when it is given, and `--stage`, for a printed command. */
+export function targetFlags(deployment: Deployment, config?: string): string {
+  const stage = `--stage ${shellQuote(deployment.stage)}`;
+  return config === undefined
+    ? stage
+    : `--config ${shellQuote(config)} ${stage}`;
 }
 
 // The flags of the request, each `--replace` with the instance hash from the

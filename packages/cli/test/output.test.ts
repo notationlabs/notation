@@ -124,7 +124,7 @@ describe("a requested replace", () => {
       }),
     ).toBe(
       "→ replace bucket:uploads cloudflare/r2/bucket " +
-        "(requested by --replace; delete, then create)",
+        "(replaced by --replace; delete, then create)",
     );
   });
 });

@@ -22,19 +22,41 @@ export type ReplaceRequest = {
 /** How deploy decides a resource that `--replace` names. */
 export type RequestedReplace = { overrideLossProtection: boolean };
 
-const INSTANCE_HASH = /^[0-9a-f]{8}$/;
+const INSTANCE_HASH = /^[0-9a-f]{8}$/i;
+const HEX = /^[0-9a-f]+$/i;
 
 /**
  * Reads `<id>@<instance hash>`. The ID is the part before the last `@`. A
  * value with no `@`, or whose part after the last `@` is not 8 hex
- * characters, is an ID with no hash.
+ * characters, is an ID with no hash. An uppercase hash is read as lowercase.
  */
 export function parseReplaceTarget(value: string): ReplaceTarget {
   const at = value.lastIndexOf("@");
   const id = value.slice(0, at);
   const instanceHash = value.slice(at + 1);
   if (at <= 0 || !INSTANCE_HASH.test(instanceHash)) return { id: value };
-  return { id, instanceHash };
+  return { id, instanceHash: instanceHash.toLowerCase() };
+}
+
+/**
+ * Throws if `value` is a known ID followed by `@` and hex characters of the
+ * wrong length, which `parseReplaceTarget` read as an ID with no hash.
+ */
+function assertHashWellFormed(value: string, known: (id: string) => boolean) {
+  const at = value.lastIndexOf("@");
+  const id = value.slice(0, at);
+  const hash = value.slice(at + 1);
+  if (at <= 0 || !HEX.test(hash) || !known(id)) return;
+  throw new Error(
+    `The instance hash ${hash} of ${id} is malformed. An instance hash is 8 hex characters.`,
+  );
+}
+
+// A source has no primary key, and every other class has one.
+function isSource(resource: { schema: Schema }): boolean {
+  return !Object.values(resource.schema).some(
+    (item) => (item as { primaryKey?: true }).primaryKey,
+  );
 }
 
 /** The request as flags, in a fixed order. Empty for no request. */
@@ -126,6 +148,12 @@ export function assertReplaceRequest(
     const resource = resourceById.get(id);
     const record = recordById.get(id);
     if (!record) {
+      if (!resource) {
+        assertHashWellFormed(
+          id,
+          (known) => resourceById.has(known) || recordById.has(known),
+        );
+      }
       throw new Error(
         resource
           ? `${id} is not in state, so there is nothing to replace. Deploy will create it.`
@@ -140,10 +168,15 @@ export function assertReplaceRequest(
         `${id} has a create that an earlier deploy did not finish. Run deploy without --replace to recover it first.`,
       );
     }
+    if (isSource(resource)) {
+      throw new Error(
+        `${id} is a source, and a source is never replaced. Nothing exists at a provider to replace.`,
+      );
+    }
     if (given === undefined) {
       if (opts.point === "plan") continue;
       throw new Error(
-        `--replace ${id} needs the instance hash, as --replace ${id}@<instance hash>. Run notation plan --replace ${id} to print the deploy command with the hash.`,
+        `--replace ${id} needs the instance hash, as --replace ${id}@<instance hash>. Run notation plan with the same --stage and --replace ${id} to print the deploy command with the hash.`,
       );
     }
     const actual = instanceHash(opts.deploymentId, resource, record);
