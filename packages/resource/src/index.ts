@@ -42,7 +42,6 @@ export {
   PendingOutput,
   StateOutputRef,
   containsOutputRef,
-  forEachOutputRef,
   isOutputRef,
   resolveOutputRefs,
   deployLookup,

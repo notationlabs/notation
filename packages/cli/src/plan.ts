@@ -88,13 +88,22 @@ function retiredDeleteTime(result: Plan, id: string): string {
 }
 
 function printPlanSummary(result: Plan, logger: Logger) {
-  const changedNodes = result.nodes.filter((node) => node.decision !== "noop");
+  // A resource that only rotates a credential is planned as a noop.
+  const changedNodes = result.nodes.filter(
+    (node) => node.decision !== "noop" || node.rotates,
+  );
 
   for (const node of changedNodes) {
     const order = node.replaceOrder && replaceOrders[node.replaceOrder];
+    const rotateOnly = node.decision === "noop";
     logger.info(
-      `${order?.symbol ?? decisionSymbols[node.decision]} ${node.decision} ${node.type} ${node.id}${order?.label ?? ""}`,
+      `${rotateOnly ? "~" : (order?.symbol ?? decisionSymbols[node.decision])} ${rotateOnly ? "rotate" : node.decision} ${node.type} ${node.id}${order?.label ?? ""}`,
     );
+    if (node.rotates) {
+      logger.info(
+        `    ${node.rotates.join(", ")} gets a new value, as a resource that takes it needs one`,
+      );
+    }
     if (node.retiredAt) {
       logger.info(
         `    the instance that a replace retired at ${node.retiredAt}, ${retiredDeleteTime(result, node.id)}`,

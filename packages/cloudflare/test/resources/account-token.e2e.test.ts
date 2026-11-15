@@ -14,7 +14,8 @@ describeE2e("cloudflare/tokens/AccountToken", () => {
   const name = `${project.scope}raw`;
 
   // A deployment declares resources only through a group, so the token sits
-  // in one, with the account's Secrets Store as its dependency.
+  // in one, with a secret in the account's Secrets Store that takes its
+  // value.
   function writeInfra(config: string) {
     project.write(
       "infra/main.ts",
@@ -27,7 +28,7 @@ describeE2e("cloudflare/tokens/AccountToken", () => {
         constructor() {
           super("e2e/token", "raw");
           const { store } = new SecretsStoreGroup();
-          this.add(
+          const token = this.add(
             new cloudflare.tokens.AccountToken("token:raw", {
               config: {
                 Name: "${name}",
@@ -39,6 +40,15 @@ describeE2e("cloudflare/tokens/AccountToken", () => {
                   },
                 ],
                 ${config}
+              },
+            }),
+          );
+          this.add(
+            new cloudflare.secretsStore.SecretsStoreSecret("secret:raw", {
+              config: {
+                Name: "${name}",
+                StageScoped: true,
+                Value: token.credentials.Value,
               },
               dependencies: { store },
             }),

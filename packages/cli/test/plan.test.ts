@@ -387,3 +387,36 @@ it("prints that deploy asks for the value of a new secret without a source", asy
     "+ create cloudflare/secrets-store/SecretsStoreSecret secret:stripe-key",
   ]);
 });
+
+it("prints a resource that only rotates a credential", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "token",
+        type: "test/plan/token",
+        decision: "noop",
+        rotates: ["Value"],
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "secret",
+        type: "test/plan/secret",
+        decision: "create",
+        params: {},
+        dependsOn: ["token"],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(1, 4)).toEqual([
+    "~ rotate test/plan/token token",
+    "    Value gets a new value, as a resource that takes it needs one",
+    "+ create test/plan/secret secret",
+  ]);
+});

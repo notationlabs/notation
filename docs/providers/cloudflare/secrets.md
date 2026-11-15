@@ -2,7 +2,7 @@
 
 `@notation/cloudflare` keeps secrets in the account's [Secrets Store](https://developers.cloudflare.com/secrets-store/), and binds them to Workers. Notation records where a secret is, such as the store ID and the name, and where its value comes from. It never records the secret's value.
 
-Deploy writes a secret's value from its source, or asks for it when the secret has no source. See [Secrets](../../manual/secrets.md). An API token declared with `accountToken()` writes its own value.
+Deploy writes a secret's value from its source, or asks for it when the secret has no source. See [Secrets](../../manual/secrets.md). The secret of an API token declared with `accountToken()` takes the token's value.
 
 ## `secret(config)`
 
@@ -60,7 +60,7 @@ export default {
 
 ## `accountToken(config)`
 
-`accountToken` declares an account-owned API token. Cloudflare returns a token's value only when it creates the token. So the create writes the value to a secret in the same step, and the value never reaches state. The secret has the token's name, `<app>--<stage>--<id>`.
+`accountToken` declares an account-owned API token, and a secret that holds its value. Cloudflare returns a token's value only when it creates the token or rolls it. Deploy passes the value from the token to the secret in memory, and the value never reaches state. See [Credentials](../../reference/resource.md#credentials). The token and the secret are both named `<app>--<stage>--<id>`.
 
 ::code-group
 
@@ -101,7 +101,7 @@ export const worker = $worker({
 - A change to the policies or the condition updates the token, which keeps its value.
 - If the IP ranges or the policies are changed in the dashboard, deploy changes them back to the declaration.
 - Plan looks up the ID of each permission group by its name, and compares the IDs with the token's. A name can belong to more than one group, one for each scope. Then the scope of the policy's `resources` picks the group: `com.cloudflare.api.account.<account id>` picks the account group, and `com.cloudflare.api.account.zone.<zone id>` picks the zone group. If the resources have more than one scope, plan fails and lists the groups. Give each scope its own policy.
-- If the token's secret is deleted, plan fails, because the value can't be fetched again. Rotate the token by changing its `id`.
+- When deploy has to write the secret and no longer holds the value, it rolls the token: the token keeps its ID and gets a new value, and Cloudflare rejects the old one. This happens when an earlier deploy created the token and failed before it wrote the secret, and when drift detection finds that the secret is gone.
 - Destroy deletes the token and its secret.
 - `notation secret set` and `notation secret delete` refuse a token's secret.
 
