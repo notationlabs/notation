@@ -1,5 +1,9 @@
 import * as v from "valibot";
-import { resource, ResourceNotFoundError } from "@notation/resource";
+import {
+  containsUnknownAfterApply,
+  resource,
+  ResourceNotFoundError,
+} from "@notation/resource";
 import { accountId, cloudflareCreate } from "src/api/client";
 import {
   createBucket,
@@ -161,6 +165,17 @@ export const R2Bucket = r2BucketSchema.defineOperations({
       }
       throw error;
     }
+  },
+
+  // A changed param that forces the replace is refused first by its
+  // `rejectReplace`. At plan, an unknown param may not force a replace, and
+  // deploy checks again with the real value.
+  rejectChange: (_previous, desired, context) => {
+    if (!context.replace) return undefined;
+    if (!context.requested && containsUnknownAfterApply(desired)) {
+      return undefined;
+    }
+    return "Replacing this R2 bucket would delete it and its objects.";
   },
 
   deriveParams: () => ({ AccountId: accountId() }),
