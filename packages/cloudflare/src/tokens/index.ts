@@ -14,9 +14,9 @@ export type { BindableSecret } from "src/workers/declaration";
 
 export type AccountTokenConfig = {
   /**
-   * Keys the token in state. The token, and the secret that holds its value,
-   * are named `<app>--<stage>--<id>`. Changing the id rotates the token: a
-   * new token replaces it.
+   * Keys the token and its secret in state. Both are named
+   * `<app>--<stage>--<id>`. Changing the id rotates the token: a new token
+   * replaces it.
    */
   id: string;
   /** What the token can do. A change updates the token, which keeps its value. */
@@ -34,6 +34,8 @@ export class AccountTokenGroup
 {
   platform = "cloudflare";
   readonly token: cloudflare.tokens.AccountTokenInstance;
+  /** Holds the token's value. */
+  readonly secret: cloudflare.secretsStore.SecretsStoreSecretInstance;
 
   constructor(config: AccountTokenConfig) {
     assertSecretId("accountToken()", config.id);
@@ -49,24 +51,33 @@ export class AccountTokenGroup
           Policies: config.policies,
           Condition: config.condition,
         },
+      }),
+    );
+    this.secret = this.add(
+      new cloudflare.secretsStore.SecretsStoreSecret(`secret:${config.id}`, {
+        config: {
+          Name: name,
+          StageScoped: true,
+          Value: this.token.credentials.Value,
+        },
         dependencies: { store: secretsStoreGroup().store },
       }),
     );
     declareSecret({
       id: config.id,
-      refusal: `\`${config.id}\` is the secret of an API token, and only the token's create writes its value. To get a new value, rotate the token: change the id of its accountToken() declaration, and deploy.`,
+      refusal: `\`${config.id}\` is the secret of an API token, and only deploy writes its value. To get a new value, rotate the token: change the id of its accountToken() declaration, and deploy.`,
     });
   }
 
   "~secret"() {
-    return this.token;
+    return this.secret;
   }
 }
 
 /**
- * Declares an account-owned API token. Its value is written to a secret in
- * the account's Secrets Store when the token is created, and a Worker binds
- * it with `secretsStore.bind(token)`. Notation never records the value.
+ * Declares an account-owned API token, and a secret in the account's
+ * Secrets Store that holds its value. A Worker binds the secret with
+ * `secretsStore.bind(token)`. Notation never records the value.
  * `CLOUDFLARE_API_TOKEN` needs the Account API Tokens: Edit permission.
  * @resource
  */

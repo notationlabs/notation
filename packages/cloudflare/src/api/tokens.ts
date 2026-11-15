@@ -132,6 +132,25 @@ export async function updateToken(
   }
 }
 
+/**
+ * Gives the token a new value and returns it. Cloudflare rejects the value
+ * that the token had before.
+ */
+export async function rollToken(
+  account: string,
+  tokenId: string,
+): Promise<string> {
+  try {
+    return await cloudflare<string>(
+      "PUT",
+      `${tokenPath(account, tokenId)}/value`,
+      {},
+    );
+  } catch (error) {
+    throw withPermissionHint(error);
+  }
+}
+
 /** Does nothing if the token doesn't exist. */
 export async function deleteToken(
   account: string,

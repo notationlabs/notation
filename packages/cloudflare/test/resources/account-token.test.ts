@@ -5,7 +5,7 @@ import {
   ResourceNotFoundError,
 } from "@notation/resource";
 import { decideDriftAction } from "@notation/reconciler";
-import { clearSecretValues, scrubSecretValues } from "@notation/utils";
+import { clearSecretValues } from "@notation/utils";
 import {
   AccountToken,
   sortedCondition,
@@ -37,7 +37,6 @@ const fail = (status: number, code: number, message = "failed") =>
   );
 
 const TOKENS = "/client/v4/accounts/acc/tokens";
-const SECRETS = "/client/v4/accounts/acc/secrets_store/stores/store/secrets";
 const VALUE = "token-value-sentinel";
 
 const policy = (permissionGroups: string[], resources = ACCOUNT) => ({
@@ -57,24 +56,15 @@ const policies = [policy(["Workers Scripts Write"])];
 
 const params = {
   AccountId: "acc",
-  StoreId: "store",
   Name: "shop--dev--deploy",
   Policies: [policy(["g1"])],
 };
 
-const key = {
-  AccountId: "acc",
-  StoreId: "store",
-  Name: "shop--dev--deploy",
-  TokenId: "t1",
-};
+const key = { AccountId: "acc", TokenId: "t1" };
 
 const tokenWith = (Policies: ReturnType<typeof policy>[]) =>
   new AccountToken("token:deploy", {
     config: { Name: params.Name, Policies },
-    dependencies: {
-      store: { output: { AccountId: "acc", StoreId: "store" } },
-    } as any,
   });
 
 const token = tokenWith(policies);
@@ -98,9 +88,7 @@ type Routes = {
   getToken?: () => Response;
   listTokens?: (page: string) => Response;
   deleteToken?: () => Response;
-  listSecrets?: () => Response;
-  createSecret?: () => Response;
-  patchSecret?: () => Response;
+  rollToken?: () => Response;
 };
 
 function route(routes: Routes) {
@@ -133,17 +121,8 @@ function route(routes: Routes) {
     if (path.startsWith(`${TOKENS}/`) && call.method === "DELETE") {
       return (routes.deleteToken ?? (() => ok()))();
     }
-    if (path.startsWith(`${TOKENS}/`)) return ok();
-    if (path === SECRETS && call.method === "GET") {
-      return (routes.listSecrets ?? (() => ok([])))();
-    }
-    if (path === SECRETS && call.method === "POST") {
-      return (
-        routes.createSecret ?? (() => ok([{ id: "s1", name: params.Name }]))
-      )();
-    }
-    if (path.startsWith(`${SECRETS}/`) && call.method === "PATCH") {
-      return (routes.patchSecret ?? (() => ok()))();
+    if (path.endsWith("/value") && call.method === "PUT") {
+      return (routes.rollToken ?? (() => ok("rolled-value")))();
     }
     return ok();
   });
@@ -152,6 +131,7 @@ function route(routes: Routes) {
 beforeEach(() => {
   calls = [];
   vi.stubEnv("CLOUDFLARE_API_TOKEN", "token");
+  vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "acc");
 });
 
 afterEach(() => {
@@ -161,10 +141,13 @@ afterEach(() => {
 });
 
 describe("AccountToken", () => {
-  it("creates the token with its permission groups by ID, and writes its value to a new secret", async () => {
+  it("creates the token with its permission groups by ID, and returns its value as a credential", async () => {
     route({});
 
-    await expect(token.create(params)).resolves.toEqual({ TokenId: "t1" });
+    await expect(token.create(params)).resolves.toEqual({
+      TokenId: "t1",
+      Value: VALUE,
+    });
 
     expect(calls.find((c) => c.url.pathname === TOKENS)).toMatchObject({
       method: "POST",
@@ -179,32 +162,20 @@ describe("AccountToken", () => {
         ],
       },
     });
-    expect(
-      calls.find((c) => c.url.pathname === SECRETS && c.method === "POST"),
-    ).toMatchObject({
-      body: [{ name: "shop--dev--deploy", value: VALUE, scopes: ["workers"] }],
-    });
   });
 
-  it("overwrites the value of a secret that has the token's name", async () => {
-    route({
-      listSecrets: () =>
-        ok([{ id: "old", name: params.Name, status: "active" }]),
-    });
-
-    await token.create(params);
-
-    const patch = calls.find((c) => c.method === "PATCH")!;
-    expect(patch.url.pathname).toBe(`${SECRETS}/old`);
-    expect(patch.body).toEqual({ value: VALUE });
-  });
-
-  it("doesn't return the value", async () => {
+  it("rolls the token, and returns its new value", async () => {
     route({});
 
-    const result = await token.create(params);
+    await expect(token.rotate!.Value!(key, {} as any)).resolves.toBe(
+      "rolled-value",
+    );
+    expect(calls.at(-1)).toMatchObject({ method: "PUT" });
+    expect(calls.at(-1)!.url.pathname).toBe(`${TOKENS}/t1/value`);
+  });
 
-    expect(JSON.stringify(result)).not.toContain(VALUE);
+  it("holds no value in the output refs that a secret takes", () => {
+    expect(token.credentials.Value).toBeInstanceOf(OutputRef);
   });
 
   describe("permission groups", () => {
@@ -270,32 +241,6 @@ describe("AccountToken", () => {
     });
   });
 
-  it("deletes the new token when its value can't be written", async () => {
-    route({ createSecret: () => fail(400, 1001, "store_not_found") });
-
-    await expect(token.create(params)).rejects.toThrow("store_not_found");
-    expect(calls.at(-1)).toMatchObject({ method: "DELETE" });
-    expect(calls.at(-1)!.url.pathname).toBe(`${TOKENS}/t1`);
-  });
-
-  it("records the value, so that it is scrubbed from an error that echoes it", async () => {
-    route({ createSecret: () => fail(400, 1001, `bad value ${VALUE}`) });
-
-    const error = await token.create(params).catch((e) => e);
-    expect(scrubSecretValues(error.message)).not.toContain(VALUE);
-  });
-
-  it("says to delete the new token by hand when its value can't be written and the token can't be deleted", async () => {
-    route({
-      createSecret: () => fail(400, 1001, "store_not_found"),
-      deleteToken: () => fail(500, 0, "internal error"),
-    });
-
-    await expect(token.create(params)).rejects.toThrow(
-      "store_not_found (1001). The API token t1 that was just created couldn't be deleted. Delete it in the dashboard.",
-    );
-  });
-
   it("reports a create whose response was a server error as unknown", async () => {
     route({ createToken: () => fail(502, 0, "bad gateway") });
 
@@ -330,7 +275,7 @@ describe("AccountToken", () => {
     ).toEqual([`${TOKENS}/lost-1`, `${TOKENS}/lost-2`]);
   });
 
-  it("reads the policies by group ID, and the ID of the secret", async () => {
+  it("reads the policies by group ID", async () => {
     route({
       getToken: () =>
         ok({
@@ -344,13 +289,10 @@ describe("AccountToken", () => {
             },
           ],
         }),
-      listSecrets: () =>
-        ok([{ id: "s1", name: params.Name, status: "active" }]),
     });
 
     await expect(token.read!(key)).resolves.toEqual({
       ...key,
-      SecretId: "s1",
       Policies: params.Policies,
       Condition: {},
     });
@@ -361,14 +303,6 @@ describe("AccountToken", () => {
 
     await expect(token.read!(key)).rejects.toBeInstanceOf(
       ResourceNotFoundError,
-    );
-  });
-
-  it("fails to read when the secret is missing, and says to rotate the token", async () => {
-    route({});
-
-    await expect(token.read!(key)).rejects.toThrow(
-      "Rotate the token: change the id of its accountToken() declaration, and deploy.",
     );
   });
 
@@ -387,15 +321,13 @@ describe("AccountToken", () => {
     expect(calls.at(-1)!.url.pathname).toBe(`${TOKENS}/t1`);
   });
 
-  it("deletes the token, and its secret by the ID that its name has now", async () => {
-    route({ listSecrets: () => ok([{ id: "s2", name: params.Name }]) });
+  it("deletes the token", async () => {
+    route({});
 
-    await token.delete(key, { SecretId: "s1" } as any);
+    await token.delete(key, {} as any);
 
     expect(calls.map((c) => `${c.method} ${c.url.pathname}`)).toEqual([
       `DELETE ${TOKENS}/t1`,
-      `GET ${SECRETS}`,
-      `DELETE ${SECRETS}/s2`,
     ]);
   });
 
@@ -416,8 +348,6 @@ describe("AccountToken", () => {
               resources: policy.resources,
             })),
           }),
-        listSecrets: () =>
-          ok([{ id: "s1", name: params.Name, status: "active" }]),
       });
       return token.read!(key);
     };
@@ -456,9 +386,6 @@ describe("AccountToken", () => {
     const tokenWithConfig = (config: Record<string, unknown>) =>
       new AccountToken("token:deploy", {
         config: { Name: params.Name, Policies: policies, ...config },
-        dependencies: {
-          store: { output: { AccountId: "acc", StoreId: "store" } },
-        } as any,
       });
 
     // A resource that has deployed, with outputs for the token's config to use.
@@ -486,8 +413,6 @@ describe("AccountToken", () => {
             ],
             ...fields,
           }),
-        listSecrets: () =>
-          ok([{ id: "s1", name: params.Name, status: "active" }]),
       });
       return token.read!(key);
     };
@@ -563,7 +488,6 @@ describe("AccountToken", () => {
         }),
       ).resolves.toEqual({
         ...key,
-        SecretId: "s1",
         Policies: params.Policies,
         Condition: { requestIp: { in: [...RANGES].sort() } },
         ExpiresOn: "2027-01-01T00:00:00Z",

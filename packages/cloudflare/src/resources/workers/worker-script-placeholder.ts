@@ -95,8 +95,8 @@ const workerScriptPlaceholderSchema = workerScriptPlaceholder.defineSchema({
  * Delete removes the Worker only while it still carries the tag. A Worker
  * without the tag belongs to the script, which deletes it.
  */
-export const WorkerScriptPlaceholder = workerScriptPlaceholderSchema
-  .defineOperations({
+export const WorkerScriptPlaceholder =
+  workerScriptPlaceholderSchema.defineOperations({
     create: async (params) => {
       const { AccountId, ScriptName } = params;
       const settings = await getScriptSettings(AccountId, ScriptName);
