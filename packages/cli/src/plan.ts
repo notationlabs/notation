@@ -188,22 +188,33 @@ const creatingDecisions = new Set<PlanNode["decision"]>([
 
 type ValueFrom = { Source?: unknown } | undefined;
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object";
+
 // A secret without a source has `ValueFrom: { Source: PROMPT_SOURCE }`. Plan
 // never asks for the value, so it says that deploy will. A Worker holds its
-// secrets in `Secrets`, by binding name, and an update that changes them
-// may add one that the Worker doesn't have.
+// secrets in `Secrets`, by binding name. An update flags an entry that is
+// new or whose `Source` changed. The node can't tell the first deploy after
+// the upgrade from `WorkerSecret`, where every entry is new to state but
+// the Worker has the secrets, so that deploy flags them too.
 function promptsForValue(node: PlanNode): boolean {
-  const creating = creatingDecisions.has(node.decision);
-  const changesSecrets =
-    node.diff !== undefined &&
-    ("Secrets" in node.diff.added || "Secrets" in node.diff.updated);
   const secrets = node.params.Secrets as Record<string, ValueFrom> | undefined;
-  return (
-    (creating &&
-      (node.params.ValueFrom as ValueFrom)?.Source === PROMPT_SOURCE) ||
-    ((creating || changesSecrets) &&
-      Object.values(secrets ?? {}).some(
-        (entry) => entry?.Source === PROMPT_SOURCE,
-      ))
+  const prompted = Object.entries(secrets ?? {})
+    .filter(([, valueFrom]) => valueFrom?.Source === PROMPT_SOURCE)
+    .map(([name]) => name);
+  if (creatingDecisions.has(node.decision)) {
+    return (
+      (node.params.ValueFrom as ValueFrom)?.Source === PROMPT_SOURCE ||
+      prompted.length > 0
+    );
+  }
+  const added = node.diff?.added.Secrets;
+  const updated = node.diff?.updated.Secrets;
+  return prompted.some(
+    (name) =>
+      (isRecord(added) && name in added) ||
+      (isRecord(updated) &&
+        isRecord(updated[name]) &&
+        "Source" in updated[name]),
   );
 }

@@ -183,7 +183,7 @@ export type ScriptDeployment = {
   versions: { version_id: string; percentage: number }[];
 };
 
-/** The Worker's latest deployment, which Cloudflare lists first. */
+/** The Worker's latest deployment. */
 export async function latestDeployment(
   account: string,
   scriptName: string,
@@ -192,6 +192,8 @@ export async function latestDeployment(
     "GET",
     `${scriptPath(account, scriptName)}/deployments`,
   );
+  // Cloudflare's API reference for this list says that the first deployment
+  // is the latest, the one that serves traffic.
   return result?.deployments?.[0];
 }
 
@@ -226,6 +228,23 @@ export async function hasScriptSecret(
   }
 }
 
+/** The names of the Worker's `secret_text` bindings. */
+export async function listScriptSecretNames(
+  account: string,
+  scriptName: string,
+): Promise<Set<string>> {
+  // The endpoint also lists bindings of other types, such as `secret_key`.
+  const secrets = await cloudflare<{ name: string; type: string }[]>(
+    "GET",
+    `${scriptPath(account, scriptName)}/secrets`,
+  );
+  return new Set(
+    (secrets ?? [])
+      .filter((secret) => secret.type === "secret_text")
+      .map((secret) => secret.name),
+  );
+}
+
 /**
  * Creates or replaces the Worker's secret, and deploys a new version of the
  * Worker with it. Fails if the Worker doesn't exist.
@@ -245,7 +264,6 @@ export async function putScriptSecret(
 
 /**
  * Deletes the Worker's secret. Succeeds if the Worker or the secret is gone.
- * Cloudflare leaves a binding of another type with the name.
  */
 export async function deleteScriptSecret(
   account: string,

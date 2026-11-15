@@ -1336,8 +1336,16 @@ describe("WorkerScript secrets", () => {
     ADMIN: { Secret: "admin", Source: PROMPT_SOURCE },
   };
   const withSecrets = { ...params, Secrets: secrets };
-  const secretUrl = (name: string) =>
-    `https://api.cloudflare.com/client/v4/accounts/acc/workers/scripts/app--dev--api/secrets/${name}`;
+  const isSecretsList = (call: Call) =>
+    call.method === "GET" && call.url.endsWith("/app--dev--api/secrets");
+  // Answers the list of the Worker's secrets with `names`, and every other
+  // call with `ok({})`.
+  const withSecretList =
+    (names: string[], respond: (call: Call) => Response = () => ok({})) =>
+    (call: Call) =>
+      isSecretsList(call)
+        ? ok(names.map((name) => ({ name, type: "secret_text" })))
+        : respond(call);
 
   // Runs `fn` as deploy does, with both secrets declared.
   const deploying = <T>(
@@ -1359,11 +1367,12 @@ describe("WorkerScript secrets", () => {
 
   const upload = () => requests().find((call) => call.method === "PUT")!;
 
-  it("sends each secret in the upload that creates the Worker", async () => {
+  it("sends each secret in the upload that creates the Worker, without listing the secrets", async () => {
     mockFetch(untilUploaded());
 
     await deploying(() => script.create(withSecrets));
 
+    expect(calls.some(isSecretsList)).toBe(false);
     expect(await secretBindings(upload())).toEqual([
       { type: "secret_text", name: "API_KEY", text: "sk_from_vault" },
       { type: "secret_text", name: "ADMIN", text: "typed" },
@@ -1374,11 +1383,7 @@ describe("WorkerScript secrets", () => {
   });
 
   it("leaves a secret without a source out of an update when the Worker has it, without asking", async () => {
-    mockFetch((call) =>
-      call.url === secretUrl("ADMIN")
-        ? ok({ name: "ADMIN", type: "secret_text" })
-        : ok({}),
-    );
+    mockFetch(withSecretList(["ADMIN", "API_KEY"]));
     const prompt = vi.fn(async () => "typed");
 
     await deploying(
@@ -1390,12 +1395,45 @@ describe("WorkerScript secrets", () => {
     expect(await secretBindings(upload())).toEqual([
       { type: "secret_text", name: "API_KEY", text: "sk_from_vault" },
     ]);
+    expect(calls.filter(isSecretsList)).toHaveLength(1);
+  });
+
+  it("keeps a secret on a placeholder Worker that it uploads over", async () => {
+    let uploaded = false;
+    mockFetch(
+      withSecretList(["ADMIN"], (call) => {
+        if (call.method === "PUT") uploaded = true;
+        return ok({
+          compatibility_date: "2025-01-01",
+          tags: uploaded ? [] : ["notation-placeholder"],
+        });
+      }),
+    );
+    const prompt = vi.fn(async () => "typed");
+
+    await deploying(() => script.create(withSecrets), prompt);
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(
+      (await secretBindings(upload())).map(
+        (binding: { name: string }) => binding.name,
+      ),
+    ).toEqual(["API_KEY"]);
+  });
+
+  it("doesn't list the secrets in an update when every secret has a source", async () => {
+    mockFetch(() => ok({}));
+    const sourced = { ...params, Secrets: { API_KEY: secrets.API_KEY } };
+
+    await deploying(() =>
+      script.update!(params as any, {} as any, sourced, sourced),
+    );
+
+    expect(calls.some(isSecretsList)).toBe(false);
   });
 
   it("asks for a secret without a source that the Worker doesn't have", async () => {
-    mockFetch((call) =>
-      call.url === secretUrl("ADMIN") ? fail(404, 10056) : ok({}),
-    );
+    mockFetch(withSecretList(["API_KEY"]));
 
     await deploying(() =>
       script.update!(params as any, {} as any, withSecrets, params),
@@ -1409,7 +1447,7 @@ describe("WorkerScript secrets", () => {
   });
 
   it("deletes each secret that state has and the params don't, after the upload", async () => {
-    mockFetch(() => ok({}));
+    mockFetch(withSecretList([]));
 
     await deploying(() =>
       script.update!(
@@ -1431,7 +1469,7 @@ describe("WorkerScript secrets", () => {
   });
 
   it("doesn't delete a secret whose name the upload binds as a plain binding", async () => {
-    mockFetch(() => ok({}));
+    mockFetch(withSecretList([]));
     const plain = {
       ...params,
       Bindings: [
@@ -1450,6 +1488,40 @@ describe("WorkerScript secrets", () => {
         .filter((call) => call.method !== "GET")
         .map((call) => call.method),
     ).toEqual(["PUT"]);
+  });
+
+  it("reads the entries of Secrets whose secret the Worker still has", async () => {
+    mockFetch((call) =>
+      isSecretsList(call)
+        ? ok([
+            { name: "API_KEY", type: "secret_text" },
+            { name: "ADMIN", type: "secret_key" },
+          ])
+        : ok({ compatibility_date: "2026-01-01" }),
+    );
+
+    const read = await script.read!(
+      { AccountId: "acc", ScriptName: "app--dev--api" },
+      undefined,
+      withSecrets,
+    );
+
+    expect((read as { Secrets?: unknown }).Secrets).toEqual({
+      API_KEY: secrets.API_KEY,
+    });
+  });
+
+  it("doesn't list the secrets in a read without Secrets", async () => {
+    mockFetch(() => ok({ compatibility_date: "2026-01-01" }));
+
+    const read = await script.read!(
+      { AccountId: "acc", ScriptName: "app--dev--api" },
+      undefined,
+      params,
+    );
+
+    expect((read as { Secrets?: unknown }).Secrets).toBeUndefined();
+    expect(calls.some(isSecretsList)).toBe(false);
   });
 
   it("uploads nothing when a value can't be read", async () => {
@@ -1514,6 +1586,23 @@ describe("WorkerScript during a gradual rollout", () => {
       isDeploymentsRead(call)
         ? ok({ deployments: [split.deployments[1], split.deployments[0]] })
         : ok({}),
+    );
+
+    await script.update!(params as any, {} as any, params, params);
+
+    expect(puts()).toHaveLength(1);
+  });
+
+  it("uploads when the latest deployment lists a second version at 0%", async () => {
+    const finished = {
+      ...split.deployments[0],
+      versions: [
+        { version_id: "81fa", percentage: 100 },
+        { version_id: "3c9e", percentage: 0 },
+      ],
+    };
+    mockFetch((call) =>
+      isDeploymentsRead(call) ? ok({ deployments: [finished] }) : ok({}),
     );
 
     await script.update!(params as any, {} as any, params, params);

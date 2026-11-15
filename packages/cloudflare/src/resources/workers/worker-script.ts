@@ -22,11 +22,11 @@ import {
   deleteScriptSecret,
   getScriptReferences,
   getScriptSettings,
-  hasScriptSecret,
   isNotFound,
   isPlaceholderScript,
   isReferenced,
   listAccountNamespaces,
+  listScriptSecretNames,
   latestDeployment,
   patchScriptExports,
   putScript,
@@ -289,8 +289,9 @@ export const WorkerScript = workerScriptSchema
   .defineOperations({
     // An upload replaces a Worker with the same name, so check first. The
     // check is outside `cloudflareCreate`: if it throws, nothing was created.
-    // A Worker that `WorkerScriptPlaceholder` uploaded is replaced, and the
-    // upload removes its tag.
+    // The upload may replace a placeholder that an earlier version of
+    // notation left with the deprecated `WorkerScriptPlaceholder`, and it
+    // removes the placeholder's tag.
     create: async (params) => {
       const existing = await getScriptSettings(
         params.AccountId,
@@ -305,14 +306,17 @@ export const WorkerScript = workerScriptSchema
       if (found.transfers.length > 0) {
         throw new Error(newHostError(params, found.transfers));
       }
-      const secrets = await secretBindings(params);
+      const secrets = await secretBindings(params, existing !== undefined);
       await cloudflareCreate(async () => {
         await upload(params, [], found, secrets, { tags: [] });
         await waitUntilReadable(params.AccountId, params.ScriptName);
       })();
     },
 
-    read: async (key) => {
+    // Returns the entries of `Secrets` whose secret the Worker still has, so
+    // that a secret deleted outside notation shows as drift, and the update
+    // sends it again.
+    read: async (key, _context, params) => {
       const settings = await getScriptSettings(key.AccountId, key.ScriptName);
       if (!settings) {
         throw new ResourceNotFoundError("Worker was not found");
@@ -324,6 +328,9 @@ export const WorkerScript = workerScriptSchema
         CompatibilityFlags: settings.compatibility_flags
           ? sortedFlags(settings.compatibility_flags)
           : undefined,
+        ...(params?.Secrets
+          ? { Secrets: await presentSecrets(key, params.Secrets) }
+          : {}),
       };
     },
 
@@ -331,13 +338,13 @@ export const WorkerScript = workerScriptSchema
     // compares the namespaces in state with the new ones, to rename, delete
     // or move those that changed. An upload keeps a secret that it leaves
     // out, so a removed secret is deleted after it. A name that the upload
-    // binds another way is not deleted, as the delete would remove that
-    // binding.
+    // binds another way is not deleted, because it is not known whether
+    // Cloudflare's delete would leave that binding.
     update: async (_key, _patch, params, state) => {
       await assertNoRollout(params);
       const previous = state.DurableObjectNamespaces ?? [];
       const found = await findTransfers(params, previous);
-      const secrets = await secretBindings(params);
+      const secrets = await secretBindings(params, true);
       await upload(params, previous, found, secrets);
       const bound = new Set([
         ...Object.keys(params.Secrets ?? {}),
@@ -381,16 +388,31 @@ export function sortedFlags(flags: string[]): string[] {
 
 /**
  * Throws when the Worker is in a gradual rollout. Cloudflare deploys every
- * upload to all traffic, which ends the rollout.
+ * upload to all traffic, which ends the rollout. A version at 0% serves no
+ * traffic, so a deployment that lists one is not a rollout.
  */
 async function assertNoRollout(params: WorkerScriptParams): Promise<void> {
   const latest = await latestDeployment(params.AccountId, params.ScriptName);
-  if (!latest || latest.versions.length < 2) return;
-  const split = latest.versions
+  const serving = (latest?.versions ?? []).filter(
+    (version) => version.percentage > 0,
+  );
+  if (serving.length < 2) return;
+  const split = serving
     .map((version) => `${version.percentage}% on version ${version.version_id}`)
     .join(", ");
   throw new Error(
     `The Worker ${params.ScriptName} is in a gradual rollout: ${split}. An upload would end the rollout. Finish or cancel it in Cloudflare, then deploy again.`,
+  );
+}
+
+/** The entries of `secrets` whose secret the Worker has. */
+async function presentSecrets(
+  key: { AccountId: string; ScriptName: string },
+  secrets: Record<string, SecretValueFrom>,
+): Promise<Record<string, SecretValueFrom>> {
+  const names = await listScriptSecretNames(key.AccountId, key.ScriptName);
+  return Object.fromEntries(
+    Object.entries(secrets).filter(([name]) => names.has(name)),
   );
 }
 
@@ -401,15 +423,18 @@ async function assertNoRollout(params: WorkerScriptParams): Promise<void> {
  */
 async function secretBindings(
   params: WorkerScriptParams,
+  // False for the create of a new Worker, which has no secrets to keep.
+  exists: boolean,
 ): Promise<SecretTextBinding[]> {
+  const entries = Object.entries(params.Secrets ?? {});
+  const kept =
+    exists &&
+    entries.some(([, valueFrom]) => valueFrom.Source === PROMPT_SOURCE)
+      ? await listScriptSecretNames(params.AccountId, params.ScriptName)
+      : new Set<string>();
   const bindings: SecretTextBinding[] = [];
-  for (const [name, valueFrom] of Object.entries(params.Secrets ?? {})) {
-    if (
-      valueFrom.Source === PROMPT_SOURCE &&
-      (await hasScriptSecret(params.AccountId, params.ScriptName, name))
-    ) {
-      continue;
-    }
+  for (const [name, valueFrom] of entries) {
+    if (valueFrom.Source === PROMPT_SOURCE && kept.has(name)) continue;
     const value = (await getValue(valueFrom.Secret)).unwrap();
     bindings.push({ type: "secret_text", name, text: value });
   }

@@ -66,7 +66,11 @@ export async function* readRemoteOperation(
         withoutCredentials(
           params.resource,
           params.resource.toResult(
-            await params.resource.read!(params.resource.key, context),
+            await params.resource.read!(
+              params.resource.key,
+              context,
+              params.resourceParams,
+            ),
           ),
         ),
       params.maxOperationAttempts,

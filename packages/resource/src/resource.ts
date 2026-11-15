@@ -156,7 +156,11 @@ export interface BaseResource {
     string,
     ((key: any, state: any) => Promise<unknown>) | undefined
   >;
-  read?: (key: any, context?: ResourceOperationContext) => Promise<{}>;
+  read?: (
+    key: any,
+    context?: ResourceOperationContext,
+    params?: any,
+  ) => Promise<{}>;
   update?: (
     key: any,
     patch: any,
@@ -292,6 +296,7 @@ export abstract class Resource<
   abstract read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
+    params?: T["params"],
   ) => Promise<T["result"]>;
   abstract update?: (
     key: T["compoundKey"],
@@ -983,9 +988,16 @@ export type ResourceOperationsOptions<
    * "creating" record.
    */
   find?: (params: T["params"]) => Promise<T["primaryKey"] & {}>;
+  /**
+   * `params` lets a read report which declared parts of the resource are
+   * missing, when the key doesn't name them. They are the desired params,
+   * except for the drift read of a cycle's placeholder, which gets the
+   * params in its state record.
+   */
   read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
+    params?: T["params"],
   ) => Promise<T["result"]>;
   /**
    * A param that takes a credential of another resource holds the value in

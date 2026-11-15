@@ -388,7 +388,7 @@ it("prints that deploy asks for the value of a new secret without a source", asy
   ]);
 });
 
-it("prints that deploy asks for the value of a Worker's secret without a source when it creates the Worker or changes its secrets", async () => {
+it("prints that deploy asks for the value of a Worker's secret without a source when it creates the Worker, or adds the secret or moves it to the prompt", async () => {
   const Secrets = {
     ADMIN: { Secret: "admin", Source: "prompt" },
     API_KEY: { Secret: "api-key", Source: "env", Key: "API_KEY" },
@@ -408,7 +408,35 @@ it("prints that deploy asks for the value of a Worker's secret without a source 
         id: "worker:jobs",
         type,
         decision: "update",
-        diff: { added: {}, deleted: {}, updated: { Secrets } },
+        diff: {
+          added: { Secrets: { ADMIN: Secrets.ADMIN } },
+          deleted: {},
+          updated: {},
+        },
+        params: { Secrets },
+        dependsOn: [],
+      },
+      {
+        id: "worker:queue",
+        type,
+        decision: "update",
+        diff: {
+          added: {},
+          deleted: { Secrets: { ADMIN: { Key: null } } },
+          updated: { Secrets: { ADMIN: { Source: "prompt" } } },
+        },
+        params: { Secrets },
+        dependsOn: [],
+      },
+      {
+        id: "worker:cron",
+        type,
+        decision: "update",
+        diff: {
+          added: {},
+          deleted: {},
+          updated: { Secrets: { API_KEY: { Key: "API_KEY_V2" } } },
+        },
         params: { Secrets },
         dependsOn: [],
       },
@@ -435,6 +463,7 @@ it("prints that deploy asks for the value of a Worker's secret without a source 
   expect(before).toEqual([
     `+ create ${type} worker:api`,
     `~ update ${type} worker:jobs`,
+    `~ update ${type} worker:queue`,
   ]);
 });
 

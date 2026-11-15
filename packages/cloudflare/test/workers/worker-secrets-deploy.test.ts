@@ -121,6 +121,14 @@ function fakeCloudflare() {
       worker.secrets.set(body.name, body.text);
       return ok({ name: body.name, type: "secret_text" });
     }
+    if (method === "GET" && sub === "secrets") {
+      return ok(
+        [...worker.secrets.keys()].map((name) => ({
+          name,
+          type: "secret_text",
+        })),
+      );
+    }
     const secret = sub.match(/^secrets\/(.+)$/)?.[1];
     if (secret && method === "GET") {
       return worker.secrets.has(secret)
@@ -385,6 +393,22 @@ describe("a Worker with secrets", () => {
     expect(asked).not.toHaveBeenCalled();
     expect(log).toEqual([`upload ${name} with API_KEY`]);
     expect(workers.get(name)!.secrets.get("ADMIN")).toBe("typed");
+  });
+
+  it("sends a secret deleted outside notation again on the next deploy", async () => {
+    await deploy("first", prompt);
+    const name = onlyWorker();
+    workers.get(name)!.secrets.delete("ADMIN");
+    workers.get(name)!.secrets.delete("API_KEY");
+    log = [];
+
+    expect((await decisions())["worker:api"]).toBe("drift-update");
+    const asked = vi.fn(async () => "typed again");
+    await deploy("second", asked);
+
+    expect(asked).toHaveBeenCalledOnce();
+    expect(log).toEqual([`upload ${name} with ADMIN,API_KEY`]);
+    expect(workers.get(name)!.secrets.get("ADMIN")).toBe("typed again");
   });
 
   it("keeps a value set with notation secret set", async () => {

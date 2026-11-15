@@ -145,8 +145,8 @@ export const isWorkerSecret = (value: unknown): value is WorkerSecretGroup =>
  * Worker, the binding is a string. Each Worker that binds it has its own
  * copy of the secret, which deploy sends in the upload of the Worker's code.
  * Deploy sends the value from `source`, or asks for it when there is no
- * source and the Worker doesn't have the secret. Notation records where the value comes from, and
- * never the value.
+ * source and the Worker doesn't have the secret. Notation records where the
+ * value comes from, and never the value.
  * @resource
  */
 export function workerSecret(config: WorkerSecretConfig): WorkerSecretGroup {
