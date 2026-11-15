@@ -1,13 +1,15 @@
 # notation plan
 
 ```sh
-notation plan [--config <path>] [--stage <stage>]
+notation plan [--config <path>] [--stage <stage>] [--replace <id>[@<hash>]] [--override-loss-protection <id>]
 ```
 
-| Option            | Meaning                                                     |
-| ----------------- | ----------------------------------------------------------- |
-| `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
-| `--stage <stage>` | The stage. Default: `defaultStage`.                         |
+| Option                            | Meaning                                                                                                     |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `--config <path>`                 | The config file. Default: the nearest `notation.config.ts`.                                                 |
+| `--stage <stage>`                 | The stage. Default: `defaultStage`.                                                                         |
+| `--replace <id>[@<hash>]`         | Plan a replace of the resource with this ID. Repeatable. See [Replacing a resource](#replacing-a-resource). |
+| `--override-loss-protection <id>` | Plan the replace of a resource that `--replace` names, though its class refuses the replace. Repeatable.    |
 
 Compiles the entry file and shows what a deploy to the stage would change:
 
@@ -67,6 +69,29 @@ If the earlier create made the resource, deploy takes it over: it reads the reso
 
 Deploy generates the AWS name of a resource, such as a function or a queue, when it first creates the resource. In the JSON output, the `params` of such a resource show the name as `{ "$unknown": "after-apply" }` until the resource exists. The same holds for a resource that deploy replaces, because the replacement gets a new name. The plan of a replace does not list the name among the fields that change. See [Generated names](../manual/project-config.md#generated-names).
 
+## Replacing a resource
+
+`--replace` plans the replace that [`notation deploy --replace`](./deploy.md#replacing-a-resource) makes. The instance hash is optional, because plan changes nothing. When you give it, plan checks it as deploy does.
+
+```sh
+notation plan --stage prod --replace lambda:orders:role
+```
+
+The plan shows the replace, and every change that follows from it:
+
+```
++/- replace aws/lambda/LambdaIamRole lambda:orders:role (create, then delete)
+    replaced by --replace
+~ update aws/lambda/LambdaFunction lambda:orders
+
+Plan: 0 to create, 1 to update, 1 to replace, 0 to recreate, 0 to delete, 9 unchanged.
+
+To deploy this plan:
+  notation deploy --stage prod --replace lambda:orders:role@3c1f9a02
+```
+
+The last line is the deploy command, with the instance hash of each resource that `--replace` names. Copy it to deploy the plan. When a changed param also replaces the resource, the plan shows one replace with both reasons.
+
 ## JSON output
 
 `--json` writes the complete plan to stdout. Build output and diagnostics move to stderr.
@@ -75,4 +100,4 @@ Deploy generates the AWS name of a resource, such as a function or a queue, when
 notation plan --stage prod --json > plan.json
 ```
 
-Each node has `id`, `type`, `decision`, `params` and `dependsOn`. A node with the decision `replace` or `drift-replace` has `replaceOrder`, `"create-first"` or `"delete-first"`. A retired resource is a node with the decision `delete-retired`. It has the ID of the resource that replaced it, `retiredIndex`, its position in the list of retired instances of that resource, its own `params` and `dependsOn`, and `retiredAt`, the time when the replace started. The ID and `retiredIndex` together name the instance.
+Each node has `id`, `type`, `decision`, `params` and `dependsOn`. A node with the decision `replace` or `drift-replace` has `replaceOrder`, `"create-first"` or `"delete-first"`. A retired resource is a node with the decision `delete-retired`. It has the ID of the resource that replaced it, `retiredIndex`, its position in the list of retired instances of that resource, its own `params` and `dependsOn`, and `retiredAt`, the time when the replace started. The ID and `retiredIndex` together name the instance. A node of a resource in code that has a state record has `instanceHash`, the hash that `--replace` takes. A replace that `--replace` asked for has `{ "requested": true, "known": true }` in its `replaceFields`.
