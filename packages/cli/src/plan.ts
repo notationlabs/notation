@@ -186,11 +186,22 @@ const creatingDecisions = new Set<PlanNode["decision"]>([
   "drift-recreate",
 ]);
 
+type ValueFrom = { Source?: unknown } | undefined;
+
 // A secret without a source has `ValueFrom: { Source: PROMPT_SOURCE }`. Plan
-// never asks for the value, so it says that deploy will.
+// never asks for the value, so it says that deploy will. A Worker holds its
+// secrets in `Secrets`, by binding name, and an update that changes them
+// may add one that the Worker doesn't have.
 function promptsForValue(node: PlanNode): boolean {
-  const valueFrom = node.params.ValueFrom as { Source?: unknown } | undefined;
-  return (
-    creatingDecisions.has(node.decision) && valueFrom?.Source === PROMPT_SOURCE
+  const creating = creatingDecisions.has(node.decision);
+  const valueFrom = node.params.ValueFrom as ValueFrom;
+  if (creating && valueFrom?.Source === PROMPT_SOURCE) return true;
+  const changesSecrets =
+    node.diff !== undefined &&
+    ("Secrets" in node.diff.added || "Secrets" in node.diff.updated);
+  if (!creating && !changesSecrets) return false;
+  const secrets = node.params.Secrets as Record<string, ValueFrom> | undefined;
+  return Object.values(secrets ?? {}).some(
+    (entry) => entry?.Source === PROMPT_SOURCE,
   );
 }

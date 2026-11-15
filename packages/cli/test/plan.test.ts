@@ -388,6 +388,56 @@ it("prints that deploy asks for the value of a new secret without a source", asy
   ]);
 });
 
+it("prints that deploy asks for the value of a Worker's secret without a source when it creates the Worker or changes its secrets", async () => {
+  const Secrets = {
+    ADMIN: { Secret: "admin", Source: "prompt" },
+    API_KEY: { Secret: "api-key", Source: "env", Key: "API_KEY" },
+  };
+  const type = "cloudflare/workers/WorkerScript";
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "worker:api",
+        type,
+        decision: "create",
+        params: { Secrets },
+        dependsOn: [],
+      },
+      {
+        id: "worker:jobs",
+        type,
+        decision: "update",
+        diff: { added: {}, deleted: {}, updated: { Secrets } },
+        params: { Secrets },
+        dependsOn: [],
+      },
+      {
+        id: "worker:web",
+        type,
+        decision: "update",
+        diff: { added: {}, deleted: {}, updated: { CodeSha256: "b" } },
+        params: { Secrets },
+        dependsOn: [],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  const notSet =
+    "    value not set: deploy asks for it if the secret doesn't exist, and fails without a terminal";
+  const before = lines.flatMap((line, index) =>
+    line === notSet ? [lines[index - 1]] : [],
+  );
+  expect(before).toEqual([
+    `+ create ${type} worker:api`,
+    `~ update ${type} worker:jobs`,
+  ]);
+});
+
 it("prints a resource that only rotates a credential", async () => {
   planApp.mockResolvedValueOnce({
     createdAt: "",
