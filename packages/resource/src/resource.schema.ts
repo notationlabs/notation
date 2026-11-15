@@ -33,13 +33,13 @@ export type SchemaItem<T = any> = {
    * in for an optional property is not applied either.
    */
   value: StandardSchemaV1<T, T>;
-  presence: "required" | "optional";
   sensitive?: true;
   hidden?: true;
   volatile?: true;
 } & (
   | {
       propertyType: "param";
+      presence: "required" | "optional";
       immutable?: true;
       primaryKey?: true;
       secondaryKey?: true;
@@ -71,7 +71,26 @@ export type SchemaItem<T = any> = {
     }
   | {
       propertyType: "computed";
+      presence: "required" | "optional";
       primaryKey?: true;
+    }
+  | {
+      /**
+       * A secret that the provider returns from `create`, and from the
+       * `rotate` operation of the same name when the resource has one. Read
+       * never returns it.
+       *
+       * Deploy keeps the value in memory only. It is not written to state or
+       * to a step result, and it is removed from error messages. Another
+       * resource takes the value through `resource.credentials.<name>`, and
+       * its operations receive the value in their params.
+       *
+       * Deploy gets a new value when a resource that takes the credential
+       * needs one and deploy holds none: it calls `rotate`, or replaces the
+       * resource when it has no `rotate`. It then updates every resource
+       * that takes the credential.
+       */
+      propertyType: "credential";
     }
 );
 
@@ -116,14 +135,35 @@ export type CompoundKey<S extends ResolvedSchema> = MapSchema<
 
 export type Params<S extends ResolvedSchema> = MapSchema<
   S,
-  { propertyType: "computed" }
+  { propertyType: "computed" } | CredentialItem
 >;
 
 export type Result<S extends ResolvedSchema> = DeepPartial<
-  MapSchema<S, { propertyType: "param" }>
+  MapSchema<S, { propertyType: "param" } | CredentialItem>
 >;
 
-export type Output<S extends ResolvedSchema> = MapSchema<S>;
+export type Output<S extends ResolvedSchema> = MapSchema<S, CredentialItem>;
+
+type CredentialItem = { propertyType: "credential" };
+
+/** The value type of each `credential` property. */
+export type Credentials<S extends ResolvedSchema> = {
+  [
+    K in keyof S as S[K] extends CredentialItem ? K : never
+  ]: S[K]["resolvedType"];
+};
+
+/**
+ * What `create` returns: the part of the primary key that the provider
+ * assigns, and every credential.
+ */
+export type CreateResult<S extends ResolvedSchema> =
+  {} extends Credentials<S>
+    ? ComputedPrimaryKey<S>
+    : Simplify<
+        ([ComputedPrimaryKey<S>] extends [void] ? {} : ComputedPrimaryKey<S>) &
+          Credentials<S>
+      >;
 
 /**
  * The values `contribute` accepts: one per collected param, typed as the
@@ -151,7 +191,10 @@ export type PhysicalNames<S extends ResolvedSchema> = {
     : "generated";
 };
 
-export type State<S extends ResolvedSchema> = MapSchema<S, { hidden: true }>;
+export type State<S extends ResolvedSchema> = MapSchema<
+  S,
+  { hidden: true } | CredentialItem
+>;
 
 /**
  * What a schema must look like for a given API schema: propertyType,

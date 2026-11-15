@@ -190,7 +190,7 @@ export function placeholderParamsBlocker(
   }
   for (const param of resource.getContributedParams({ from: peers })) {
     const item = resource.schema[param];
-    if (item?.presence === "required") {
+    if (item?.propertyType === "param" && item.presence === "required") {
       return `${resource.id} takes ${param} from contributions that refer to other members of its cycle, and ${param} is required`;
     }
     if (item && forcesReplacement(item)) {

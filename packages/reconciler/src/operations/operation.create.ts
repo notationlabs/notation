@@ -3,9 +3,12 @@ import {
   ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
+  SchemaStructureError,
   assertComputedFields,
   assertRequiredOutputs,
   changedKeys,
+  credentialMarker,
+  credentialNames,
   deployLookup,
   diffParams,
   resolveOutputRefs,
@@ -35,6 +38,11 @@ import {
   readResourceOperation,
 } from "./operation.read";
 import { firstDeferredError } from "./deferred-checks";
+import {
+  holdCreated,
+  revealCredentials,
+  withCredentialMarkers,
+} from "../credentials";
 
 /** How long @notation/durable waits before it looks up a create with an unknown outcome again. */
 const CREATE_LOOKUP_RETRY_MS = 1_000;
@@ -135,7 +143,18 @@ export async function* createResourceOperation(
     }
 
     const computedPrimaryKey = created.key;
-    resource.setOutput(resourceParams);
+    const credentials = credentialNames(resource.schema);
+    resource.setOutput(
+      withCredentialMarkers(resource, {
+        ...resourceParams,
+        ...Object.fromEntries(
+          Object.entries(created.credentials ?? {}).map(([name, version]) => [
+            name,
+            credentialMarker(resource.id, name, version),
+          ]),
+        ),
+      }),
+    );
     if (computedPrimaryKey) {
       resource.setOutput({ ...computedPrimaryKey, ...resource.output });
     }
@@ -144,6 +163,17 @@ export async function* createResourceOperation(
     // its key. When a check fails, the resource still exists, so it is
     // recorded with the outputs known at that point.
     const deferredError = yield* firstDeferredError([
+      async function* () {
+        const missing = credentials.filter(
+          (name) => created.credentials?.[name] === undefined,
+        );
+        if (missing.length === 0) return;
+        throw new SchemaStructureError(
+          resource,
+          "create did not return a valid value for these credentials",
+          missing,
+        );
+      },
       async function* () {
         if (!computedPrimaryKey) return;
         assertComputedFields(resource, computedPrimaryKey);
@@ -242,7 +272,9 @@ async function* takeOver(
     },
   );
 
-  resource.setOutput({ ...key, ...output });
+  // A resource that exists has no credential that deploy can read, so each
+  // gets a marker with no version.
+  resource.setOutput(withCredentialMarkers(resource, { ...key, ...output }));
   yield* params.persist(
     resourceRecord(params, {
       lastOperation: "create",
@@ -424,8 +456,14 @@ function resourceRecord(
 /**
  * `key` is what create, or the lookup, returned. `lookedUp` is set when the
  * lookup settled the attempt, so that create did not report what it made.
+ * `credentials` holds the version of each credential that create returned,
+ * and never its value.
  */
-type CreateAttemptResult = { key?: DurableObject; lookedUp?: true };
+type CreateAttemptResult = {
+  key?: DurableObject;
+  lookedUp?: true;
+  credentials?: Record<string, string>;
+};
 
 /**
  * Runs one create attempt as an effect, so a create whose outcome is unknown
@@ -463,8 +501,16 @@ async function* createAttempt(
     lookup: async () => (lookup ? lookup() : { status: "not-found" }),
     perform: async (): Promise<CreateAttemptResult> => {
       try {
-        const key = await resource.create(resourceParams, context);
-        return { key: key ? resource.toResult(key) : undefined };
+        // The effect records what this returns, so the credentials are
+        // taken out of the result first.
+        const { key, credentials } = await holdCreated(
+          resource,
+          await resource.create(revealCredentials(resourceParams), context),
+        );
+        return {
+          key: key ? resource.toResult(key) : undefined,
+          ...(credentials ? { credentials } : {}),
+        };
       } catch (error) {
         // The effect records the error. See `runPendingOperation`.
         throw scrubError(error);

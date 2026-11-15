@@ -13,6 +13,8 @@ import type {
   CompoundKey,
   Contributions,
   PhysicalNames,
+  Credentials,
+  CreateResult,
 } from "./resource.schema";
 import type {
   OptionalIfAllPropertiesOptional,
@@ -91,6 +93,8 @@ export type ResourceTypes = {
   output: any;
   collected: any;
   named: any;
+  credentials: any;
+  created: any;
 };
 
 export type InferResourceTypes<S extends ResolvedSchema> = {
@@ -102,6 +106,8 @@ export type InferResourceTypes<S extends ResolvedSchema> = {
   output: Output<S>;
   collected: Contributions<S>;
   named: PhysicalNames<S>;
+  credentials: Credentials<S>;
+  created: CreateResult<S>;
 };
 
 /**
@@ -154,6 +160,11 @@ export interface BaseResource {
     context?: ResourceOperationContext,
   ) => Promise<{} | void>;
   find?: (params: any) => Promise<{}>;
+  /** See `ResourceOperationsOptions.rotate`. */
+  rotate?: Record<
+    string,
+    ((key: any, state: any) => Promise<unknown>) | undefined
+  >;
   read?: (key: any, context?: ResourceOperationContext) => Promise<{}>;
   update?: (
     key: any,
@@ -242,6 +253,13 @@ export interface BaseResource {
   }): Promise<Record<string, unknown>>;
   /** A token for one of the resource's outputs, to place whole in config. */
   outputRef(key: string): unknown;
+  /** See `Resource.credentials`. */
+  readonly credentials: {};
+  /**
+   * The output refs that the resource's config and its contributions of
+   * values hold.
+   */
+  getOutputRefs(): OutputRef[];
   /** See `Resource["~state"]`. */
   readonly "~state": { outputRef(key: string): unknown };
   /**
@@ -277,8 +295,9 @@ export abstract class Resource<
   abstract create: (
     params: T["params"],
     context?: ResourceOperationContext,
-  ) => Promise<T["primaryKey"]>;
+  ) => Promise<T["created"]>;
   find?: (params: T["params"]) => Promise<T["primaryKey"] & {}>;
+  rotate?: RotateOperations<T>;
   abstract read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -405,6 +424,33 @@ export abstract class Resource<
     key: K,
   ): NonNullable<T["output"][K]> {
     return new OutputRef(this, [key]) as any;
+  }
+
+  /**
+   * A token for each of the resource's credentials, typed as the credential.
+   * Place it whole in the config of the resource that takes the credential.
+   * That resource depends on this one, and its operations receive the value
+   * in their params. State holds a marker in place of the value.
+   */
+  get credentials(): T["credentials"] {
+    const refs: Record<string, OutputRef> = {};
+    for (const [key, item] of Object.entries(this.schema)) {
+      if (item.propertyType === "credential") {
+        refs[key] = new OutputRef(this, [key]);
+      }
+    }
+    return refs as T["credentials"];
+  }
+
+  getOutputRefs(): OutputRef[] {
+    this.#sealed = true;
+    const found: OutputRef[] = [];
+    forEachOutputRef(this.config, (token) => found.push(token));
+    for (const contribution of this.#contributions) {
+      if ("compute" in contribution) continue;
+      forEachOutputRef(contribution.values, (token) => found.push(token));
+    }
+    return found;
   }
 
   /**
@@ -591,7 +637,7 @@ export abstract class Resource<
     const config = this.config as Record<string, unknown>;
     const contributions = await this.#evaluateContributions(true);
     for (const [key, item] of Object.entries(this.schema)) {
-      if (item.propertyType === "computed") continue;
+      if (item.propertyType !== "param") continue;
       const value = item.collect
         ? this.#collect(
             key,
@@ -899,18 +945,38 @@ export type RejectChangeContext = {
   replace: boolean;
 };
 
+/**
+ * One function for each credential that the provider can issue again. It
+ * returns a new value, and the provider revokes the value before it.
+ */
+export type RotateOperations<T extends ResourceTypes> = {
+  [K in keyof T["credentials"]]?: (
+    key: T["compoundKey"],
+    state: T["state"],
+  ) => Promise<T["credentials"][K]>;
+};
+
 export type ResourceOperationsOptions<
   T extends ResourceTypes,
   IntrinsicParams extends Partial<T["params"]>,
 > = {
   /**
-   * Creates the resource. Throws `ResourceAlreadyExistsError` when the
-   * provider refuses the create because a resource with the same key exists.
+   * Creates the resource, and returns the part of its key that the provider
+   * assigns, and its credentials. Throws `ResourceAlreadyExistsError` when
+   * the provider refuses the create because a resource with the same key
+   * exists.
    */
   create: (
     params: T["params"],
     context?: ResourceOperationContext,
-  ) => Promise<T["primaryKey"]>;
+  ) => Promise<T["created"]>;
+  /**
+   * Deploy calls the function of a credential when a resource that takes
+   * the credential needs its value and deploy holds none, for example when
+   * the resource is added in a later deploy. Without a function, deploy
+   * replaces this resource to get a new value.
+   */
+  rotate?: RotateOperations<T>;
   /**
    * Finds the resource that a create with `params` makes, and returns what
    * that create would have returned. A class defines it when the provider
@@ -1065,6 +1131,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             schema = schema;
             create = opts.create;
             find = opts.find;
+            rotate = opts.rotate;
             read = opts.read ? opts.read : undefined;
             update = opts.update ? opts.update : undefined;
             delete = opts.delete;

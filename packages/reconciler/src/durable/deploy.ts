@@ -33,6 +33,7 @@ export async function* deploy(
       recordedOutputs: yield* step.run("notation:recorded-outputs", () =>
         readRecordedOutputs(opts.resources, opts.state),
       ),
+      reconciled: new Set(),
     };
     // Reconcile in dependency order, so a resource only runs once its
     // dependencies have converged.

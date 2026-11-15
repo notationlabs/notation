@@ -27,4 +27,6 @@ export type DurableDeployOptions = DurableWorkflowOptions & {
 export type DeployContext = DurableDeployOptions & {
   /** The outputs that `~state` refs read, from state at the start. */
   recordedOutputs: RecordedOutputs;
+  /** The resources that the deploy has reconciled so far. */
+  reconciled: Set<BaseResource>;
 };

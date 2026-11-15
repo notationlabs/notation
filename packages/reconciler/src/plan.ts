@@ -79,6 +79,12 @@ export type PlanNode = {
    */
   brokenDependents?: string[];
   /**
+   * Set when deploy rotates credentials of the resource, because a resource
+   * that takes one needs its value: the names of the credentials. Deploy
+   * updates every resource that takes one of them.
+   */
+  rotates?: string[];
+  /**
    * Set when the resource is in a dependency cycle: the IDs of the other
    * resources in the cycle.
    */

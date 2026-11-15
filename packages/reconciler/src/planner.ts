@@ -16,6 +16,11 @@ import {
 } from "./dependency-graph";
 import { isCycle, orderDeployUnits, type DeployUnit } from "./cycles";
 import { createBlocksDelete } from "./delete-cascade";
+import {
+  credentialsToMint,
+  takesCredential,
+  withCredentialMarkers,
+} from "./credentials";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
 import { sweepSteps, sweptRecords } from "./orphan-sweep";
@@ -28,6 +33,8 @@ import {
   retiredEdges,
   type Plan,
   type PlanNode,
+  type ResourceAction,
+  UNKNOWN_AFTER_APPLY,
 } from "./plan";
 import { workflowRegistry, type ResourceRegistry } from "./resource-registry";
 import {
@@ -117,7 +124,7 @@ export async function createPlan({
     );
     const { stateNode } = known;
     let { params } = known;
-    const action = await runOperation(
+    let action: ResourceAction = await runOperation(
       applyDriftDetection(createStepRunner(), {
         action: decideAction({ resource, stateNode, params }),
         driftDetection: detectDrift,
@@ -128,6 +135,38 @@ export async function createPlan({
         maxOperationAttempts,
       }),
     );
+
+    // As deploy does before it reaches the resources that take a credential
+    // of this one. See `mintNeededCredentials`.
+    const minted =
+      stateNode &&
+      !isCreatingRecord(stateNode) &&
+      ["noop", "update", "drift-update"].includes(action.decision)
+        ? credentialsToMint(
+            resource,
+            stateNode.output,
+            resources
+              .filter(
+                (candidate) =>
+                  candidate !== resource &&
+                  takesCredential(candidate, resource),
+              )
+              .map((consumer) => ({
+                resource: consumer,
+                record: stateById.get(consumer.id),
+              })),
+          )
+        : [];
+    const unrotatable = minted.filter((name) => !resource.rotate?.[name]);
+    if (unrotatable.length > 0) {
+      action = {
+        decision: "replace",
+        patch: {},
+        diff: { added: {}, deleted: {}, updated: {} },
+        replaceFields: unrotatable.map((name) => ({ name, known: true })),
+      };
+    }
+    const rotates = unrotatable.length > 0 ? [] : minted;
 
     const dependsOn = getDependencyIds(resource);
     const replaceFields =
@@ -194,6 +233,16 @@ export async function createPlan({
         unknownNames(resource, known.unnamed),
       );
     }
+    if (rotates.length > 0) {
+      // The new version is unknown until deploy rotates the credential, so
+      // the resources that take it plan an update.
+      resource.setOutput({
+        ...resource.output,
+        ...Object.fromEntries(
+          rotates.map((name) => [name, UNKNOWN_AFTER_APPLY]),
+        ),
+      });
+    }
     edgesById.set(resource.id, dependsOn);
     // A delete-first replace deletes the retired instances, and a create-first
     // replace retires the resource.
@@ -232,6 +281,7 @@ export async function createPlan({
       ...(replaced ? { replaceOrder: order } : {}),
       ...(replacedDependency ? { replacedDependency } : {}),
       ...(brokenDependents.length > 0 ? { brokenDependents } : {}),
+      ...(rotates.length > 0 ? { rotates } : {}),
       ...(cycle
         ? {
             cycle: cycle.members
@@ -357,7 +407,7 @@ async function loadOutput(
   // A "creating" record holds no outputs, so dependents plan against unknown
   // outputs, as for a resource with no record.
   if (stateNode && !isCreatingRecord(stateNode)) {
-    resource.setOutput(stateNode.output);
+    resource.setOutput(withCredentialMarkers(resource, stateNode.output));
   }
   return stateNode;
 }

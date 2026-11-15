@@ -1,6 +1,6 @@
 import type { ReplaceField, ResourceType } from "@notation/resource";
 
-export type OperationName = "create" | "read" | "update" | "delete";
+export type OperationName = "create" | "read" | "update" | "delete" | "rotate";
 
 /**
  * The order of the two halves of a replace.
@@ -39,6 +39,8 @@ export type OperationLifecycleEvent = {
    * deletes this one first. Plan names it in `PlanNode.replacedDependency`.
    */
   replacedDependency?: string;
+  /** With the operation `rotate`: the name of the credential. */
+  credential?: string;
   errorName?: string;
   errorMessage?: string;
 };

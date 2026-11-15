@@ -65,6 +65,11 @@ import {
   replaceOrder,
   unknownNames,
 } from "../physical-names";
+import {
+  currentCredentialMarkers,
+  withCredentialMarkers,
+} from "../credentials";
+import { mintNeededCredentials, obtainCredentials } from "./credentials";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
   resourceStateStore,
@@ -136,13 +141,14 @@ export async function* reconcileResource(
   options: ReconcileOptions = {},
 ): AsyncGenerator<any, void, any> {
   const emit = durableEmitter(step, opts.emit);
-  const session = yield* openStateSession(step, opts, resource);
+  let session = yield* openStateSession(step, opts, resource);
   // Repeats the notation:validate check, because validate ran before the
   // hold and the record may have changed since.
   assertSameType(resource, session.node);
   const creating = isCreatingRecord(session.node);
-  const recordedOutput = creating ? undefined : session.node?.output;
-  if (recordedOutput) resource.setOutput(recordedOutput);
+  if (session.node && !creating) {
+    resource.setOutput(withCredentialMarkers(resource, session.node.output));
+  }
 
   // Resolved once and then carried: deriveParams is user code and need not be
   // deterministic, so an operation resolving them again could persist params
@@ -161,7 +167,7 @@ export async function* reconcileResource(
   // started to create, is not renamed.
   const recorded = recordedNames(names, session.node);
   const supplied = suppliedNames(names, configParams);
-  const params = fillPhysicalNames(configParams, {
+  let params = fillPhysicalNames(configParams, {
     ...(yield* generateNamesStep(
       step,
       opts,
@@ -221,6 +227,54 @@ export async function* reconcileResource(
     });
   }
 
+  if (
+    session.node &&
+    !creating &&
+    ["noop", "update", "drift-update"].includes(action.decision)
+  ) {
+    const minted = yield* mintNeededCredentials(
+      step,
+      opts,
+      session,
+      resource,
+      dependsOn,
+    );
+    session = minted.session;
+    if (minted.replaceFields) {
+      action = {
+        decision: "replace",
+        patch: {},
+        diff: { added: {}, deleted: {}, updated: {} },
+        replaceFields: minted.replaceFields,
+      };
+    }
+  }
+
+  // An update receives the credentials in its patch. Every other operation
+  // receives all of them.
+  let unnamedParams = configParams;
+  const updates =
+    action.decision === "update" || action.decision === "drift-update";
+  if (
+    !opts.dryRun &&
+    action.decision !== "noop" &&
+    (yield* obtainCredentials(
+      step,
+      opts,
+      resource,
+      "patch" in action && updates ? action.patch : params,
+    ))
+  ) {
+    params = currentCredentialMarkers(params, opts.resources);
+    unnamedParams = currentCredentialMarkers(unnamedParams, opts.resources);
+    if ("patch" in action) {
+      action = {
+        ...action,
+        patch: currentCredentialMarkers(action.patch, opts.resources),
+      };
+    }
+  }
+
   options.onDecision?.(action.decision);
   if (action.decision !== "noop" || !options.quietNoop) {
     yield* emitDecision(emit, resource, action, {
@@ -245,9 +299,9 @@ export async function* reconcileResource(
     {
       executionId: opts.executionId,
       resource,
-      unnamedParams: configParams,
+      unnamedParams,
       resourceParams: params,
-      persistedOutput: recordedOutput,
+      persistedOutput: creating ? undefined : session.node?.output,
       dependsOn,
       dryRun: opts.dryRun,
       emit,
@@ -258,6 +312,7 @@ export async function* reconcileResource(
     // depend on a member of the cycle.
     options.excludeContributionsFrom ? undefined : options.replaceWithout,
   );
+  opts.reconciled.add(resource);
 }
 
 async function* emitDecision(
