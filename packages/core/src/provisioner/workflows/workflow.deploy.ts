@@ -1,7 +1,9 @@
 import * as durable from "@notation/reconciler/durable";
 import {
   createLoggerReconcilerSubscriber,
+  formatReplaceTarget,
   type ReconcilerEventEmitter,
+  type ReplaceRequest,
   type ResourceRegistry,
 } from "@notation/reconciler";
 import type { Deployment } from "src/config/deployment";
@@ -33,6 +35,11 @@ export type DeployAppOptions = {
    * fails when it has to write such a secret.
    */
   promptSecret?: SecretPrompt;
+  /**
+   * The replaces that the user asked for. Saved with a new execution. A
+   * resume uses the saved request, and fails if this one differs from it.
+   */
+  requested?: ReplaceRequest;
 };
 
 export function deployApp(opts: DeployAppOptions): Promise<void> {
@@ -59,6 +66,7 @@ async function deploy({
   executionId,
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
+  requested,
 }: DeployAppOptions): Promise<void> {
   // Code that runs while infra is evaluated, such as `workerNames` in
   // @notation/cloudflare, reads the collection's scope, which must be the
@@ -66,8 +74,21 @@ async function deploy({
   const nameScope = { app: deployment.app, stage: deployment.stage };
   const graph = await getResourceGraph(deployment.entryPoint, nameScope);
   await runDurableWorkflow(
-    { deployment, workflowId: "deploy", runtime, databasePath, executionId },
-    async function* (step, executionId, runtime) {
+    {
+      deployment,
+      workflowId: "deploy",
+      runtime,
+      databasePath,
+      executionId,
+      params: requested ? { requested } : {},
+      assertResumable: (saved) =>
+        assertSameRequest(
+          executionId,
+          saved.requested as ReplaceRequest | undefined,
+          requested,
+        ),
+    },
+    async function* (step, executionId, runtime, params) {
       const providerRegistry = yield* loadStateProviderRegistry(
         step,
         runtime.state,
@@ -84,7 +105,41 @@ async function deploy({
         driftDetection,
         maxOperationAttempts,
         nameScope,
+        // An execution from before requests were saved has none, and
+        // deploys as one without the flag.
+        requested: params.requested as ReplaceRequest | undefined,
       });
     },
   );
+}
+
+/**
+ * Throws if a resume passes a request that differs from the one that the
+ * execution started with. A resume that passes none uses the saved one.
+ */
+export function assertSameRequest(
+  executionId: string,
+  saved: ReplaceRequest | undefined,
+  given: ReplaceRequest | undefined,
+): void {
+  if (given === undefined) return;
+  const started = formatRequest(saved);
+  if (formatRequest(given) === started) return;
+  throw new Error(
+    started
+      ? `Execution ${executionId} was started with ${started}. Leave out --replace, or pass the same flags.`
+      : `Execution ${executionId} was started without --replace. Leave out --replace and --override-loss-protection.`,
+  );
+}
+
+/** The request as flags, in a fixed order. Empty for no request. */
+export function formatRequest(request: ReplaceRequest | undefined): string {
+  return [
+    ...(request?.replace ?? [])
+      .map((target) => `--replace ${formatReplaceTarget(target)}`)
+      .sort(),
+    ...(request?.overrideLossProtection ?? [])
+      .map((id) => `--override-loss-protection ${id}`)
+      .sort(),
+  ].join(" ");
 }

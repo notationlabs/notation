@@ -356,6 +356,82 @@ describe("NodeDurableRuntime", () => {
     }
   });
 
+  it("saves params with a new execution, and gives a resume the saved params", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "notation-params-"));
+    const databasePath = path.join(directory, "workflows.db");
+    const seen: unknown[] = [];
+    const deploy = workflow(async function* (_step, event) {
+      seen.push(event.params);
+    });
+    const router = createWorkflowRouter({ deploy });
+    const database = createSqliteDb({ path: databasePath });
+    // An execution that an earlier process admitted and did not run.
+    await new SqliteRuntime(database).executions.admit({
+      executionId: "started",
+      workflowId: "deploy",
+      params: { deploymentId: "test:params", requested: { replace: [] } },
+      context: new Map(),
+    });
+    database.close();
+    const runtime = new NodeDurableRuntime({
+      deployment: testDeployment("params"),
+      databasePath,
+    });
+    try {
+      await runtime.run(router, {
+        workflowId: "deploy",
+        executionId: "new",
+        params: { requested: { replace: [{ id: "a" }] } },
+      });
+      const assertResumable = vi.fn();
+      await runtime.run(router, {
+        workflowId: "deploy",
+        executionId: "started",
+        params: { requested: { replace: [{ id: "b" }] } },
+        assertResumable,
+      });
+
+      expect(seen).toEqual([
+        { deploymentId: "test:params", requested: { replace: [{ id: "a" }] } },
+        { deploymentId: "test:params", requested: { replace: [] } },
+      ]);
+      expect(assertResumable).toHaveBeenCalledWith({
+        deploymentId: "test:params",
+        requested: { replace: [] },
+      });
+    } finally {
+      runtime.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not run a resume that assertResumable refuses", async () => {
+    let runs = 0;
+    const deploy = workflow(async function* () {
+      runs += 1;
+    });
+    const router = createWorkflowRouter({ deploy });
+    const runtime = new NodeDurableRuntime({
+      deployment: testDeployment("refused"),
+      databasePath: ":memory:",
+    });
+    try {
+      await runtime.run(router, { workflowId: "deploy", executionId: "e" });
+      await expect(
+        runtime.run(router, {
+          workflowId: "deploy",
+          executionId: "e",
+          assertResumable: () => {
+            throw new Error("different flags");
+          },
+        }),
+      ).rejects.toThrow("different flags");
+      expect(runs).toBe(1);
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("keys the deployment by app and stage", () => {
     const runtime = new NodeDurableRuntime({
       deployment: { app: "orders-app", stage: "prod" },
