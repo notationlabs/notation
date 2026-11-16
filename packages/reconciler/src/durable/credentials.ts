@@ -10,7 +10,6 @@ import { scrubError } from "@notation/utils";
 import {
   findCredentialConsumers,
   getCredentialsToMint,
-  getCredentialVersion,
   deferUnobtainable,
   holdCredential,
   holdsCredential,
@@ -105,9 +104,13 @@ export async function* mintNeededCredentials(
         ),
         opts.recordedOutputs,
       )
-    ).map(({ name, consumer }) => ({ name, consumer: consumer.id })),
+    ).map(({ name, consumer, reason }) => ({
+      name,
+      consumer: consumer.id,
+      reason,
+    })),
   );
-  for (const { name, consumer } of needed) {
+  for (const { name, consumer, reason } of needed) {
     if (passed.some((target) => target.name === name)) continue;
     if (!resource.rotate?.[name]) {
       throw new UnobtainableCredentialError(
@@ -116,8 +119,8 @@ export async function* mintNeededCredentials(
             consumer: consumers.find((candidate) => candidate.id === consumer)!,
             producer: resource,
             name,
+            reason,
             record: current.node,
-            version: getCredentialVersion(resource, name),
             deploymentId: opts.state.deploymentId,
           }),
         ],
@@ -176,7 +179,6 @@ export async function* obtainCredentials(
       yield* loadSourceCredential(base, opts, producer);
       continue;
     }
-    const version = getCredentialVersion(producer, name);
     if (!producer.rotate?.[name]) {
       // The operation throws this error when it reveals the credential. An
       // operation replayed from the journal reveals nothing, so a resumed
@@ -192,8 +194,8 @@ export async function* obtainCredentials(
               consumer,
               producer,
               name,
+              reason: "not-held",
               record: session.node,
-              version,
               deploymentId: opts.state.deploymentId,
             }),
           ],

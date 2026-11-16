@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import {
-  isCredentialMarker,
   isCredentialSource,
   type BaseResource,
   type Schema,
@@ -16,13 +15,13 @@ export type ReplaceTarget = {
 
 /**
  * A credential that `--credential` names, as
- * `<id>.<credential>@<version>=<variable>`.
+ * `<id>.<credential>@<instance hash>=<variable>`.
  */
 export type CredentialTarget = {
   id: string;
   name: string;
-  /** Optional for plan, and required for deploy. */
-  version?: string;
+  /** The instance hash of the resource `id`. Optional for plan, and required for deploy. */
+  instanceHash?: string;
   /** The environment variable that holds the value. */
   variable: string;
 };
@@ -72,38 +71,38 @@ function assertHashWellFormed(value: string, known: (id: string) => boolean) {
 }
 
 /**
- * Reads `<id>.<credential>@<version>=<variable>`. The variable is the part
- * after the last `=`. The version is the part after the last `@` before it,
- * when that part holds no dot. The rest is split at its last dot, so an ID
- * can hold a dot.
+ * Reads `<id>.<credential>@<instance hash>=<variable>`. The variable is the
+ * part after the last `=`. The hash is the part after the last `@` before
+ * it, when that part holds no dot. The rest is split at its last dot, so an
+ * ID can hold a dot. An uppercase hash is read as lowercase.
  */
 export function parseCredentialTarget(value: string): CredentialTarget {
   const equals = value.lastIndexOf("=");
   const variable = value.slice(equals + 1);
   const left = equals < 0 ? value : value.slice(0, equals);
   const at = left.lastIndexOf("@");
-  const hasVersion = at > left.lastIndexOf(".");
-  const target = hasVersion ? left.slice(0, at) : left;
-  const version = hasVersion ? left.slice(at + 1) : undefined;
+  const hasHash = at > left.lastIndexOf(".");
+  const target = hasHash ? left.slice(0, at) : left;
+  const hash = hasHash ? left.slice(at + 1) : undefined;
   const dot = target.lastIndexOf(".");
   const id = target.slice(0, dot);
   const name = target.slice(dot + 1);
-  if (equals < 0 || !variable || dot <= 0 || !name || version === "") {
+  if (equals < 0 || !variable || dot <= 0 || !name) {
     throw new Error(
-      `--credential ${value} is malformed. Give it as <resource id>.<credential>@<version>=<variable>.`,
+      `--credential ${value} is malformed. Give it as <resource id>.<credential>@<instance hash>=<variable>.`,
+    );
+  }
+  if (hash !== undefined && !INSTANCE_HASH.test(hash)) {
+    throw new Error(
+      `The instance hash ${hash} of ${id} is malformed. An instance hash is 8 hex characters.`,
     );
   }
   return {
     id,
     name,
-    ...(version !== undefined ? { version: version.toLowerCase() } : {}),
+    ...(hash !== undefined ? { instanceHash: hash.toLowerCase() } : {}),
     variable,
   };
-}
-
-/** A credential's version as plan prints it: its first 8 characters. */
-export function shortVersion(version: string): string {
-  return version.slice(0, 8);
 }
 
 /** The `--credential` in the overrides for the credential, if there is one. */
@@ -148,10 +147,10 @@ export function formatOverrides(overrides: Overrides | undefined): string {
 export function formatCredential({
   id,
   name,
-  version,
+  instanceHash,
   variable,
 }: CredentialTarget): string {
-  return `${id}.${name}${version === undefined ? "" : `@${version}`}=${variable}`;
+  return `${id}.${name}${instanceHash === undefined ? "" : `@${instanceHash}`}=${variable}`;
 }
 
 const SHELL_SAFE = /^[A-Za-z0-9_./:@=-]+$/;
@@ -185,9 +184,9 @@ export function instanceHash(
 }
 
 /**
- * The overrides with the instance hash of each `--replace` and the version of
- * each `--credential` that it leaves out, from the records in state. Plan
- * prints it in a deploy command, as deploy requires them.
+ * The overrides with the instance hash of each `--replace` and each
+ * `--credential` that leaves it out, from the records in state. Plan prints
+ * it in a deploy command, as deploy requires them.
  */
 export function withStateIdentifiers(
   overrides: Overrides,
@@ -201,28 +200,22 @@ export function withStateIdentifiers(
     const found = opts.records.find((node) => node.id === id);
     return found && !isCreatingRecord(found) ? found : undefined;
   };
+  const withHash = <T extends { id: string; instanceHash?: string }>(
+    target: T,
+  ): T => {
+    const resource = opts.resources.find(({ id }) => id === target.id);
+    const recorded = record(target.id);
+    if (target.instanceHash || !resource || !recorded) return target;
+    return {
+      ...target,
+      instanceHash: instanceHash(opts.deploymentId, resource, recorded),
+    };
+  };
   return {
     ...overrides,
-    replace: overrides.replace.map((target) => {
-      const resource = opts.resources.find(({ id }) => id === target.id);
-      const recorded = record(target.id);
-      if (target.instanceHash || !resource || !recorded) return target;
-      return {
-        ...target,
-        instanceHash: instanceHash(opts.deploymentId, resource, recorded),
-      };
-    }),
+    replace: overrides.replace.map(withHash),
     ...(overrides.credential
-      ? {
-          credential: overrides.credential.map((target) => {
-            const marker = record(target.id)?.output[target.name];
-            if (target.version || !isCredentialMarker(marker)) return target;
-            const { version } = marker.$credential;
-            return version === null
-              ? target
-              : { ...target, version: shortVersion(version) };
-          }),
-        }
+      ? { credential: overrides.credential.map(withHash) }
       : {}),
   };
 }
@@ -306,7 +299,13 @@ export function assertOverrides(
       );
     }
   }
-  assertCredentialOverrides(overrides, resourceById, recordById, opts.point);
+  assertCredentialOverrides(
+    overrides,
+    resourceById,
+    recordById,
+    opts.deploymentId,
+    opts.point,
+  );
 }
 
 /**
@@ -326,19 +325,20 @@ export function assertNoPassedCredential(
 }
 
 /**
- * Throws if a `--credential` names a credential that it cannot set, gives a
- * version that is not the one in state, or names a variable that is not set
+ * Throws if a `--credential` names a credential that it cannot set, gives
+ * an instance hash that does not match, or names a variable that is not set
  * at deploy.
  */
 function assertCredentialOverrides(
   overrides: Overrides,
   resourceById: Map<string, BaseResource>,
   recordById: Map<string, StateNode>,
+  deploymentId: string,
   point: "plan" | "deploy",
 ): void {
   const seen = new Set<string>();
   for (const target of overrides.credential ?? []) {
-    const { id, name, version: given, variable } = target;
+    const { id, name, instanceHash: given, variable } = target;
     const flag = `--credential ${id}.${name}`;
     if (seen.has(`${id}.${name}`)) {
       throw new Error(`${flag} is given more than once.`);
@@ -372,23 +372,16 @@ function assertCredentialOverrides(
         `${flag}: ${id} is not in state, so it has no value to set. Deploy creates it, and the create returns the value.`,
       );
     }
-    const marker = record.output[name];
-    const actual = isCredentialMarker(marker)
-      ? marker.$credential.version
-      : null;
-    // The version ties the flag to the credential of one stage.
-    if (actual === null) {
-      throw new Error(
-        `${flag}: state has no version of ${id}.${name}, so deploy cannot check that the flag is meant for this stage. Replace ${id} with --replace to issue a new value.`,
-      );
-    }
     if (given === undefined) {
       if (point === "plan") continue;
-      throw new Error(`${flag} has no version.`);
+      // The CLI throws first, with the plan command to run.
+      throw new Error(`${flag} has no instance hash.`);
     }
-    if (given !== shortVersion(actual) && given !== actual) {
+    // The hash ties the flag to the resource of one stage.
+    const actual = instanceHash(deploymentId, resource, record);
+    if (actual !== given) {
       throw new Error(
-        `${id}.${name} is at version ${shortVersion(actual)} in this stage, not ${given}.`,
+        `${id} has the instance hash ${actual} in this stage, not ${given}.`,
       );
     }
     if (point === "deploy" && !process.env[variable]) {

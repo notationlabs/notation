@@ -1,13 +1,13 @@
 import type { BaseResource, RecordedOutputs } from "@notation/resource";
 import type { StateNode } from "@notation/state";
-import { getCredentialsToMint, getCredentialVersion } from "./credentials";
+import { isCreatingRecord } from "@notation/state";
+import { getCredentialsToMint, type CredentialNeed } from "./credentials";
 import {
   formatCredential,
   formatOverrides,
   instanceHash,
   findCredentialOverride,
   shellQuote,
-  shortVersion,
   type Overrides,
 } from "./overrides";
 
@@ -18,13 +18,15 @@ export type UnobtainableCredential = {
   producer: string;
   producerType: string;
   name: string;
-  /** For `--replace`. Unset when plan has no deployment ID. */
-  instanceHash?: string;
+  /** Why the consumer needs the value now. */
+  reason: CredentialNeed;
+  /** The producer's `rotateManually` sentence for the credential. */
+  rotateManually?: string;
   /**
-   * The version in the producer's record, as `shortVersion` gives it. Unset
-   * when the record has none, as `--credential` then cannot be given.
+   * The producer's instance hash, for `--credential` and `--replace`. Unset
+   * when plan has no deployment ID, or the producer has no record.
    */
-  version?: string;
+  instanceHash?: string;
 };
 
 /**
@@ -40,7 +42,7 @@ export class UnobtainableCredentialError extends Error {
   readonly credentials: readonly UnobtainableCredential[];
   /**
    * The overrides of the plan or deploy, with an instance hash for each
-   * `--replace` and a version for each `--credential` that state has.
+   * `--replace` and `--credential` whose resource has a record.
    */
   readonly overrides?: Overrides;
 
@@ -102,8 +104,8 @@ export function unobtainableCredentialMessage(
     return credentialLines(credentials[0]!, `${deployCommand} `).join("\n");
   }
   return [
-    `Deploy cannot get ${credentials.length} credentials. Add one flag for each to the deploy command:`,
-    `  ${deployCommand}`,
+    `Deploy needs a new value for ${credentials.length} credentials. Choose one flag for each, and add the flags to the deploy command:`,
+    `  ${deployCommand} <flags>`,
     ...credentials.flatMap((credential) => [
       "",
       ...credentialLines(credential, ""),
@@ -111,37 +113,48 @@ export function unobtainableCredentialMessage(
   ].join("\n");
 }
 
+const needs: Record<CredentialNeed, (c: UnobtainableCredential) => string> = {
+  "no-version": (c) =>
+    `${c.consumer} takes ${c.producer}.${c.name}, and state has no record of a value for it.`,
+  "consumer-added": (c) =>
+    `${c.consumer} is new, and takes ${c.producer}.${c.name}.`,
+  "consumer-create-unfinished": (c) =>
+    `An earlier deploy did not finish the create of ${c.consumer}, which takes ${c.producer}.${c.name}.`,
+  "consumer-replaced": (c) =>
+    `Deploy replaces ${c.consumer}, which takes ${c.producer}.${c.name}.`,
+  "consumer-behind": (c) =>
+    `${c.consumer} takes ${c.producer}.${c.name}, and has not received its current value.`,
+  "not-held": (c) =>
+    `${c.consumer} takes ${c.producer}.${c.name}, and the deploy run that received its value has ended.`,
+};
+
 /** The lines for one credential, with `prefix` before each flag. */
 function credentialLines(
   credential: UnobtainableCredential,
   prefix: string,
 ): string[] {
-  const { consumer, producer, producerType, name, version } = credential;
-  const replace = credential.instanceHash
-    ? `${producer}@${credential.instanceHash}`
-    : producer;
-  const first = `${consumer} needs ${producer}.${name}, and deploy cannot get it. ${producerType} issues ${name} once, at create.`;
-  const replaceCommand = [
-    "",
-    `  Replace ${producer}, to issue a new value:`,
-    `    ${prefix}--replace ${shellQuote(replace)}`,
-  ];
-  if (version === undefined) {
-    return [first, `Replace the resource \`${producer}\`.`, ...replaceCommand];
-  }
+  const { producer, producerType, name } = credential;
+  const variable = credentialVariable(producer, name);
   const passed = formatCredential({
     id: producer,
     name,
-    version,
-    variable: credentialVariable(producer, name),
+    instanceHash: credential.instanceHash,
+    variable,
   });
+  const replace = credential.instanceHash
+    ? `${producer}@${credential.instanceHash}`
+    : producer;
+  const issue =
+    credential.rotateManually ??
+    `Issue a new value of ${name} at the provider of ${producerType}.`;
   return [
-    first,
-    `Either replace the resource \`${producer}\`, or provide the credential \`${producer}.${name}\`.`,
-    ...replaceCommand,
+    `${needs[credential.reason](credential)} Notation does not store the value, and ${producerType} has no operation that issues another.`,
     "",
-    "  Or pass a value that you hold:",
+    `  ${issue} Then set the environment variable ${variable} to the value, and pass it:`,
     `    ${prefix}--credential ${shellQuote(passed)}`,
+    "",
+    `  Or replace ${producer}. Deploy deletes ${producer} and creates it again with a new value, so whatever exists only in the old ${producer} is lost:`,
+    `    ${prefix}--replace ${shellQuote(replace)}`,
   ];
 }
 
@@ -149,20 +162,23 @@ export function unobtainableCredential(opts: {
   consumer: BaseResource;
   producer: BaseResource;
   name: string;
+  reason: CredentialNeed;
+  /** The producer's record. */
   record: StateNode | undefined;
-  version: string | null;
   deploymentId?: string;
 }): UnobtainableCredential {
-  const { consumer, producer, name, record, deploymentId } = opts;
+  const { consumer, producer, name, reason, record, deploymentId } = opts;
+  const rotateManually = producer.rotateManually?.[name];
   return {
     consumer: consumer.id,
     producer: producer.id,
     producerType: producer.type,
     name,
-    ...(deploymentId && record
+    reason,
+    ...(rotateManually ? { rotateManually } : {}),
+    ...(deploymentId && record && !isCreatingRecord(record)
       ? { instanceHash: instanceHash(deploymentId, producer, record) }
       : {}),
-    ...(opts.version !== null ? { version: shortVersion(opts.version) } : {}),
   };
 }
 
@@ -194,7 +210,7 @@ export async function mintedCredentials(opts: {
     opts.consumers,
     opts.recordedOutputs,
   );
-  for (const { name, consumer } of needed) {
+  for (const { name, consumer, reason } of needed) {
     if (minted.includes(name)) continue;
     if (!producer.rotate?.[name]) {
       opts.unobtainable.push(
@@ -202,8 +218,8 @@ export async function mintedCredentials(opts: {
           consumer,
           producer,
           name,
+          reason,
           record,
-          version: getCredentialVersion(producer, name),
           deploymentId,
         }),
       );
@@ -222,20 +238,27 @@ export async function mintedCredentials(opts: {
  */
 export function rotatesForCreate(opts: {
   consumer: BaseResource;
+  /** The consumer's record, which gives the reason in the error. */
+  consumerRecord: StateNode | undefined;
   producer: BaseResource;
   name: string;
+  /** The producer's record. */
   record: StateNode | undefined;
   overrides: Overrides | undefined;
   deploymentId: string | undefined;
   unobtainable: UnobtainableCredential[];
 }): boolean {
-  const { producer, name } = opts;
+  const { producer, name, consumerRecord } = opts;
   if (producer.rotate?.[name]) return true;
   if (findCredentialOverride(opts.overrides, producer.id, name)) return false;
   opts.unobtainable.push(
     unobtainableCredential({
       ...opts,
-      version: getCredentialVersion(producer, name),
+      reason: !consumerRecord
+        ? "consumer-added"
+        : isCreatingRecord(consumerRecord)
+          ? "consumer-create-unfinished"
+          : "consumer-replaced",
     }),
   );
   return false;

@@ -165,6 +165,8 @@ export interface BaseResource {
     string,
     ((key: any, state: any) => Promise<unknown>) | undefined
   >;
+  /** See `ResourceOperationsOptions.rotateManually`. */
+  rotateManually?: Record<string, string | undefined>;
   read?: (
     key: any,
     context?: ResourceOperationContext,
@@ -303,6 +305,7 @@ export abstract class Resource<
   ) => Promise<T["created"]>;
   find?: (params: T["params"]) => Promise<T["primaryKey"] & {}>;
   rotate?: RotateOperations<T>;
+  rotateManually?: { [K in keyof T["credentials"]]?: string };
   abstract read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -988,6 +991,14 @@ export type ResourceOperationsOptions<
    */
   rotate?: RotateOperations<T>;
   /**
+   * For a credential without `rotate`, one sentence that tells the user how
+   * to issue a new value at the provider, such as "Generate a new private
+   * key in the GitHub App's settings, under Private keys." The error that
+   * plan and deploy print for the credential shows it above the
+   * `--credential` command.
+   */
+  rotateManually?: { [K in keyof T["credentials"]]?: string };
+  /**
    * Finds the resource that a create with `params` makes, and returns what
    * that create would have returned. A class defines it when the provider
    * assigns the key, or part of it.
@@ -1157,6 +1168,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             create = opts.create;
             find = opts.find;
             rotate = opts.rotate;
+            rotateManually = opts.rotateManually;
             read = opts.read ? opts.read : undefined;
             update = opts.update ? opts.update : undefined;
             delete = opts.delete;

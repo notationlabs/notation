@@ -107,17 +107,11 @@ export type PlanNode = {
    */
   mayTakeOver?: true;
   /**
-   * The hash for `--replace <id>@<instance hash>`. Set for a resource in
+   * The hash for `--replace <id>@<instance hash>` and
+   * `--credential <id>.<credential>@<instance hash>`. Set for a resource in
    * code that has a record.
    */
   instanceHash?: string;
-  /**
-   * The version for `--credential <id>.<credential>@<version>`, by
-   * credential, as `shortVersion` gives it. Set for a resource in code that
-   * has a record with credentials and is not a source. A credential with no
-   * version in the record is left out.
-   */
-  credentialVersions?: Record<string, string>;
   params: Record<string, unknown>;
   dependsOn: string[];
 };

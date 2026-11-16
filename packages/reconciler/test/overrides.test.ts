@@ -188,18 +188,18 @@ describe("parseReplaceTarget", () => {
 });
 
 describe("parseCredentialTarget", () => {
-  it("splits at the last dot before the version, and at the last = ", () => {
+  it("splits at the last dot before the instance hash, and at the last = ", () => {
     expect(parseCredentialTarget("worker:a.b.privateKey@7B1E52C0=KEY")).toEqual(
       {
         id: "worker:a.b",
         name: "privateKey",
-        version: "7b1e52c0",
+        instanceHash: "7b1e52c0",
         variable: "KEY",
       },
     );
   });
 
-  it("reads a value with no version", () => {
+  it("reads a value with no instance hash", () => {
     expect(parseCredentialTarget("app.privateKey=KEY")).toEqual({
       id: "app",
       name: "privateKey",
@@ -213,6 +213,12 @@ describe("parseCredentialTarget", () => {
     );
     expect(() => parseCredentialTarget("app@7b1e52c0=KEY")).toThrow(
       "is malformed",
+    );
+  });
+
+  it("throws for an instance hash that is not 8 hex characters", () => {
+    expect(() => parseCredentialTarget("app.privateKey@7b1e52=KEY")).toThrow(
+      "The instance hash 7b1e52 of app is malformed. An instance hash is 8 hex characters.",
     );
   });
 

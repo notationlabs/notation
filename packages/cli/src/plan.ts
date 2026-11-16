@@ -121,10 +121,9 @@ function overrideFlags(result: Plan, overrides: Overrides): string {
       ? {
           credential: overrides.credential.map((target) => ({
             ...target,
-            version:
-              findRecordNode(result, target.id)?.credentialVersions?.[
-                target.name
-              ] ?? target.version,
+            instanceHash:
+              findRecordNode(result, target.id)?.instanceHash ??
+              target.instanceHash,
           })),
         }
       : {}),

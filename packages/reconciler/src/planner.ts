@@ -2,11 +2,9 @@ import { randomUUID } from "node:crypto";
 import {
   assertRequiredOutputs,
   containsUnknownAfterApply,
-  credentialNames,
   diffParams,
   fillPhysicalNames,
   findCredentialMarkers,
-  isCredentialMarker,
   isCredentialSource,
   validateParams,
   type BaseCredentialSource,
@@ -60,7 +58,6 @@ import {
   assertOverrides,
   instanceHash,
   findReplaceOverride,
-  shortVersion,
   withStateIdentifiers,
   type Overrides,
 } from "./overrides";
@@ -147,8 +144,8 @@ export async function createPlan({
       point: "plan",
     });
   }
-  // The overrides that each UnobtainableCredentialError gives, whose deploy
-  // commands need the hashes and versions.
+  // The overrides that each UnobtainableCredentialError gives, with the
+  // hashes that deploy requires.
   const identified =
     overrides && deploymentId !== undefined
       ? withStateIdentifiers(overrides, {
@@ -405,7 +402,6 @@ export async function createPlan({
       ...(deploymentId && stateNode && !isCreatingRecord(stateNode)
         ? { instanceHash: instanceHash(deploymentId, resource, stateNode) }
         : {}),
-      ...recordedCredentialVersions(resource, stateNode),
       params,
       dependsOn,
     };
@@ -445,6 +441,7 @@ export async function createPlan({
       if (producerNode.rotates?.includes(name)) continue;
       const rotates = rotatesForCreate({
         consumer: resourceById.get(node.id)!,
+        consumerRecord: stateById.get(node.id),
         producer,
         name,
         record: stateById.get(id),
@@ -555,29 +552,6 @@ export async function createPlan({
   }
 
   return { createdAt: new Date().toISOString(), nodes };
-}
-
-function recordedCredentialVersions(
-  resource: BaseResource,
-  stateNode: StateNode | undefined,
-): { credentialVersions?: Record<string, string> } {
-  if (
-    !stateNode ||
-    isCreatingRecord(stateNode) ||
-    isCredentialSource(resource)
-  ) {
-    return {};
-  }
-  const versions: Record<string, string> = {};
-  for (const name of credentialNames(resource.schema)) {
-    const marker = stateNode.output[name];
-    if (isCredentialMarker(marker) && marker.$credential.version !== null) {
-      versions[name] = shortVersion(marker.$credential.version);
-    }
-  }
-  return Object.keys(versions).length > 0
-    ? { credentialVersions: versions }
-    : {};
 }
 
 /** A `delete-retired` node for each retired instance that `node` lists. */

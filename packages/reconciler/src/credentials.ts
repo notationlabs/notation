@@ -394,10 +394,28 @@ export function takesCredential(
     );
 }
 
+/** Why a resource needs the value of a credential that deploy does not hold. */
+export type CredentialNeed =
+  /** The producer's record has no version for the credential. */
+  | "no-version"
+  /** The consumer has no record. */
+  | "consumer-added"
+  /** The consumer has a "creating" record. */
+  | "consumer-create-unfinished"
+  /** Deploy replaces the consumer. */
+  | "consumer-replaced"
+  /** The consumer's record does not hold the credential's version. */
+  | "consumer-behind"
+  /**
+   * An operation of the consumer receives the value, and the process holds
+   * none: the process that received it has ended, as before a resume.
+   */
+  | "not-held";
+
 /**
  * The credentials of `producer` that need a new value, each with the first
- * resource that needs it. A resource takes the credential, and one of these
- * holds:
+ * resource that needs it and the reason. A resource takes the credential,
+ * and one of these holds:
  *
  * 1. The output in the producer's record has no version for it.
  * 2. A resource that takes it has no record, or a "creating" record.
@@ -414,7 +432,7 @@ export async function getCredentialsToMint(
   output: Record<string, unknown>,
   consumers: readonly { resource: BaseResource; record?: StateNode }[],
   recordedOutputs: RecordedOutputs,
-): Promise<{ name: string; consumer: BaseResource }[]> {
+): Promise<{ name: string; consumer: BaseResource; reason: CredentialNeed }[]> {
   if (isCredentialSource(producer)) return [];
   const planned = new Map<BaseResource, Promise<Record<string, unknown>>>();
   const paramsOf = (resource: BaseResource) => {
@@ -423,7 +441,11 @@ export async function getCredentialsToMint(
     }
     return planned.get(resource)!;
   };
-  const needed: { name: string; consumer: BaseResource }[] = [];
+  const needed: {
+    name: string;
+    consumer: BaseResource;
+    reason: CredentialNeed;
+  }[] = [];
   for (const name of credentialNames(producer.schema)) {
     const marker = output[name];
     const current =
@@ -434,18 +456,22 @@ export async function getCredentialsToMint(
       $credential.resource === producer.id && $credential.name === name;
     for (const { resource, record } of consumers) {
       if (!takesCredential(resource, producer, name)) continue;
-      const needs =
-        !current ||
-        !record ||
-        isCreatingRecord(record) ||
-        getChangedCredentials(
-          mapCredentialMarkers(await paramsOf(resource), (found) =>
-            isThis(found) ? current : found,
-          ),
-          record.params,
-        ).some(isThis);
-      if (needs) {
-        needed.push({ name, consumer: resource });
+      const reason: CredentialNeed | undefined = !current
+        ? "no-version"
+        : !record
+          ? "consumer-added"
+          : isCreatingRecord(record)
+            ? "consumer-create-unfinished"
+            : getChangedCredentials(
+                  mapCredentialMarkers(await paramsOf(resource), (found) =>
+                    isThis(found) ? current : found,
+                  ),
+                  record.params,
+                ).some(isThis)
+              ? "consumer-behind"
+              : undefined;
+      if (reason) {
+        needed.push({ name, consumer: resource, reason });
         break;
       }
     }

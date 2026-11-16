@@ -48,9 +48,9 @@ const replaceOption = (hash: string) =>
     `replace the resource with this ID in state, as for a param that forces replacement (repeatable)`,
     collect,
   ] as const;
-const credentialOption = (version: string) =>
+const credentialOption = (hash: string) =>
   [
-    `--credential <id.credential${version}=variable>`,
+    `--credential <id.credential${hash}=variable>`,
     "give deploy the value of a credential without rotate, from the environment variable (repeatable)",
     collect,
   ] as const;
@@ -100,7 +100,7 @@ program
   .option("--no-drift-detection", "skip drift detection")
   .option(...replaceOption("@hash"))
   .option(...overrideLossProtectionOption)
-  .option(...credentialOption("@version"))
+  .option(...credentialOption("@hash"))
   .action(async (options) => {
     const project = await load(options);
     const deployment = await resolveResumableDeployment(project, options);
@@ -145,7 +145,7 @@ program
   .addOption(prettyOption())
   .option(...replaceOption("[@hash]"))
   .option(...overrideLossProtectionOption)
-  .option(...credentialOption("[@version]"))
+  .option(...credentialOption("[@hash]"))
   .action(async (options) => {
     const project = await load(options);
     const deployment = resolveDeployment(project, { stage: options.stage });

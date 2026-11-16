@@ -177,7 +177,7 @@ describe("replace flags", () => {
     expect(deployApp).toHaveBeenCalledOnce();
   });
 
-  it("fails a --credential with no version with the plan command", async () => {
+  it("fails a --credential with no instance hash with the plan command", async () => {
     deployApp.mockClear();
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
@@ -188,12 +188,12 @@ describe("replace flags", () => {
         overrides: parseOverrides({ credential: ["app.privateKey=APP_KEY"] }),
       }),
     ).rejects.toThrow(
-      "--credential app.privateKey needs the version, as --credential app.privateKey@<version>=APP_KEY. Run notation plan --stage prod --credential app.privateKey=APP_KEY to print the deploy command with the version.",
+      "--credential app.privateKey needs the instance hash, as --credential app.privateKey@<instance hash>=APP_KEY. Run notation plan --stage prod --credential app.privateKey=APP_KEY to print the deploy command with the hash.",
     );
     expect(deployApp).not.toHaveBeenCalled();
   });
 
-  it("passes --credential to deploy as a target with a version and a variable", () => {
+  it("passes --credential to deploy as a target with an instance hash and a variable", () => {
     expect(
       parseOverrides({ credential: ["app.privateKey@7b1e52c0=APP_KEY"] }),
     ).toEqual({
@@ -202,7 +202,7 @@ describe("replace flags", () => {
         {
           id: "app",
           name: "privateKey",
-          version: "7b1e52c0",
+          instanceHash: "7b1e52c0",
           variable: "APP_KEY",
         },
       ],
@@ -220,6 +220,7 @@ describe("replace flags", () => {
             producer: "app",
             producerType: "github/App",
             name: "privateKey",
+            reason: "not-held",
             instanceHash: "5d2e8b17",
           },
         ],
@@ -237,10 +238,12 @@ describe("replace flags", () => {
 
     expect((error as Error).message).toBe(
       [
-        "app-key-secret needs app.privateKey, and deploy cannot get it. github/App issues privateKey once, at create.",
-        "Replace the resource `app`.",
+        "app-key-secret takes app.privateKey, and the deploy run that received its value has ended. Notation does not store the value, and github/App has no operation that issues another.",
         "",
-        "  Replace app, to issue a new value:",
+        "  Issue a new value of privateKey at the provider of github/App. Then set the environment variable APP_PRIVATE_KEY to the value, and pass it:",
+        "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --credential app.privateKey@5d2e8b17=APP_PRIVATE_KEY",
+        "",
+        "  Or replace app. Deploy deletes app and creates it again with a new value, so whatever exists only in the old app is lost:",
         "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --replace app@5d2e8b17",
       ].join("\n"),
     );

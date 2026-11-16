@@ -93,8 +93,14 @@ describe("assertSameOverrides", () => {
     expect(() =>
       assertSameOverrides(
         "e",
-        { replace: [], credential: [{ ...credential, version: "7b1e52c0" }] },
-        { replace: [], credential: [{ ...credential, version: "3c90a1f4" }] },
+        {
+          replace: [],
+          credential: [{ ...credential, instanceHash: "7b1e52c0" }],
+        },
+        {
+          replace: [],
+          credential: [{ ...credential, instanceHash: "3c90a1f4" }],
+        },
       ),
     ).toThrow(
       "Execution e was started with --credential app.privateKey@7b1e52c0=KEY.",

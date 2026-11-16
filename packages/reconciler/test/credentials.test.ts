@@ -44,7 +44,10 @@ function createProvider(): Provider {
   return { tokens: new Map(), secrets: new Map(), calls: [] };
 }
 
-function defineResources(provider: Provider, { rotate }: { rotate: boolean }) {
+function defineResources(
+  provider: Provider,
+  { rotate, rotateManually }: { rotate: boolean; rotateManually?: string },
+) {
   let issued = 0;
   const issue = (id: string) => {
     issued += 1;
@@ -89,6 +92,7 @@ function defineResources(provider: Provider, { rotate }: { rotate: boolean }) {
             },
           }
         : {}),
+      ...(rotateManually ? { rotateManually: { Value: rotateManually } } : {}),
       delete: async (key) => {
         provider.calls.push(`delete ${key.id}`);
         provider.tokens.delete(key.id);
@@ -275,7 +279,6 @@ describe("a resource that takes a credential in a later deploy", () => {
       .catch((e: Error) => e);
 
     const record = await runtime.state.get("token");
-    const version = (record!.output.Value as any).$credential.version;
     const hash = instanceHash(
       "credentials",
       declare(types, { secrets: [] })[0]!,
@@ -283,17 +286,34 @@ describe("a resource that takes a credential in a later deploy", () => {
     );
     expect((error as Error).message).toBe(
       [
-        "secret:b needs token.Value, and deploy cannot get it. test/credentials/Token issues Value once, at create.",
-        "Either replace the resource `token`, or provide the credential `token.Value`.",
+        "secret:b is new, and takes token.Value. Notation does not store the value, and test/credentials/Token has no operation that issues another.",
         "",
-        "  Replace token, to issue a new value:",
+        "  Issue a new value of Value at the provider of test/credentials/Token. Then set the environment variable TOKEN_VALUE to the value, and pass it:",
+        `    notation deploy --credential token.Value@${hash}=TOKEN_VALUE`,
+        "",
+        "  Or replace token. Deploy deletes token and creates it again with a new value, so whatever exists only in the old token is lost:",
         `    notation deploy --replace token@${hash}`,
-        "",
-        "  Or pass a value that you hold:",
-        `    notation deploy --credential token.Value@${version.slice(0, 8)}=TOKEN_VALUE`,
       ].join("\n"),
     );
     expect(provider.calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("prints the class's rotateManually sentence above the --credential command", async () => {
+    const types = defineResources(createProvider(), {
+      rotate: false,
+      rotateManually: "Generate a new value in the token's settings.",
+    });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a"] }));
+
+    const error = await runtime
+      .nextProcess("second", declare(types, { secrets: ["a", "b"] }))
+      .catch((e: Error) => e);
+
+    expect((error as Error).message).toMatch(
+      /\n  Generate a new value in the token's settings\. Then set the environment variable TOKEN_VALUE to the value, and pass it:\n    notation deploy --credential token\.Value@/,
+    );
     runtime.close();
   });
 
@@ -331,7 +351,7 @@ describe("a resource that takes a credential in a later deploy", () => {
         deploymentId: "credentials",
       }),
     ).rejects.toThrow(
-      /secret:b needs token.Value, and deploy cannot get it[\s\S]*--replace token@[0-9a-f]{8}[\s\S]*--credential token.Value@[0-9a-f]{8}=TOKEN_VALUE/,
+      /secret:b is new, and takes token\.Value\.[\s\S]*--credential token\.Value@[0-9a-f]{8}=TOKEN_VALUE[\s\S]*--replace token@[0-9a-f]{8}/,
     );
     runtime.close();
   });
@@ -380,12 +400,12 @@ describe("a resource that takes a credential in a later deploy", () => {
       ).toEqual(["secret:token:b token", "secret:key:b key"]);
       const message = (error as Error).message;
       expect(message).toMatch(
-        /^Deploy cannot get 2 credentials\. Add one flag for each to the deploy command:\n  notation deploy\n/,
+        /^Deploy needs a new value for 2 credentials\. Choose one flag for each, and add the flags to the deploy command:\n  notation deploy <flags>\n/,
       );
-      expect(message).toMatch(/\n    --replace token@[0-9a-f]{8}\n/);
       expect(message).toMatch(
-        /\n    --credential key\.Value@[0-9a-f]{8}=KEY_VALUE$/,
+        /\n    --credential token\.Value@[0-9a-f]{8}=TOKEN_VALUE\n/,
       );
+      expect(message).toMatch(/\n    --replace key@[0-9a-f]{8}$/);
       runtime.close();
     });
 
@@ -410,7 +430,7 @@ describe("a resource that takes a credential in a later deploy", () => {
     });
   });
 
-  it("fails the plan with the request's hashes and versions in the deploy commands", async () => {
+  it("fails the plan with the request's hashes in the deploy commands", async () => {
     const types = defineResources(createProvider(), { rotate: false });
     const runtime = createRuntime();
     await runtime.deploy("first", declare(types, { secrets: ["a"] }));
@@ -435,7 +455,7 @@ describe("a resource that takes a credential in a later deploy", () => {
       replace: [{ id: "secret:a", instanceHash: hash }],
     });
     expect((error as Error).message).toContain(
-      `notation deploy --replace secret:a@${hash} --replace token@`,
+      `notation deploy --replace secret:a@${hash} --credential token.Value@`,
     );
     runtime.close();
   });
@@ -513,12 +533,13 @@ describe("a resource that is replaced and takes a credential", () => {
     };
 
     await expect(runtime.nextProcess("second", renamed())).rejects.toThrow(
-      "secret:b needs token.Value, and deploy cannot get it.",
+      "Deploy replaces secret:b, which takes token.Value.",
     );
     expect(provider.secrets.get("b")).toBe("token-value-1");
 
     const record = await runtime.state.get("token");
     const version = (record!.output.Value as any).$credential.version;
+    const hash = instanceHash("credentials", renamed()[0]!, record!);
     process.env.TEST_TOKEN_VALUE = "passed-value";
     try {
       provider.calls.length = 0;
@@ -528,7 +549,7 @@ describe("a resource that is replaced and takes a credential", () => {
           {
             id: "token",
             name: "Value",
-            version: version.slice(0, 8),
+            instanceHash: hash,
             variable: "TEST_TOKEN_VALUE",
           },
         ],
@@ -562,7 +583,7 @@ describe("a deploy that cannot get a credential for a resource that it replaces"
 
     await expect(
       runtime.nextProcess("second", [token!, a!, b]),
-    ).rejects.toThrow("secret:b needs token.Value, and deploy cannot get it.");
+    ).rejects.toThrow("Deploy replaces secret:b, which takes token.Value.");
     expect(provider.calls).toEqual([]);
     runtime.close();
   });
@@ -611,7 +632,7 @@ describe("a plan with a resource that is replaced and takes a credential", () =>
         resources: renamed(types),
         state: runtime.state,
       }),
-    ).rejects.toThrow("secret:b needs token.Value, and deploy cannot get it.");
+    ).rejects.toThrow("Deploy replaces secret:b, which takes token.Value.");
     runtime.close();
   });
 
@@ -709,9 +730,9 @@ describe("a create that returns a credential its validator rejects", () => {
           credential: [{ id: "token", name: "Value", variable: "VALUE" }],
         },
       }),
-    ).rejects.toThrow(
-      "--credential token.Value: state has no version of token.Value",
-    );
+    ).resolves.toMatchObject({
+      nodes: [{ id: "token", decision: "noop", rotates: ["Value"] }],
+    });
     runtime.close();
   });
 });
@@ -754,7 +775,9 @@ describe("a deploy that is resumed after it created a credential", () => {
 
     await expect(
       runtime.nextProcess("first", declare(types, { secrets: ["a"] })),
-    ).rejects.toThrow("secret:a needs token.Value, and deploy cannot get it.");
+    ).rejects.toThrow(
+      "secret:a takes token.Value, and the deploy run that received its value has ended.",
+    );
 
     const resources = declare(types, { secrets: ["a"] });
     const hash = instanceHash(
@@ -1073,22 +1096,25 @@ describe("--credential", () => {
   const passed = async (
     types: ReturnType<typeof defineResources>,
     runtime: ReturnType<typeof createRuntime>,
-    version: (recorded: string) => string,
+    hash?: string,
   ) => {
-    const record = await runtime.state.get("token");
-    const recorded = (record!.output.Value as any).$credential.version;
-    return runtime.nextProcess("second", declare(types, { secrets: ["a"] }), {
+    const resources = declare(types, { secrets: ["a"] });
+    return runtime.nextProcess("second", resources, {
       replace: [],
       credential: [
         {
           id: "token",
           name: "Value",
-          version: version(recorded),
+          instanceHash: hash ?? (await tokenHash(runtime, resources[0]!)),
           variable: "TEST_TOKEN_VALUE",
         },
       ],
     });
   };
+  const tokenHash = async (
+    runtime: ReturnType<typeof createRuntime>,
+    token: Parameters<typeof instanceHash>[1],
+  ) => instanceHash("credentials", token, (await runtime.state.get("token"))!);
 
   beforeEach(() => {
     process.env.TEST_TOKEN_VALUE = "passed-value";
@@ -1104,28 +1130,27 @@ describe("--credential", () => {
     await runtime.deploy("first", declare(types, { secrets: ["a"] }));
     provider.calls.length = 0;
 
-    await passed(types, runtime, (recorded) => recorded);
+    await passed(types, runtime);
 
     expect(provider.calls).toEqual(["update a"]);
     expect(provider.secrets.get("a")).toBe("passed-value");
     runtime.close();
   });
 
-  it("fails when the version is not the one in state", async () => {
+  it("fails when the instance hash is not the one of the resource", async () => {
     const provider = createProvider();
     const types = defineResources(provider, { rotate: false });
     const runtime = createRuntime();
     await runtime.deploy("first", declare(types, { secrets: ["a"] }));
     provider.calls.length = 0;
 
-    const error = await passed(types, runtime, () => "0badbeef").catch(
+    const error = await passed(types, runtime, "0badbeef").catch(
       (e: Error) => e,
     );
 
-    const record = await runtime.state.get("token");
-    const recorded = (record!.output.Value as any).$credential.version;
+    const hash = await tokenHash(runtime, declare(types, { secrets: [] })[0]!);
     expect((error as Error).message).toBe(
-      `token.Value is at version ${recorded.slice(0, 8)} in this stage, not 0badbeef.`,
+      `token has the instance hash ${hash} in this stage, not 0badbeef.`,
     );
     expect(provider.calls).toEqual([]);
     runtime.close();
@@ -1136,9 +1161,7 @@ describe("--credential", () => {
     const runtime = createRuntime();
     await runtime.deploy("first", declare(types, { secrets: ["a"] }));
 
-    await expect(
-      passed(types, runtime, (recorded) => recorded.slice(0, 8)),
-    ).rejects.toThrow(
+    await expect(passed(types, runtime)).rejects.toThrow(
       "--credential is accepted only for a credential without rotate",
     );
     runtime.close();
@@ -1149,15 +1172,16 @@ describe("--credential", () => {
     const types = defineResources(provider, { rotate: false });
     const runtime = createRuntime();
     await runtime.deploy("first", declare(types, { secrets: ["a"] }));
-    const record = await runtime.state.get("token");
-    const version = (record!.output.Value as any).$credential.version;
     const overrides = {
       replace: [],
       credential: [
         {
           id: "token",
           name: "Value",
-          version: version.slice(0, 8),
+          instanceHash: await tokenHash(
+            runtime,
+            declare(types, { secrets: [] })[0]!,
+          ),
           variable: "TEST_TOKEN_VALUE",
         },
       ],
@@ -1190,9 +1214,7 @@ describe("--credential", () => {
     await runtime.deploy("first", declare(types, { secrets: ["a"] }));
     delete process.env.TEST_TOKEN_VALUE;
 
-    await expect(
-      passed(types, runtime, (recorded) => recorded.slice(0, 8)),
-    ).rejects.toThrow(
+    await expect(passed(types, runtime)).rejects.toThrow(
       "--credential token.Value reads TEST_TOKEN_VALUE, which is not set.",
     );
     runtime.close();

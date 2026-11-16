@@ -203,6 +203,7 @@ function findCredentialsForCreate(
     if (!renewed.has(id) || renewed.get(id)!.includes(name)) continue;
     const rotates = rotatesForCreate({
       consumer: resource,
+      consumerRecord: records.get(resource.id),
       producer,
       name,
       record: records.get(id),

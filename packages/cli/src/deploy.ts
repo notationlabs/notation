@@ -64,8 +64,8 @@ export async function deploy(
 }
 
 /**
- * Throws if a `--replace` has no instance hash, or a `--credential` has no
- * version, with the plan command that prints the deploy command with them.
+ * Throws if a `--replace` or a `--credential` has no instance hash, with the
+ * plan command that prints the deploy command with them.
  * Skipped on a resume, so that `assertSameOverrides` reports overrides that
  * differ from the saved one.
  */
@@ -83,13 +83,13 @@ function assertHashesGiven(
       `--replace ${missing.id} needs the instance hash, as --replace ${missing.id}@<instance hash>. ${plan} to print the deploy command with the hash.`,
     );
   }
-  const unversioned = opts.overrides?.credential?.find(
-    (target) => target.version === undefined,
+  const unhashed = opts.overrides?.credential?.find(
+    (target) => target.instanceHash === undefined,
   );
-  if (unversioned) {
-    const { id, name, variable } = unversioned;
+  if (unhashed) {
+    const { id, name, variable } = unhashed;
     throw new Error(
-      `--credential ${id}.${name} needs the version, as --credential ${id}.${name}@<version>=${variable}. ${plan} to print the deploy command with the version.`,
+      `--credential ${id}.${name} needs the instance hash, as --credential ${id}.${name}@<instance hash>=${variable}. ${plan} to print the deploy command with the hash.`,
     );
   }
 }

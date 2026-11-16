@@ -448,8 +448,10 @@ it("fails for a credential that deploy cannot get, with deploy commands for the 
           producer: "app",
           producerType: "github/App",
           name: "privateKey",
+          reason: "consumer-added",
+          rotateManually:
+            "Generate a new private key in the GitHub App's settings, under Private keys.",
           instanceHash: "5d2e8b17",
-          version: "7b1e52c0",
         },
       ],
       { replace: [{ id: "queue", instanceHash: "0c4d9e21" }] },
@@ -465,19 +467,18 @@ it("fails for a credential that deploy cannot get, with deploy commands for the 
 
   expect((error as Error).message).toBe(
     [
-      "app-key-secret needs app.privateKey, and deploy cannot get it. github/App issues privateKey once, at create.",
-      "Either replace the resource `app`, or provide the credential `app.privateKey`.",
+      "app-key-secret is new, and takes app.privateKey. Notation does not store the value, and github/App has no operation that issues another.",
       "",
-      "  Replace app, to issue a new value:",
+      "  Generate a new private key in the GitHub App's settings, under Private keys. Then set the environment variable APP_PRIVATE_KEY to the value, and pass it:",
+      "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --credential app.privateKey@5d2e8b17=APP_PRIVATE_KEY",
+      "",
+      "  Or replace app. Deploy deletes app and creates it again with a new value, so whatever exists only in the old app is lost:",
       "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --replace app@5d2e8b17",
-      "",
-      "  Or pass a value that you hold:",
-      "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --credential app.privateKey@7b1e52c0=APP_PRIVATE_KEY",
     ].join("\n"),
   );
 });
 
-it("prints the deploy command of a --credential with the version in state", async () => {
+it("prints the deploy command of a --credential with the instance hash", async () => {
   planApp.mockResolvedValueOnce({
     createdAt: "",
     nodes: [
@@ -486,7 +487,7 @@ it("prints the deploy command of a --credential with the version in state", asyn
         type: "github/App",
         decision: "noop",
         rotates: ["privateKey"],
-        credentialVersions: { privateKey: "7b1e52c0" },
+        instanceHash: "7b1e52c0",
         params: {},
         dependsOn: [],
       },
