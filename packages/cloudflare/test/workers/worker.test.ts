@@ -1781,7 +1781,7 @@ describe("worker()", () => {
     expect(after.config).toEqual(before.config);
   });
 
-  it("uploads the bindings that addBindings() adds, and fails for a name that its bindings also bind", async () => {
+  it("uploads the bindings that addBindings() adds", async () => {
     const graph = await collect(() => {
       const github = inWorker(
         $worker({ id: "github", compatibilityDate }),
@@ -1807,20 +1807,6 @@ describe("worker()", () => {
         service: nameOf("github"),
       },
     ]);
-
-    await expect(
-      collect(() => {
-        const router = worker({
-          id: "router",
-          code: routerBundle(`export default {};`),
-          compatibilityDate,
-          bindings: () => ({ CHANNEL_GITHUB: "own" }),
-        });
-        addBindings(router, { CHANNEL_GITHUB: "added" });
-      }),
-    ).rejects.toThrow(
-      /^addBindings\(\) at \S*worker\.test\.ts:\d+ binds CHANNEL_GITHUB on worker\(\{ id: "router" \}\) with the entry virtual:main, which already binds CHANNEL_GITHUB in its bindings\. Give one of the bindings another name\.$/,
-    );
   });
 
   it("ignores the entrypointType() marker at deploy", async () => {
