@@ -6,6 +6,9 @@
     "dist",
     "templates"
   ],
+  "engines": {
+    "node": ">=22.13"
+  },
   "bin": {
     "notation": "dist/index.js"
   },

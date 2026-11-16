@@ -30,7 +30,6 @@ export async function* deleteResourceOperation(
       if (skip) {
         yield* emitLifecycleEvent(params, "delete", "skip", { reason: skip });
         yield* params.remove();
-        yield* emitLifecycleEvent(params, "delete", "success");
         return;
       }
     }
@@ -75,7 +74,7 @@ async function* findCreatedResource(
   step: StepRunner,
   params: DeleteResourceParams,
   creatingParams: Record<string, unknown>,
-): AsyncGenerator<unknown, string | undefined, unknown> {
+): AsyncGenerator<unknown, "not-created" | "key-unknown" | undefined, unknown> {
   const { resource } = params;
   if (resource.find) {
     const key = yield* step.run("delete:find", () =>

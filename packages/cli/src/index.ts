@@ -36,7 +36,7 @@ const stageOption = [
 ] as const;
 const jsonOption = [
   "--json",
-  "stream reconciler events as NDJSON (the default when stdout is not a terminal)",
+  "print JSON (the default when stdout is not a terminal, outside CI)",
 ] as const;
 const collect = (value: string, previous: string[] = []) => [
   ...previous,
@@ -62,7 +62,7 @@ const overrideLossProtectionOption = [
 const prettyOption = () =>
   new Option(
     "--pretty",
-    "print pretty output (the default on a terminal)",
+    "print pretty output (the default on a terminal or in CI)",
   ).conflicts("json");
 
 program
@@ -105,7 +105,7 @@ program
     const project = await load(options);
     const deployment = await resolveResumableDeployment(project, options);
     await deploy(deployment, {
-      output: resolveOutputMode(options),
+      output: outputMode(options),
       executionId: options.executionId,
       resumeCommand: resumeCommand("deploy", options),
       compile: options.compile,
@@ -127,7 +127,7 @@ program
     const project = await load(options);
     const deployment = await resolveResumableDeployment(project, options);
     await destroy(deployment, {
-      output: resolveOutputMode(options),
+      output: outputMode(options),
       executionId: options.executionId,
       resumeCommand: resumeCommand("destroy", options),
     });
@@ -140,7 +140,7 @@ program
   .description("Plan Notation App")
   .option(
     "--json",
-    "print the plan as JSON (the default when stdout is not a terminal)",
+    "print the plan as JSON (the default when stdout is not a terminal, outside CI)",
   )
   .addOption(prettyOption())
   .option(...replaceOption("[@hash]"))
@@ -150,7 +150,7 @@ program
     const project = await load(options);
     const deployment = resolveDeployment(project, { stage: options.stage });
     await plan(deployment, {
-      output: resolveOutputMode(options),
+      output: outputMode(options),
       overrides: parseOverrides(options),
       config: options.config,
     });
@@ -176,6 +176,19 @@ program
     const deployment = resolveDeployment(project, { stage: options.stage });
     await watch(deployment);
   });
+
+// When neither flag is passed and stdout is not a terminal, the output is
+// JSON. A CI system that does not set CI would otherwise log JSON with no
+// explanation.
+function outputMode(options: { json?: boolean; pretty?: boolean }) {
+  const mode = resolveOutputMode(options);
+  if (mode === "json" && !options.json) {
+    process.stderr.write(
+      "stdout is not a terminal, so the output is JSON. Pass --pretty for readable output.\n",
+    );
+  }
+  return mode;
+}
 
 function load(options: { config?: string }) {
   if (options.config !== undefined) setConfigFile(options.config);

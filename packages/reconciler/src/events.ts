@@ -18,8 +18,18 @@ export type OperationName =
  */
 export type ReplaceOrder = "create-first" | "delete-first";
 
+// `skip` ends an operation, like `success` and `error`.
 export type OperationLifecycleStatus =
   "start" | "success" | "error" | "skip" | "dry-run";
+
+export type OperationLifecycleReason =
+  | "taken-over"
+  | "dependency-replaced"
+  | "retired"
+  | "read-not-implemented"
+  | "not-created"
+  | "key-unknown"
+  | "passed";
 
 export type OperationLifecycleEvent = {
   level: "info" | "error";
@@ -34,9 +44,14 @@ export type OperationLifecycleEvent = {
    * `taken-over`: a create that took over a resource that already existed.
    * `retired`: the delete of an instance that a create-first replace
    * retired.
+   * `read-not-implemented`: a skipped read of a class with no read.
+   * `not-created`: a skipped delete of a creating record whose resource
+   * `find` did not find.
+   * `key-unknown`: a skipped delete of a creating record whose key has
+   * undefined values.
    * `passed`: the rotate of a credential whose value `--credential` passed.
    */
-  reason?: string;
+  reason?: OperationLifecycleReason;
   /**
    * With the reason `dependency-replaced`: the resource whose replacement
    * deletes this one first. Plan names it in `PlanNode.replacedDependency`.

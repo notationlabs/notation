@@ -6,7 +6,7 @@ import {
 import { spawn as nodeSpawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Logger } from "./logger";
-import { createEventRenderer } from "./output";
+import { createPrettyRenderer } from "./output";
 
 export type DeployChildOptions = {
   deployment: DeploymentIdentity;
@@ -35,7 +35,7 @@ export function deployInChild({
   spawn = nodeSpawn,
   proc = process,
 }: DeployChildOptions): Promise<void> {
-  const emit = createEventRenderer("pretty", logger);
+  const emit = createPrettyRenderer(logger);
   const args = [
     ...process.execArgv,
     process.argv[1]!,

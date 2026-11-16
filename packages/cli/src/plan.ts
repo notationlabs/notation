@@ -12,7 +12,7 @@ import {
 } from "@notation/core";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
-import { createEventRenderer, type OutputMode } from "./output";
+import { createPrettyRenderer, type OutputMode } from "./output";
 import { redirectStdoutToStderr } from "./stdio";
 
 export type PlanCommandOptions = {
@@ -51,8 +51,8 @@ export async function plan(
   const logger = opts.logger ?? defaultLogger;
   // The events are progress, so they stay pretty. In JSON output they go to
   // stderr, and stdout carries only the plan.
-  const emit = createEventRenderer("pretty", logger);
   if (opts.output === "json") {
+    const emit = createPrettyRenderer(logger, process.stderr);
     let result: Plan;
     const { restore } = redirectStdoutToStderr();
     try {
@@ -67,6 +67,7 @@ export async function plan(
     return;
   }
 
+  const emit = createPrettyRenderer(logger);
   await compile(deployment, { logger });
   logger.info(`Planning ${resolveDeploymentId(deployment)}\n`);
   const result = await withDeployCommands(deployment, opts.config, () =>
