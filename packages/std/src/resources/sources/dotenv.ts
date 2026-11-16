@@ -62,15 +62,14 @@ export const Dotenv = credentialSourceResource<DotenvSchema>({
         context,
       ),
     }),
-    loadCredential: async (params, state, context) => ({
-      value: await loadLocalValue(
-        params.track,
-        read(params.path, params.key),
-        `${params.key} is not set in ${params.path}`,
+    loadCredential: async (state, context) =>
+      loadLocalValue(
+        state.track,
+        read(state.path, state.key),
+        `${state.key} is not set in ${state.path}`,
         state.revision,
         context,
       ),
-    }),
   });
 
 export type DotenvInstance = InstanceType<typeof Dotenv>;

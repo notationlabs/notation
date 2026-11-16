@@ -29,9 +29,9 @@ export const TestSource = credentialSourceResource<{
   } as const)
   .defineOperations({
     read: async (params) => ({ revision: entry(params.key).revision }),
-    loadCredential: async (params) => {
-      loads.push(params.key);
-      return { value: entry(params.key).value };
+    loadCredential: async (state) => {
+      loads.push(state.key);
+      return entry(state.key).value;
     },
   });
 

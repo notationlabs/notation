@@ -3,6 +3,7 @@ import {
   isCredentialSource,
   validateValues,
   type BaseResource,
+  type CredentialMarker,
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
 import { scrubError } from "@notation/utils";
@@ -23,7 +24,7 @@ import {
   toPersistedState,
 } from "../operations";
 import { getDependencyIds } from "../plan";
-import { requestedCredential, type CredentialTarget } from "../replace-request";
+import type { CredentialTarget } from "../replace-request";
 import {
   UnobtainableCredentialError,
   unobtainableCredential,
@@ -131,33 +132,30 @@ export async function* mintNeededCredentials(
 }
 
 /**
- * Makes sure that deploy holds the value of every credential in `value`,
- * which holds the credentials that an operation of `consumer` is about to
- * receive. Deploy holds none for a credential that was made in an earlier
+ * Makes sure that deploy holds the value of every credential in `markers`,
+ * the credentials that an operation of `consumer` is about to receive. Deploy holds none for a credential that was made in an earlier
  * deploy, or before this deploy was resumed.
  *
  * 1. A source's credential is loaded with `loadCredential`. Its version
  *    stays the same, so no other resource is updated.
- * 2. A credential that `--credential` names takes the value of its variable
- *    again, under the version that deploy recorded for it.
- * 3. A credential with a `rotate` operation is rotated, and the new version
+ * 2. A credential with a `rotate` operation is rotated, and the new version
  *    is written to the record of its resource. Every resource that takes
  *    the credential and that deploy has already reconciled is reconciled
  *    again, so that it is updated with the new value.
  *
  * Any other credential fails the deploy.
  *
- * Returns true when a credential was rotated, so the markers in `value` name
+ * Returns true when a credential was rotated, so `markers` name
  * a version that is no longer the current one.
  */
 export async function* obtainCredentials(
   step: DurableStepRunner,
   opts: DeployContext,
   consumer: BaseResource,
-  value: unknown,
+  markers: readonly CredentialMarker[],
 ): AsyncGenerator<any, boolean, any> {
   let rotated = false;
-  for (const { $credential } of unheldCredentials(value)) {
+  for (const { $credential } of unheldCredentials(markers)) {
     const { resource: id, name } = $credential;
     const producer = opts.resources.find((candidate) => candidate.id === id);
     if (!producer) {
@@ -167,15 +165,10 @@ export async function* obtainCredentials(
     }
     const base = step.scope(`credential:${encodeURIComponent(id)}:${name}`);
     if (isCredentialSource(producer)) {
-      yield* loadSourceCredential(base, opts, producer, name);
+      yield* loadSourceCredential(base, opts, producer);
       continue;
     }
-    const passed = requestedCredential(opts.requested, id, name);
     const version = credentialVersion(producer, name);
-    if (passed && version !== null) {
-      holdPassedCredential(producer, passed, version);
-      continue;
-    }
     if (!producer.rotate?.[name]) {
       const session = yield* openStateSession(base, opts, producer);
       throw new UnobtainableCredentialError(
@@ -232,11 +225,11 @@ export async function* obtainCredentials(
  * Reads the value of a `--credential` from its variable, checks it, and
  * holds it under `version`.
  */
-function holdPassedCredential(
+async function holdPassedCredential(
   resource: BaseResource,
   target: CredentialTarget,
   version?: string,
-): string {
+): Promise<string> {
   const value = process.env[target.variable];
   if (!value) {
     throw new Error(
@@ -244,12 +237,7 @@ function holdPassedCredential(
     );
   }
   recordSecretStrings(value);
-  const result = validateValues(resource, { [target.name]: value }, "deploy");
-  if (result instanceof Promise) {
-    throw new Error(
-      `${resource.type} checks ${target.name} with an async validator, which --credential does not support`,
-    );
-  }
+  await validateValues(resource, { [target.name]: value }, "deploy");
   return holdCredential(value, version);
 }
 
@@ -282,8 +270,9 @@ async function* passedCredentialStep(
     });
     throw error;
   }
-  if (!holdsCredential(version))
-    holdPassedCredential(resource, target, version);
+  if (!holdsCredential(version)) {
+    await holdPassedCredential(resource, target, version);
+  }
   resource.setOutput({
     ...resource.output,
     [name]: credentialMarker(resource.id, name, version),

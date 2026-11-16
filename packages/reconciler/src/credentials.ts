@@ -6,6 +6,7 @@ import {
   forEachOutputRef,
   isCredentialMarker,
   isCredentialSource,
+  isPlainObject,
   mapCredentialMarkers,
   toComparableParams,
   validateValues,
@@ -13,7 +14,7 @@ import {
   type CredentialMarker,
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
-import { recordSecretValue } from "@notation/utils";
+import { recordSecretValue, sortedJson } from "@notation/utils";
 
 // The values of credentials, by version. They are kept here only, for the
 // life of the process, so a resumed deploy starts with none. A process runs
@@ -54,24 +55,14 @@ export function sourceCredentialVersion(
 ): string {
   return createHash("sha256")
     .update(
-      JSON.stringify([
+      sortedJson.encode([
         source.id,
         name,
-        sortedEntries(toComparableParams(source.schema, params)),
+        toComparableParams(source.schema, params),
         revision,
       ]),
     )
     .digest("hex");
-}
-
-function sortedEntries(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortedEntries);
-  if (value && typeof value === "object") {
-    return Object.keys(value)
-      .sort()
-      .map((key) => [key, sortedEntries((value as any)[key])]);
-  }
-  return value;
 }
 
 /** Removes every string in `value` from error messages from now on. */
@@ -194,18 +185,16 @@ export async function holdCreated(
  * Throws for a marker whose value is not held. `taker` is the resource whose
  * operation receives the copy.
  *
- * With `recorded`, a marker that `recorded` also holds is `undefined` in the
- * copy: the record of `taker` shows that it already has that version.
+ * With `recorded`, a marker that `recorded` holds at the same path is
+ * `undefined` in the copy: the record of `taker` shows that it already has
+ * that version there.
  */
 export function revealCredentials<T>(
   value: T,
   taker: BaseResource,
   recorded?: unknown,
 ): T {
-  const unchanged =
-    recorded === undefined ? [] : findCredentialMarkers(recorded);
-  return mapCredentialMarkers(value, (marker) => {
-    if (unchanged.some((other) => sameMarker(other, marker))) return undefined;
+  return mapChangedCredentials(value, recorded, (marker) => {
     const { resource, name, version } = marker.$credential;
     if (!holdsCredential(version)) {
       throw new Error(
@@ -218,15 +207,54 @@ export function revealCredentials<T>(
   }) as T;
 }
 
-/** The credential markers in `value` that `recorded` does not hold. */
+/**
+ * The credential markers in `value` that `recorded` does not hold at the
+ * same path.
+ */
 export function changedCredentials(
   value: unknown,
   recorded: unknown,
 ): CredentialMarker[] {
-  const unchanged = findCredentialMarkers(recorded);
-  return findCredentialMarkers(value).filter(
-    (marker) => !unchanged.some((other) => sameMarker(other, marker)),
-  );
+  const changed: CredentialMarker[] = [];
+  mapChangedCredentials(value, recorded, (marker) => changed.push(marker));
+  return changed;
+}
+
+/**
+ * Copies a value, with `onMarker` applied to each credential marker that
+ * differs from the value at the same path in `recorded`. A marker that is
+ * the same there is `undefined` in the copy. A marker found at another path
+ * does not count: a resource that took the credential under one name has
+ * not taken it under another.
+ */
+function mapChangedCredentials(
+  value: unknown,
+  recorded: unknown,
+  onMarker: (marker: CredentialMarker) => unknown,
+): unknown {
+  if (isCredentialMarker(value)) {
+    return isCredentialMarker(recorded) && sameMarker(value, recorded)
+      ? undefined
+      : onMarker(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry, index) =>
+      mapChangedCredentials(
+        entry,
+        Array.isArray(recorded) ? recorded[index] : undefined,
+        onMarker,
+      ),
+    );
+  }
+  if (isPlainObject(value)) {
+    const previous = isPlainObject(recorded) ? recorded : {};
+    const mapped: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      mapped[key] = mapChangedCredentials(entry, previous[key], onMarker);
+    }
+    return mapped;
+  }
+  return value;
 }
 
 function sameMarker(a: CredentialMarker, b: CredentialMarker): boolean {
@@ -239,16 +267,16 @@ function sameMarker(a: CredentialMarker, b: CredentialMarker): boolean {
 
 /**
  * Whether an operation of `taker` has received, in this process, the value
- * of every credential marker in `value`. The credentials of the sources
+ * of every credential in `markers`. The credentials of the sources
  * among `resources` are skipped: a source gives the same value for the same
  * version, so an operation replayed from the journal received that value.
  */
 export function wasGivenCredentials(
   taker: BaseResource,
-  value: unknown,
+  markers: readonly CredentialMarker[],
   resources: readonly BaseResource[],
 ): boolean {
-  return findCredentialMarkers(value).every(({ $credential }) => {
+  return markers.every(({ $credential }) => {
     const producer = resources.find(({ id }) => id === $credential.resource);
     if (producer && isCredentialSource(producer)) return true;
     return given.get(taker)?.has($credential.version ?? "") ?? false;
@@ -284,10 +312,12 @@ export function assertNoHiddenCredential(resource: BaseResource): void {
   }
 }
 
-/** The credential markers in a value whose values are not held. */
-export function unheldCredentials(value: unknown): CredentialMarker[] {
+/** The credentials in `markers` whose values are not held, each once. */
+export function unheldCredentials(
+  markers: readonly CredentialMarker[],
+): CredentialMarker[] {
   const seen = new Set<string>();
-  return findCredentialMarkers(value).filter((marker) => {
+  return markers.filter((marker) => {
     const { resource, name, version } = marker.$credential;
     const id = JSON.stringify([resource, name]);
     if (holdsCredential(version) || seen.has(id)) return false;

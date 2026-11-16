@@ -63,10 +63,10 @@ function defineResources(outside: Outside) {
         if (outside.warning) context.warn(outside.warning);
         return { revision: String(outside.values.get(params.key)!.length) };
       },
-      loadCredential: async (params, state) => {
-        outside.calls.push(`load ${params.key}@${state.revision}`);
-        const versions = outside.values.get(params.key)!;
-        return { value: versions[Number(state.revision) - 1]! };
+      loadCredential: async (state) => {
+        outside.calls.push(`load ${state.key}@${state.revision}`);
+        const versions = outside.values.get(state.key)!;
+        return versions[Number(state.revision) - 1]!;
       },
     });
 

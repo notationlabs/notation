@@ -44,6 +44,7 @@ export {
   containsOutputRef,
   forEachOutputRef,
   isOutputRef,
+  isPlainObject,
   resolveOutputRefs,
   deployLookup,
   planLookup,

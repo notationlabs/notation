@@ -12,6 +12,7 @@ import {
   isCredentialSource,
   validateParams,
   type BaseResource,
+  type CredentialMarker,
   type DurableObject,
   type ResourceClass,
   type ResourceGroupRef,
@@ -74,7 +75,7 @@ import {
   staleCredentialMarkers,
   wasGivenCredentials,
 } from "../credentials";
-import { requestedReplace } from "../replace-request";
+import { assertNoPassedCredential, requestedReplace } from "../replace-request";
 import { mintNeededCredentials, obtainCredentials } from "./credentials";
 import { reconcileSource } from "./source";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
@@ -261,6 +262,9 @@ export async function* reconcileResource(
     });
   }
 
+  if (!opts.reconciled.has(resource) && !keepsResource(action.decision)) {
+    assertNoPassedCredential(opts.requested, resource);
+  }
   if (session.node && !creating && keepsResource(action.decision)) {
     session = yield* mintNeededCredentials(
       step,
@@ -282,14 +286,15 @@ export async function* reconcileResource(
     action.decision === "drift-update"
       ? { ...recordedParams, ...action.remote }
       : recordedParams;
-  const received = (): unknown =>
+  const receivedCredentials = (): CredentialMarker[] =>
     "patch" in action && updates
       ? changedCredentials(action.patch, comparedParams)
-      : params;
+      : findCredentialMarkers(params);
+  let received = receivedCredentials();
   if (
     !opts.dryRun &&
     action.decision !== "noop" &&
-    (yield* obtainCredentials(step, opts, resource, received()))
+    (yield* obtainCredentials(step, opts, resource, received))
   ) {
     params = currentCredentialMarkers(params, opts.resources);
     unnamedParams = currentCredentialMarkers(unnamedParams, opts.resources);
@@ -299,6 +304,7 @@ export async function* reconcileResource(
         patch: currentCredentialMarkers(action.patch, opts.resources),
       };
     }
+    received = receivedCredentials();
   }
 
   options.onDecision?.(action.decision);
@@ -345,14 +351,13 @@ export async function* reconcileResource(
   // so the resource holds the value that the operation received then, and a
   // rotation since has revoked that value. The resource is reconciled again
   // as one that has not taken the credentials, which updates it.
-  const taken = received();
   if (
     !opts.dryRun &&
     !options.staleCredentials &&
     action.decision !== "noop" &&
-    !wasGivenCredentials(resource, taken, opts.resources)
+    !wasGivenCredentials(resource, received, opts.resources)
   ) {
-    const versions = findCredentialMarkers(taken)
+    const versions = received
       .map(({ $credential }) => $credential.version)
       .join(",");
     yield* reconcileResource(

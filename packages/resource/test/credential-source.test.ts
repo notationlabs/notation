@@ -22,7 +22,7 @@ const Env = credentialSourceResource<{
   } as const)
   .defineOperations({
     read: async (_params, { executionId }) => ({ revision: executionId }),
-    loadCredential: async (params) => ({ value: `value of ${params.key}` }),
+    loadCredential: async (state) => `value of ${state.key}`,
   });
 
 const Plain = resource<{

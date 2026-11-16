@@ -18,23 +18,10 @@ import {
 import { emitLifecycleEvent, getErrorDetails } from "../operations";
 import { getDependencyIds, hasSameEdges } from "../plan";
 import { assertSameType } from "../resource-type";
-import {
-  decideSource,
-  readSource,
-  sourceState,
-  type SourceRead,
-} from "../sources";
+import { readAndDecideSource, sourceState } from "../sources";
 import { openStateSession } from "./reconcile";
 import { durableEmitter, type DurableStepRunner } from "./step";
 import type { DeployContext } from "./types";
-
-// The params that each source was reconciled with in this process, for its
-// `loadCredential`. A resumed deploy replays the reconcile, which sets them
-// again.
-const reconciledParams = new WeakMap<
-  BaseCredentialSource,
-  Record<string, unknown>
->();
 
 function sourceContext(
   opts: DeployContext,
@@ -70,50 +57,15 @@ export async function* reconcileSource(
   await validateParams(source, params, "deploy");
   const dependsOn = getDependencyIds(source);
 
-  const readStep = step.scope("source-read");
-  const event = { resource: source, emit: durableEmitter(readStep, opts.emit) };
-  yield* emitLifecycleEvent(event, "read", "start");
-  let read: SourceRead;
-  try {
-    // A step, so that a resumed deploy gets the same revision.
-    read = (yield* readStep.run("read", async () => {
-      try {
-        return (await readSource(
-          source,
-          params,
-          sourceContext(opts, source),
-          record,
-        )) as DurableObject;
-      } catch (error) {
-        throw scrubError(error);
-      }
-    })) as unknown as SourceRead;
-  } catch (error) {
-    yield* emitLifecycleEvent(event, "read", "error", getErrorDetails(error));
-    throw error;
-  }
-  yield* emitLifecycleEvent(event, "read", "success");
-  for (const [index, message] of read.warnings.entries()) {
-    yield* durableEmitter(
-      readStep.scope(`warning:${index}`),
-      opts.emit,
-    )({
-      level: "warn",
-      event: "reconciler.source.warning",
-      resourceId: source.id,
-      resourceType: source.type,
-      message,
-    });
-  }
-
-  const { decision, output } = decideSource(
+  const { decision, output } = yield* readAndDecideSource(
+    step.scope("source-read"),
+    (scope) => durableEmitter(scope, opts.emit),
     source,
-    record,
     params,
-    read.result,
+    sourceContext(opts, source),
+    record,
   );
   source.setOutput(output);
-  reconciledParams.set(source, params);
   yield* durableEmitter(
     step,
     opts.emit,
@@ -151,33 +103,33 @@ export async function* reconcileSource(
 
 /**
  * Calls the source's `loadCredential`, and holds the value under the
- * credential's version, which does not change. Nothing records the value.
+ * version of its credential, which does not change. Nothing records the
+ * value. The source's output holds the params and the revision that deploy
+ * reconciled it with, so a resumed deploy, which replays the reconcile, loads
+ * the same value.
  */
 export async function* loadSourceCredential(
   step: DurableStepRunner,
   opts: DeployContext,
   source: BaseCredentialSource,
-  name: string,
 ): AsyncGenerator<any, void, any> {
-  const params = reconciledParams.get(source);
+  const name = "value";
   const version = credentialVersion(source, name);
-  if (!params || version === null) {
+  if (!opts.reconciled.has(source) || version === null) {
     throw new Error(
-      `Cannot load the credential ${name} of ${source.id}: deploy has not reconciled the source`,
+      `Cannot load the credential of ${source.id}: deploy has not reconciled the source`,
     );
   }
   const event = { resource: source, emit: durableEmitter(step, opts.emit) };
   yield* emitLifecycleEvent(event, "load", "start", { credential: name });
   try {
-    const loaded = await source.loadCredential(
-      params,
+    const value = await source.loadCredential(
       sourceState(source, source.output as Record<string, unknown>),
       sourceContext(opts, source),
     );
-    const value = (loaded as Record<string, unknown> | undefined)?.[name];
     if (value === undefined) {
       throw new Error(
-        `The load of ${source.id} (${source.type}) returned no ${name}`,
+        `The load of ${source.id} (${source.type}) returned no value`,
       );
     }
     recordSecretStrings(value);

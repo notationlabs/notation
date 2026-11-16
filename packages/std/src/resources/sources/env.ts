@@ -47,15 +47,14 @@ export const Env = credentialSourceResource<EnvSchema>({
         context,
       ),
     }),
-    loadCredential: async (params, state, context) => ({
-      value: await loadLocalValue(
-        params.track,
-        read(params.key),
-        `${params.key} is not set`,
+    loadCredential: async (state, context) =>
+      loadLocalValue(
+        state.track,
+        read(state.key),
+        `${state.key} is not set`,
         state.revision,
         context,
       ),
-    }),
   });
 
 export type EnvInstance = InstanceType<typeof Env>;

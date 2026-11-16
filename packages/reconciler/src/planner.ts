@@ -34,11 +34,7 @@ import {
   takesCredential,
 } from "./credentials";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
-import {
-  applyDriftDetection,
-  emitLifecycleEvent,
-  getErrorDetails,
-} from "./operations";
+import { applyDriftDetection } from "./operations";
 import { sweepSteps, sweptRecords } from "./orphan-sweep";
 import {
   assertChangeAllowed,
@@ -63,6 +59,7 @@ import {
 } from "./physical-names";
 import { readRecordedOutputs } from "./recorded-outputs";
 import {
+  assertNoPassedCredential,
   assertReplaceRequest,
   instanceHash,
   requestedCredential,
@@ -70,7 +67,7 @@ import {
   shortVersion,
   type ReplaceRequest,
 } from "./replace-request";
-import { decideSource, readSource } from "./sources";
+import { readAndDecideSource } from "./sources";
 import {
   UnobtainableCredentialError,
   unobtainableCredential,
@@ -201,39 +198,15 @@ export async function createPlan({
         `createPlan needs nameScope to read the source ${source.id}.`,
       );
     }
-    const event = { resource: source, emit: emitStep };
-    await runOperation(emitLifecycleEvent(event, "read", "start"));
-    let read: Awaited<ReturnType<typeof readSource>>;
-    try {
-      read = await readSource(
+    const { decision, output, diff } = await runOperation(
+      readAndDecideSource(
+        createStepRunner(),
+        () => emitStep,
         source,
         params,
         { id: source.id, executionId, ...nameScope },
         record,
-      );
-    } catch (error) {
-      await runOperation(
-        emitLifecycleEvent(event, "read", "error", getErrorDetails(error)),
-      );
-      throw error;
-    }
-    await runOperation(emitLifecycleEvent(event, "read", "success"));
-    for (const message of read.warnings) {
-      await runOperation(
-        emitStep({
-          level: "warn",
-          event: "reconciler.source.warning",
-          resourceId: source.id,
-          resourceType: source.type,
-          message,
-        }),
-      );
-    }
-    const { decision, output, diff } = decideSource(
-      source,
-      record,
-      params,
-      read.result,
+      ),
     );
     source.setOutput(output);
     return { ...node, decision, ...(diff ? { diff } : {}) };
@@ -323,6 +296,9 @@ export async function createPlan({
       "replaceFields" in action ? action.replaceFields : undefined;
     const replacedDependency = cascaded.get(resource.id);
     const replaced = Boolean(replaceFields || replacedDependency);
+    if (replaced || !keepsResource(action.decision)) {
+      assertNoPassedCredential(requested, resource);
+    }
     // A resource deleted in a cascade is deleted before it is created again,
     // whatever its class.
     const order = replacedDependency ? "delete-first" : replaceOrder(resource);
@@ -591,7 +567,13 @@ function recordedCredentialVersions(
   resource: BaseResource,
   stateNode: StateNode | undefined,
 ): { credentialVersions?: Record<string, string> } {
-  if (!stateNode || isCreatingRecord(stateNode)) return {};
+  if (
+    !stateNode ||
+    isCreatingRecord(stateNode) ||
+    isCredentialSource(resource)
+  ) {
+    return {};
+  }
   const versions: Record<string, string> = {};
   for (const name of credentialNames(resource.schema)) {
     const marker = stateNode.output[name];

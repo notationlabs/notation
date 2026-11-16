@@ -6,10 +6,18 @@ import {
   validateValues,
   type BaseCredentialSource,
   type CredentialSourceContext,
+  type DurableObject,
   type ParamsDiffDisplay,
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
+import { scrubError } from "@notation/utils";
 import { sourceCredentialVersion, withoutCredentials } from "./credentials";
+import type { EmitStep } from "./events";
+import {
+  emitLifecycleEvent,
+  getErrorDetails,
+  type StepRunner,
+} from "./operations";
 
 export type SourceDecision = "create" | "update" | "noop";
 
@@ -54,6 +62,54 @@ export async function readSource(
     );
   }
   return { result, warnings };
+}
+
+/**
+ * Reads the source, emits the lifecycle events of the read and a warning for
+ * each message that `read` passed to `warn`, and decides what deploy does
+ * with the source. See `decideSource`. The read runs in a step of `step`, so
+ * that a resumed deploy gets the same revision. `emit` gives the emitter for
+ * a scope of `step`.
+ */
+export async function* readAndDecideSource(
+  step: StepRunner,
+  emit: (step: StepRunner) => EmitStep,
+  source: BaseCredentialSource,
+  params: Record<string, unknown>,
+  context: CredentialSourceContext,
+  record: StateNode | undefined,
+): AsyncGenerator<unknown, ReturnType<typeof decideSource>, unknown> {
+  const event = { resource: source, emit: emit(step) };
+  yield* emitLifecycleEvent(event, "read", "start");
+  let read: SourceRead;
+  try {
+    read = (yield* step.run("read", async () => {
+      try {
+        return (await readSource(
+          source,
+          params,
+          context,
+          record,
+        )) as DurableObject;
+      } catch (error) {
+        throw scrubError(error);
+      }
+    })) as unknown as SourceRead;
+  } catch (error) {
+    yield* emitLifecycleEvent(event, "read", "error", getErrorDetails(error));
+    throw error;
+  }
+  yield* emitLifecycleEvent(event, "read", "success");
+  for (const [index, message] of read.warnings.entries()) {
+    yield* emit(step.scope(`warning:${index}`))({
+      level: "warn",
+      event: "reconciler.source.warning",
+      resourceId: source.id,
+      resourceType: source.type,
+      message,
+    });
+  }
+  return decideSource(source, record, params, read.result);
 }
 
 /**

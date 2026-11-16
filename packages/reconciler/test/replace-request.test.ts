@@ -390,7 +390,7 @@ describe("createPlan with a requested replace", () => {
         } as const)
         .defineOperations({
           read: async () => ({ revision: "1" }),
-          loadCredential: async () => ({ value: "v" }),
+          loadCredential: async () => "v",
         });
 
       await expect(

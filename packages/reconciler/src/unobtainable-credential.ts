@@ -23,18 +23,15 @@ export type UnobtainableCredential = {
 /**
  * Plan and deploy throw this when a resource needs the value of a credential
  * without `rotate`, deploy holds none, and neither `--replace` nor
- * `--credential` names the credential. `deployCommand` starts each command
- * in the message.
+ * `--credential` names the credential. The CLI writes the message again
+ * with the command that it ran.
  */
 export class UnobtainableCredentialError extends Error {
   readonly _tag = "UnobtainableCredentialError" as const;
   readonly credential: UnobtainableCredential;
 
-  constructor(
-    credential: UnobtainableCredential,
-    deployCommand = "notation deploy",
-  ) {
-    super(unobtainableCredentialMessage(credential, deployCommand));
+  constructor(credential: UnobtainableCredential) {
+    super(unobtainableCredentialMessage(credential, "notation deploy"));
     this.name = "UnobtainableCredentialError";
     this.credential = credential;
   }

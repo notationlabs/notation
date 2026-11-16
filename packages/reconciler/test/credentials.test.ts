@@ -691,6 +691,103 @@ describe("an update that does not change a credential", () => {
   });
 });
 
+describe("an update that moves a credential to another binding", () => {
+  type WorkerSchema = {
+    Key: { name: string };
+    CreateParams: { name: string; Secrets: Record<string, string> };
+    UpdateParams: { Secrets: Record<string, string> };
+    ReadResult: {};
+  };
+
+  // As a Worker does: a binding whose value is undefined keeps the value
+  // that the Worker holds, and a binding that is not in Secrets is deleted.
+  const defineWorker = (workers: Map<string, Record<string, string>>) =>
+    resource<WorkerSchema>({
+      type: "test/credentials/Worker",
+      provider: "test",
+    })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          immutable: true,
+          primaryKey: true,
+          value: v.string(),
+        },
+        Secrets: {
+          propertyType: "param",
+          presence: "required",
+          sensitive: true,
+          value: v.record(v.string(), v.string()),
+        },
+      } as const)
+      .defineOperations({
+        create: async (params) => {
+          workers.set(params.name, { ...params.Secrets });
+        },
+        update: async (key, _patch, params) => {
+          const stored = workers.get(key.name) ?? {};
+          const next: Record<string, string> = {};
+          for (const [binding, value] of Object.entries(params.Secrets)) {
+            if (value !== undefined) next[binding] = value;
+            else if (binding in stored) next[binding] = stored[binding]!;
+          }
+          workers.set(key.name, next);
+        },
+        delete: async (key) => {
+          workers.delete(key.name);
+        },
+      });
+
+  const declareWorker = (
+    types: ReturnType<typeof defineResources>,
+    Worker: ReturnType<typeof defineWorker>,
+    bindings: string[],
+  ): BaseResource[] => {
+    const token = new types.Token("token", { config: { scope: "read" } });
+    return [
+      token,
+      new Worker("worker", {
+        config: {
+          name: "worker",
+          Secrets: Object.fromEntries(
+            bindings.map((binding) => [binding, token.credentials.Value]),
+          ),
+        },
+      }),
+    ];
+  };
+
+  it("uploads the value under the new name when a binding is renamed", async () => {
+    const workers = new Map<string, Record<string, string>>();
+    const types = defineResources(createProvider(), { rotate: false });
+    const Worker = defineWorker(workers);
+    const runtime = createRuntime();
+    await runtime.deploy("first", declareWorker(types, Worker, ["A"]));
+
+    await runtime.deploy("second", declareWorker(types, Worker, ["B"]));
+
+    expect(workers.get("worker")).toEqual({ B: "token-value-1" });
+    runtime.close();
+  });
+
+  it("uploads the value for a second binding of the same credential", async () => {
+    const workers = new Map<string, Record<string, string>>();
+    const types = defineResources(createProvider(), { rotate: false });
+    const Worker = defineWorker(workers);
+    const runtime = createRuntime();
+    await runtime.deploy("first", declareWorker(types, Worker, ["A"]));
+
+    await runtime.deploy("second", declareWorker(types, Worker, ["A", "B"]));
+
+    expect(workers.get("worker")).toEqual({
+      A: "token-value-1",
+      B: "token-value-1",
+    });
+    runtime.close();
+  });
+});
+
 describe("--credential", () => {
   const passed = async (
     types: ReturnType<typeof defineResources>,
@@ -763,6 +860,44 @@ describe("--credential", () => {
     ).rejects.toThrow(
       "--credential is accepted only for a credential without rotate",
     );
+    runtime.close();
+  });
+
+  it("fails when deploy replaces the credential's resource", async () => {
+    const provider = createProvider();
+    const types = defineResources(provider, { rotate: false });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a"] }));
+    const record = await runtime.state.get("token");
+    const version = (record!.output.Value as any).$credential.version;
+    const request = {
+      replace: [],
+      credential: [
+        {
+          id: "token",
+          name: "Value",
+          version: version.slice(0, 8),
+          variable: "TEST_TOKEN_VALUE",
+        },
+      ],
+    };
+    const replaced = () => declare(types, { scope: "write", secrets: ["a"] });
+    const message =
+      "--credential token.Value cannot be given when deploy replaces token";
+    provider.calls.length = 0;
+
+    await expect(
+      createPlan({
+        resources: replaced(),
+        state: runtime.state,
+        deploymentId: "credentials",
+        requested: request,
+      }),
+    ).rejects.toThrow(message);
+    await expect(
+      runtime.nextProcess("second", replaced(), request),
+    ).rejects.toThrow(message);
+    expect(provider.calls).toEqual([]);
     runtime.close();
   });
 

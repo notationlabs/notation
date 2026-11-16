@@ -65,14 +65,14 @@ export type CredentialSourceOperations<T extends ResourceTypes> = {
   ) => Promise<CredentialSourceReadResult<T>>;
   /**
    * Returns the value for the revision in `state`, and the same value each
-   * time for the same revision. Deploy calls it only when a resource that
-   * takes the value is created or updated, and deploy holds no value.
+   * time for the same revision. `state` holds the params and the outputs
+   * that `read` returned. Deploy calls it only when a resource that takes the
+   * value is created or updated, and deploy holds no value.
    */
   loadCredential: (
-    params: T["params"],
     state: T["state"],
     context: CredentialSourceContext,
-  ) => Promise<T["credentials"]>;
+  ) => Promise<T["credentials"]["value"]>;
 };
 
 export interface BaseCredentialSource extends BaseResource {
@@ -84,10 +84,9 @@ export interface BaseCredentialSource extends BaseResource {
   ): Promise<Record<string, unknown>>;
   /** See `CredentialSourceOperations.loadCredential`. */
   loadCredential(
-    params: any,
     state: any,
     context: CredentialSourceContext,
-  ): Promise<Record<string, unknown>>;
+  ): Promise<unknown>;
 }
 
 export function isCredentialSource(

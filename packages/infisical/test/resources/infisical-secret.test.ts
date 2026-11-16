@@ -147,8 +147,8 @@ describe("InfisicalSecret", () => {
 
     calls = [];
     await expect(
-      source.loadCredential(address, { revision: "sec-1:14" }, loadContext),
-    ).resolves.toEqual({ value: "sk_live_14" });
+      source.loadCredential({ ...address, revision: "sec-1:14" }, loadContext),
+    ).resolves.toBe("sk_live_14");
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url.searchParams.get("version")).toBe("14");
   });
@@ -174,8 +174,8 @@ describe("InfisicalSecret", () => {
 
     calls = [];
     await expect(
-      source.loadCredential(params, { revision }, loadContext),
-    ).resolves.toEqual({ value: "postgres://app:hunter2@db/orders" });
+      source.loadCredential({ ...params, revision }, loadContext),
+    ).resolves.toBe("postgres://app:hunter2@db/orders");
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url.searchParams.get("version")).toBeNull();
     expect(calls[0]!.url.searchParams.get("expandSecretReferences")).toBe(
@@ -201,14 +201,14 @@ describe("InfisicalSecret", () => {
       "true",
     );
     await expect(
-      source.loadCredential(params, { revision }, loadContext),
-    ).resolves.toEqual({ value: "postgres://hunter2" });
+      source.loadCredential({ ...params, revision }, loadContext),
+    ).resolves.toBe("postgres://hunter2");
 
     vi.restoreAllMocks();
     mockInfisical(secrets, { DATABASE_URL: "postgres://correct-horse" });
     expect(await read(source, params)).not.toBe(revision);
     await expect(
-      source.loadCredential(params, { revision }, loadContext),
+      source.loadCredential({ ...params, revision }, loadContext),
     ).rejects.toThrow("changed after deploy read it");
   });
 
@@ -219,7 +219,7 @@ describe("InfisicalSecret", () => {
     const source = await declare(address);
 
     await expect(
-      source.loadCredential(address, { revision: "sec-1:1" }, loadContext),
+      source.loadCredential({ ...address, revision: "sec-1:1" }, loadContext),
     ).rejects.toThrow(SecretReplacedError);
   });
 
@@ -230,7 +230,7 @@ describe("InfisicalSecret", () => {
     const source = await declare(address);
 
     await expect(
-      source.loadCredential(address, { revision: "sec-1:3" }, loadContext),
+      source.loadCredential({ ...address, revision: "sec-1:3" }, loadContext),
     ).rejects.toThrow(
       "The value of `STRIPE_KEY` in Infisical project proj, environment prod, path /orders is empty.",
     );
@@ -246,7 +246,7 @@ describe("InfisicalSecret", () => {
       "`MISSING` isn't in Infisical project proj, environment prod, path /orders.",
     );
     await expect(
-      source.loadCredential(address, { revision: "sec-1:4" }, loadContext),
+      source.loadCredential({ ...address, revision: "sec-1:4" }, loadContext),
     ).rejects.toThrow("Version 4 of `STRIPE_KEY` isn't in");
   });
 

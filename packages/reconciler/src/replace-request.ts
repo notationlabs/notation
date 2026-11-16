@@ -267,6 +267,22 @@ export function assertReplaceRequest(
 }
 
 /**
+ * Throws if a `--credential` names `resource`. Deploy calls this when it
+ * creates the resource again, and so does plan: the new resource is created
+ * with a new value, and deploy would ignore the one that the flag passes.
+ */
+export function assertNoPassedCredential(
+  request: ReplaceRequest | undefined,
+  resource: BaseResource,
+): void {
+  const target = request?.credential?.find(({ id }) => id === resource.id);
+  if (!target) return;
+  throw new Error(
+    `--credential ${target.id}.${target.name} cannot be given when deploy replaces ${target.id}: the replacement is created with a new value.`,
+  );
+}
+
+/**
  * Throws if a `--credential` names a credential that it cannot set, gives a
  * version that is not the one in state, or names a variable that is not set
  * at deploy.

@@ -6,10 +6,10 @@ Source: `@notation/resource`
 
 Resources come in two kinds. Each kind has its own builder and base class:
 
-| Kind     | `kind`                | Builder                      | Credentials  | Operations                                                                    |
-| -------- | --------------------- | ---------------------------- | ------------ | ----------------------------------------------------------------------------- |
+| Kind     | `kind`                | Builder                      | Credentials  | Operations                                                                           |
+| -------- | --------------------- | ---------------------------- | ------------ | ------------------------------------------------------------------------------------ |
 | Resource | `"resource"`          | `resource()`                 | any number   | `create`, `delete`; optional `read`, `update`, `find`, and `rotate` for a credential |
-| Source   | `"credential-source"` | `credentialSourceResource()` | one, `value` | `read`, `loadCredential`                                                      |
+| Source   | `"credential-source"` | `credentialSourceResource()` | one, `value` | `read`, `loadCredential`                                                             |
 
 A resource is something that deploy creates at a provider. A source supplies a value that exists outside Notation, such as an environment variable. Most of this page is about resources. See [Credential sources](#credential-sources) for sources.
 
@@ -652,34 +652,34 @@ export const Env = credentialSourceResource<{
   } as const)
   .defineOperations({
     read: async (params, context) => ({ revision: context.executionId }),
-    loadCredential: async (params, state, context) => {
-      const value = process.env[params.key];
-      if (!value) throw new Error(`${params.key} is not set.`);
-      return { value };
+    loadCredential: async (state, context) => {
+      const value = process.env[state.key];
+      if (!value) throw new Error(`${state.key} is not set.`);
+      return value;
     },
   });
 ```
 
 The schema has params, a computed `revision`, any other computed outputs, and one credential, `value`. Another resource takes the value as `source.credentials.value`, as for any [credential](#credentials).
 
-| Operation        | Called                                                                                                     | Returns                                                                      |
-| ---------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `read`           | by plan and deploy, for every source                                                                       | the `revision`, and never the value. It may read the value to work the revision out. |
-| `loadCredential` | by deploy, when a resource that takes the value is created or updated, and deploy holds no value            | the value for the `revision` in `state`. It returns the same value each time for the same revision. |
+| Operation        | Called                                                                                           | Returns                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `read`           | by plan and deploy, for every source                                                             | the `revision`, and never the value. It may read the value to work the revision out.                           |
+| `loadCredential` | by deploy, when a resource that takes the value is created or updated, and deploy holds no value | the value of `value` for the `revision` in `state`. It returns the same value each time for the same revision. |
 
 **The credential's version is a SHA-256 of the source's ID, its params and its `revision`.** A change to a param or to the `revision` gives the credential a new version, so deploy updates every resource that takes it. A source with the same params and revision has the same version in every deploy, so loading the value again changes no other resource. Return a `revision` that changes whenever the value changes, such as a version that the secrets manager assigns. When the source has no such version, return `context.executionId`, so that the value is written on every deploy.
 
 `read` receives a context:
 
-| Field         | Description                                                                                       |
-| ------------- | ------------------------------------------------------------------------------------------------- |
-| `id`          | The source's ID.                                                                                  |
-| `executionId` | The ID of the deploy's execution, which a resumed deploy keeps. Each plan has an ID of its own.   |
-| `app`, `stage`| The app and the stage.                                                                            |
-| `state`       | The outputs in the source's record, without its credential. Undefined when there is no record.    |
-| `warn`        | `(message) => void`. Shows a warning for the source in the output of plan and deploy.             |
+| Field          | Description                                                                                     |
+| -------------- | ----------------------------------------------------------------------------------------------- |
+| `id`           | The source's ID.                                                                                |
+| `executionId`  | The ID of the deploy's execution, which a resumed deploy keeps. Each plan has an ID of its own. |
+| `app`, `stage` | The app and the stage.                                                                          |
+| `state`        | The outputs in the source's record, without its credential. Undefined when there is no record.  |
+| `warn`         | `(message) => void`. Shows a warning for the source in the output of plan and deploy.           |
 
-`loadCredential` receives the params, the outputs in the record as `state`, and the context without `state` and `warn`.
+`loadCredential` receives `state` and the context without `state` and `warn`. `state` holds the params and the outputs that `read` returned in this deploy, without the credential.
 
 - A source that no resource takes is never loaded.
 - When a source leaves the code, deploy deletes its record and calls nothing.

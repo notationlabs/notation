@@ -52,19 +52,17 @@ describe("Env", () => {
 
     await expect(
       source.loadCredential(
-        { key: "STRIPE_KEY" },
-        { revision: "exec-1" },
+        { key: "STRIPE_KEY", revision: "exec-1" },
         loadContext("stripe-key"),
       ),
-    ).resolves.toEqual({ value: "sk_live_1" });
+    ).resolves.toBe("sk_live_1");
   });
 
   it("fails to load a variable that is not set or is empty", async () => {
     const source = await declare("stripe-key", { key: "STRIPE_KEY" });
     const load = () =>
       source.loadCredential(
-        { key: "STRIPE_KEY" },
-        { revision: "exec-1" },
+        { key: "STRIPE_KEY", revision: "exec-1" },
         loadContext("stripe-key"),
       );
 
@@ -123,8 +121,11 @@ describe("Env", () => {
 
       expect(revision).toMatch(/^scrypt:[0-9a-f]{64}$/);
       await expect(
-        source.loadCredential(params, { revision }, loadContext("stripe-key")),
-      ).resolves.toEqual({ value: "sk_live_1" });
+        source.loadCredential(
+          { ...params, revision },
+          loadContext("stripe-key"),
+        ),
+      ).resolves.toBe("sk_live_1");
     });
 
     it("fails with hmac when NOTATION_TRACK_KEY is not set, and names it", async () => {
@@ -155,8 +156,7 @@ describe("Env", () => {
       ]);
       await expect(
         source.loadCredential(
-          params,
-          { revision: "hmac:recorded" },
+          { ...params, revision: "hmac:recorded" },
           loadContext("stripe-key"),
         ),
       ).rejects.toThrow("STRIPE_KEY is not set.");
@@ -184,11 +184,17 @@ describe("Env", () => {
       )) as { revision: string };
 
       await expect(
-        source.loadCredential(params, { revision }, loadContext("stripe-key")),
-      ).resolves.toEqual({ value: "sk_live_1" });
+        source.loadCredential(
+          { ...params, revision },
+          loadContext("stripe-key"),
+        ),
+      ).resolves.toBe("sk_live_1");
       vi.stubEnv("STRIPE_KEY", "sk_live_2");
       await expect(
-        source.loadCredential(params, { revision }, loadContext("stripe-key")),
+        source.loadCredential(
+          { ...params, revision },
+          loadContext("stripe-key"),
+        ),
       ).rejects.toThrow("The value of stripe-key changed after deploy read it");
     });
   });

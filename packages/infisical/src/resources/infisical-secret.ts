@@ -115,37 +115,37 @@ export const InfisicalSecret = credentialSourceResource<InfisicalSecretSchema>({
       // added again is numbered from 1.
       return { revision: `${stored.id}:${stored.version}` };
     },
-    loadCredential: async (params, state, context) => {
-      if (params.track || state.revision === context.executionId) {
-        const secret = await getSecret(params, {
+    loadCredential: async (state, context) => {
+      if (state.track || state.revision === context.executionId) {
+        const secret = await getSecret(state, {
           expandSecretReferences: true,
         });
-        assertNotEmpty(params, secret.secretValue);
+        assertNotEmpty(state, secret.secretValue);
         if (
-          params.track &&
+          state.track &&
           (await sources.trackRevision(
-            params.track,
+            state.track,
             context,
             secret.secretValue,
           )) !== state.revision
         ) {
           throw new Error(
-            `The value of \`${params.key}\` in ${where(params)} changed after deploy read it. Run deploy again.`,
+            `The value of \`${state.key}\` in ${where(state)} changed after deploy read it. Run deploy again.`,
           );
         }
-        return { value: secret.secretValue };
+        return secret.secretValue;
       }
       const separator = state.revision.lastIndexOf(":");
       const id = state.revision.slice(0, separator);
       const version = Number(state.revision.slice(separator + 1));
       // The stored text of this version holds no reference, as read found.
-      const secret = await getSecret(params, {
+      const secret = await getSecret(state, {
         expandSecretReferences: false,
         version,
       });
-      if (secret.id !== id) throw new SecretReplacedError(params);
-      assertNotEmpty(params, secret.secretValue);
-      return { value: secret.secretValue };
+      if (secret.id !== id) throw new SecretReplacedError(state);
+      assertNotEmpty(state, secret.secretValue);
+      return secret.secretValue;
     },
   });
 

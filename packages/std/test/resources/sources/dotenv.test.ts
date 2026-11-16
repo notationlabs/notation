@@ -52,15 +52,15 @@ describe("Dotenv", () => {
       }),
     ).resolves.toEqual({ revision: "exec-1" });
     await expect(
-      source.loadCredential(params, { revision: "exec-1" }, loadContext),
-    ).resolves.toEqual({ value: "whsec_1" });
+      source.loadCredential({ ...params, revision: "exec-1" }, loadContext),
+    ).resolves.toBe("whsec_1");
   });
 
   it("fails to load a key that is not in the file, or from a missing file", async () => {
     const params = { path: ".env.local", key: "WEBHOOK_SECRET" };
     const source = await declare(params);
     const load = () =>
-      source.loadCredential(params, { revision: "exec-1" }, loadContext);
+      source.loadCredential({ ...params, revision: "exec-1" }, loadContext);
 
     await expect(load()).rejects.toThrow(
       "WEBHOOK_SECRET is not set in .env.local.",
@@ -94,8 +94,8 @@ describe("Dotenv", () => {
     const { revision } = await read();
     expect(revision).toMatch(/^hmac:/);
     await expect(
-      source.loadCredential(params, { revision }, loadContext),
-    ).resolves.toEqual({ value: "whsec_1" });
+      source.loadCredential({ ...params, revision }, loadContext),
+    ).resolves.toBe("whsec_1");
 
     await writeFile(path.join(directory, ".env.local"), "");
     await expect(read({ revision })).resolves.toEqual({ revision });
