@@ -101,6 +101,8 @@ The state record of a source holds its params, its `revision` and a marker for t
 
 When a source is removed from code, deploy deletes its record and calls nothing else.
 
+Keep the source's provider package installed for the deploy that removes the source. If the package is removed in the same change, deploy cannot load the provider, warns that the provider load failed, and leaves the record in state. Remove the package after that deploy.
+
 ## When a value is written
 
 Plan and deploy call the `read` operation of every source. `read` returns the source's `revision`, and never the value. The credential's version is a hash of the source's ID, its params and its `revision`, so a change to either gives the credential a new version. Deploy then updates every resource that takes the credential.
