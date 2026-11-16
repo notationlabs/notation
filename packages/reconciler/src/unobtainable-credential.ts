@@ -92,9 +92,9 @@ export function throwIfUnobtainable(
 }
 
 /**
- * For one credential, two deploy commands. For several, the deploy command
- * once, and the two flags of each credential, as the user adds one flag for
- * each.
+ * For one credential, two deploy commands. For several, the lines of each
+ * credential with its two flags, and then the deploy command once, as the
+ * user adds one flag for each.
  */
 export function unobtainableCredentialMessage(
   credentials: readonly UnobtainableCredential[],
@@ -104,36 +104,42 @@ export function unobtainableCredentialMessage(
     return credentialLines(credentials[0]!, `${deployCommand} `).join("\n");
   }
   return [
-    `Deploy needs a new value for ${credentials.length} credentials. Choose one flag for each, and add the flags to the deploy command:`,
-    `  ${deployCommand} <flags>`,
+    `${credentials.length} credentials need a new value before deploy can run. Each is listed below with two flags. Choose one flag for each.`,
     ...credentials.flatMap((credential) => [
       "",
       ...credentialLines(credential, ""),
     ]),
+    "",
+    "Then run deploy with the flags that you chose:",
+    `  ${deployCommand} <flags>`,
   ].join("\n");
 }
 
-const needs: Record<CredentialNeed, (c: UnobtainableCredential) => string> = {
+const needs: Record<CredentialNeed, (c: Names) => string> = {
   "no-version": (c) =>
-    `${c.consumer} takes ${c.producer}.${c.name}, and state has no record of a value for it.`,
-  "consumer-added": (c) =>
-    `${c.consumer} is new, and takes ${c.producer}.${c.name}.`,
+    `${c.consumer} takes ${c.credential}, and state has no record of a value for it.`,
+  "consumer-added": (c) => `${c.consumer} is new, and takes ${c.credential}.`,
   "consumer-create-unfinished": (c) =>
-    `An earlier deploy did not finish the create of ${c.consumer}, which takes ${c.producer}.${c.name}.`,
+    `An earlier deploy did not finish the create of ${c.consumer}, which takes ${c.credential}.`,
   "consumer-replaced": (c) =>
-    `Deploy replaces ${c.consumer}, which takes ${c.producer}.${c.name}.`,
+    `Deploy replaces ${c.consumer}, which takes ${c.credential}.`,
   "consumer-behind": (c) =>
-    `${c.consumer} takes ${c.producer}.${c.name}, and has not received its current value.`,
+    `${c.consumer} takes ${c.credential}, and has not received its current value.`,
   "not-held": (c) =>
-    `${c.consumer} takes ${c.producer}.${c.name}, and the deploy run that received its value has ended.`,
+    `${c.consumer} takes ${c.credential}, and the deploy run that received its value has ended.`,
 };
+
+/** The names in the message, each in backticks. */
+type Names = { consumer: string; credential: string };
+
+const quoted = (name: string) => `\`${name}\``;
 
 /** The lines for one credential, with `prefix` before each flag. */
 function credentialLines(
   credential: UnobtainableCredential,
   prefix: string,
 ): string[] {
-  const { producer, producerType, name } = credential;
+  const { producer, name } = credential;
   const variable = credentialVariable(producer, name);
   const passed = formatCredential({
     id: producer,
@@ -144,16 +150,22 @@ function credentialLines(
   const replace = credential.instanceHash
     ? `${producer}@${credential.instanceHash}`
     : producer;
+  const type = quoted(credential.producerType);
+  const resource = quoted(producer);
+  const need = needs[credential.reason]({
+    consumer: quoted(credential.consumer),
+    credential: quoted(`${producer}.${name}`),
+  });
   const issue =
     credential.rotateManually ??
-    `Issue a new value of ${name} at the provider of ${producerType}.`;
+    `Issue a new value of ${quoted(name)} at the provider of ${type}.`;
   return [
-    `${needs[credential.reason](credential)} Notation does not store the value, and ${producerType} has no operation that issues another.`,
+    `${need} Notation does not store the value, and ${type} has no operation that issues another.`,
     "",
-    `  ${issue} Then set the environment variable ${variable} to the value, and pass it:`,
+    `  ${issue} Then set the environment variable ${quoted(variable)} to the value, and pass it:`,
     `    ${prefix}--credential ${shellQuote(passed)}`,
     "",
-    `  Or replace ${producer}. Deploy deletes ${producer} and creates it again with a new value, so whatever exists only in the old ${producer} is lost:`,
+    `  Or replace ${resource}. Deploy deletes ${resource} and creates it again with a new value, so whatever exists only in the old ${resource} is lost:`,
     `    ${prefix}--replace ${shellQuote(replace)}`,
   ];
 }

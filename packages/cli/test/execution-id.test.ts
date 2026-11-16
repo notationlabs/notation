@@ -238,12 +238,12 @@ describe("replace flags", () => {
 
     expect((error as Error).message).toBe(
       [
-        "app-key-secret takes app.privateKey, and the deploy run that received its value has ended. Notation does not store the value, and github/App has no operation that issues another.",
+        "`app-key-secret` takes `app.privateKey`, and the deploy run that received its value has ended. Notation does not store the value, and `github/App` has no operation that issues another.",
         "",
-        "  Issue a new value of privateKey at the provider of github/App. Then set the environment variable APP_PRIVATE_KEY to the value, and pass it:",
+        "  Issue a new value of `privateKey` at the provider of `github/App`. Then set the environment variable `APP_PRIVATE_KEY` to the value, and pass it:",
         "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --credential app.privateKey@5d2e8b17=APP_PRIVATE_KEY",
         "",
-        "  Or replace app. Deploy deletes app and creates it again with a new value, so whatever exists only in the old app is lost:",
+        "  Or replace `app`. Deploy deletes `app` and creates it again with a new value, so whatever exists only in the old `app` is lost:",
         "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --replace app@5d2e8b17",
       ].join("\n"),
     );

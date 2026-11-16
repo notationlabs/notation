@@ -467,12 +467,12 @@ it("fails for a credential that deploy cannot get, with deploy commands for the 
 
   expect((error as Error).message).toBe(
     [
-      "app-key-secret is new, and takes app.privateKey. Notation does not store the value, and github/App has no operation that issues another.",
+      "`app-key-secret` is new, and takes `app.privateKey`. Notation does not store the value, and `github/App` has no operation that issues another.",
       "",
-      "  Generate a new private key in the GitHub App's settings, under Private keys. Then set the environment variable APP_PRIVATE_KEY to the value, and pass it:",
+      "  Generate a new private key in the GitHub App's settings, under Private keys. Then set the environment variable `APP_PRIVATE_KEY` to the value, and pass it:",
       "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --credential app.privateKey@5d2e8b17=APP_PRIVATE_KEY",
       "",
-      "  Or replace app. Deploy deletes app and creates it again with a new value, so whatever exists only in the old app is lost:",
+      "  Or replace `app`. Deploy deletes `app` and creates it again with a new value, so whatever exists only in the old `app` is lost:",
       "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --replace app@5d2e8b17",
     ].join("\n"),
   );

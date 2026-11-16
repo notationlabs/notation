@@ -97,30 +97,55 @@ A [credential](../manual/secrets.md#credentials) is a secret output of a resourc
 Some providers have no API that issues another value. A GitHub App's private key is one: you generate a new key in the app's settings. In this case, plan fails. Deploy checks for it before it changes anything, and again before it writes the resource that needs the value. Both print two commands, with the `--config`, `--stage` and other flags of the command that you ran:
 
 ```text
-✗ app-key-secret is new, and takes app.privateKey. Notation does not store the value, and github/App has no operation that issues another.
+✗ `app-key-secret` is new, and takes `app.privateKey`. Notation does not store the value, and `github/App` has no operation that issues another.
 
-  Generate a new private key in the GitHub App's settings, under Private keys. Then set the environment variable APP_PRIVATE_KEY to the value, and pass it:
+  Generate a new private key in the GitHub App's settings, under Private keys. Then set the environment variable `APP_PRIVATE_KEY` to the value, and pass it:
     notation deploy --stage prod --credential app.privateKey@5d2e8b17=APP_PRIVATE_KEY
 
-  Or replace app. Deploy deletes app and creates it again with a new value, so whatever exists only in the old app is lost:
+  Or replace `app`. Deploy deletes `app` and creates it again with a new value, so whatever exists only in the old `app` is lost:
     notation deploy --stage prod --replace app@5d2e8b17
 ```
 
-The first sentence gives the reason that the resource needs the value now:
+The first sentence gives the reason that the resource needs the value now. The message puts each name in backticks:
 
-| First sentence                                                                               | Reason                                                                                                           |
-| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `app-key-secret is new, and takes app.privateKey.`                                           | The resource was added after the deploy that created the app.                                                    |
-| `An earlier deploy did not finish the create of app-key-secret, which takes app.privateKey.` | An earlier deploy failed while it created the resource.                                                          |
-| `Deploy replaces app-key-secret, which takes app.privateKey.`                                | The replacement is created with the value.                                                                       |
-| `app-key-secret takes app.privateKey, and has not received its current value.`               | An earlier deploy failed before it updated the resource, or the resource now takes the value under another name. |
-| `app-key-secret takes app.privateKey, and state has no record of a value for it.`            | The create of the app returned no value for the credential, or one that its validator rejects.                   |
-| `app-key-secret takes app.privateKey, and the deploy run that received its value has ended.` | The deploy stopped after it created the app, and was resumed.                                                    |
+| First sentence                                                                                      | Reason                                                                                                           |
+| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `` `app-key-secret` is new, and takes `app.privateKey`.``                                           | The resource was added after the deploy that created the app.                                                    |
+| ``An earlier deploy did not finish the create of `app-key-secret`, which takes `app.privateKey`.``  | An earlier deploy failed while it created the resource.                                                          |
+| ``Deploy replaces `app-key-secret`, which takes `app.privateKey`.``                                 | The replacement is created with the value.                                                                       |
+| `` `app-key-secret` takes `app.privateKey`, and has not received its current value.``               | An earlier deploy failed before it updated the resource, or the resource now takes the value under another name. |
+| `` `app-key-secret` takes `app.privateKey`, and state has no record of a value for it.``            | The create of the app returned no value for the credential, or one that its validator rejects.                   |
+| `` `app-key-secret` takes `app.privateKey`, and the deploy run that received its value has ended.`` | The deploy stopped after it created the app, and was resumed.                                                    |
 
-- **`--credential`** gives deploy a value that you issue at the provider. The app keeps its ID. The sentence above the command comes from the resource's class. A class that gives none prints `Issue a new value of privateKey at the provider of github/App.`
+- **`--credential`** gives deploy a value that you issue at the provider. The app keeps its ID. The sentence above the command comes from the resource's class. A class that gives none prints ``Issue a new value of `privateKey` at the provider of `github/App`.``
 - **`--replace`** replaces the resource, as in [Replacing a resource](#replacing-a-resource). The new app has a new ID and a new key, and whatever exists only in the old app is lost.
 
-When several credentials need a new value, plan lists all of them in one error. It prints the deploy command once, and the two flags of each credential. Choose one flag for each credential, and add the flags to the command. A `--replace` can create other resources again, so the next plan can find a credential that this one did not list.
+When several credentials need a new value, plan lists all of them in one error. Each credential has the same lines as above, with the two flags in place of the two commands. The deploy command comes once, at the end:
+
+```text
+✗ 2 credentials need a new value before deploy can run. Each is listed below with two flags. Choose one flag for each.
+
+`app-key-secret` is new, and takes `app.privateKey`. Notation does not store the value, and `github/App` has no operation that issues another.
+
+  Generate a new private key in the GitHub App's settings, under Private keys. Then set the environment variable `APP_PRIVATE_KEY` to the value, and pass it:
+    --credential app.privateKey@5d2e8b17=APP_PRIVATE_KEY
+
+  Or replace `app`. Deploy deletes `app` and creates it again with a new value, so whatever exists only in the old `app` is lost:
+    --replace app@5d2e8b17
+
+`db-url` is new, and takes `db.password`. Notation does not store the value, and `neon/Role` has no operation that issues another.
+
+  Issue a new value of `password` at the provider of `neon/Role`. Then set the environment variable `DB_PASSWORD` to the value, and pass it:
+    --credential db.password@91af03c2=DB_PASSWORD
+
+  Or replace `db`. Deploy deletes `db` and creates it again with a new value, so whatever exists only in the old `db` is lost:
+    --replace db@91af03c2
+
+Then run deploy with the flags that you chose:
+  notation deploy --stage prod <flags>
+```
+
+A `--replace` can create other resources again, so the next plan can find a credential that this one did not list.
 
 `--credential` reads the value from the environment variable that it names, so the value is never an argument on the command line:
 

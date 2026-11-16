@@ -596,7 +596,7 @@ To get a new value, deploy calls the credential's `rotate` operation, which retu
 
 **Without `rotate`, the user rotates the credential by hand.** Plan fails, and deploy fails before it writes the resource that needs the value. Both print two commands: `notation deploy --credential`, which passes a value that the user issues at the provider, and `notation deploy --replace`, which replaces the resource that has the credential. See [A credential that you rotate by hand](../cli/deploy.md#a-credential-that-you-rotate-by-hand). Leave out `rotate` only when the provider has no API to issue another value.
 
-For such a credential, give `rotateManually`: one sentence for each credential that tells the user how to issue a new value at the provider. The error prints it above the `--credential` command. Without it, the error prints `Issue a new value of <credential> at the provider of <type>.`
+For such a credential, give `rotateManually`: one sentence for each credential that tells the user how to issue a new value at the provider. The error prints it above the `--credential` command. Without it, the error prints ``Issue a new value of `<credential>` at the provider of `<type>`.``
 
 ```ts
 export const App = appSchema.defineOperations({

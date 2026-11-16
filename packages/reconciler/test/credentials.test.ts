@@ -286,12 +286,12 @@ describe("a resource that takes a credential in a later deploy", () => {
     );
     expect((error as Error).message).toBe(
       [
-        "secret:b is new, and takes token.Value. Notation does not store the value, and test/credentials/Token has no operation that issues another.",
+        "`secret:b` is new, and takes `token.Value`. Notation does not store the value, and `test/credentials/Token` has no operation that issues another.",
         "",
-        "  Issue a new value of Value at the provider of test/credentials/Token. Then set the environment variable TOKEN_VALUE to the value, and pass it:",
+        "  Issue a new value of `Value` at the provider of `test/credentials/Token`. Then set the environment variable `TOKEN_VALUE` to the value, and pass it:",
         `    notation deploy --credential token.Value@${hash}=TOKEN_VALUE`,
         "",
-        "  Or replace token. Deploy deletes token and creates it again with a new value, so whatever exists only in the old token is lost:",
+        "  Or replace `token`. Deploy deletes `token` and creates it again with a new value, so whatever exists only in the old `token` is lost:",
         `    notation deploy --replace token@${hash}`,
       ].join("\n"),
     );
@@ -312,7 +312,7 @@ describe("a resource that takes a credential in a later deploy", () => {
       .catch((e: Error) => e);
 
     expect((error as Error).message).toMatch(
-      /\n  Generate a new value in the token's settings\. Then set the environment variable TOKEN_VALUE to the value, and pass it:\n    notation deploy --credential token\.Value@/,
+      /\n  Generate a new value in the token's settings\. Then set the environment variable `TOKEN_VALUE` to the value, and pass it:\n    notation deploy --credential token\.Value@/,
     );
     runtime.close();
   });
@@ -351,7 +351,7 @@ describe("a resource that takes a credential in a later deploy", () => {
         deploymentId: "credentials",
       }),
     ).rejects.toThrow(
-      /secret:b is new, and takes token\.Value\.[\s\S]*--credential token\.Value@[0-9a-f]{8}=TOKEN_VALUE[\s\S]*--replace token@[0-9a-f]{8}/,
+      /`secret:b` is new, and takes `token\.Value`\.[\s\S]*--credential token\.Value@[0-9a-f]{8}=TOKEN_VALUE[\s\S]*--replace token@[0-9a-f]{8}/,
     );
     runtime.close();
   });
@@ -400,12 +400,14 @@ describe("a resource that takes a credential in a later deploy", () => {
       ).toEqual(["secret:token:b token", "secret:key:b key"]);
       const message = (error as Error).message;
       expect(message).toMatch(
-        /^Deploy needs a new value for 2 credentials\. Choose one flag for each, and add the flags to the deploy command:\n  notation deploy <flags>\n/,
+        /^2 credentials need a new value before deploy can run\. Each is listed below with two flags\. Choose one flag for each\.\n\n`secret:token:b` is new/,
       );
       expect(message).toMatch(
         /\n    --credential token\.Value@[0-9a-f]{8}=TOKEN_VALUE\n/,
       );
-      expect(message).toMatch(/\n    --replace key@[0-9a-f]{8}$/);
+      expect(message).toMatch(
+        /\n    --replace key@[0-9a-f]{8}\n\nThen run deploy with the flags that you chose:\n  notation deploy <flags>$/,
+      );
       runtime.close();
     });
 
@@ -533,7 +535,7 @@ describe("a resource that is replaced and takes a credential", () => {
     };
 
     await expect(runtime.nextProcess("second", renamed())).rejects.toThrow(
-      "Deploy replaces secret:b, which takes token.Value.",
+      "Deploy replaces `secret:b`, which takes `token.Value`.",
     );
     expect(provider.secrets.get("b")).toBe("token-value-1");
 
@@ -583,7 +585,7 @@ describe("a deploy that cannot get a credential for a resource that it replaces"
 
     await expect(
       runtime.nextProcess("second", [token!, a!, b]),
-    ).rejects.toThrow("Deploy replaces secret:b, which takes token.Value.");
+    ).rejects.toThrow("Deploy replaces `secret:b`, which takes `token.Value`.");
     expect(provider.calls).toEqual([]);
     runtime.close();
   });
@@ -632,7 +634,7 @@ describe("a plan with a resource that is replaced and takes a credential", () =>
         resources: renamed(types),
         state: runtime.state,
       }),
-    ).rejects.toThrow("Deploy replaces secret:b, which takes token.Value.");
+    ).rejects.toThrow("Deploy replaces `secret:b`, which takes `token.Value`.");
     runtime.close();
   });
 
@@ -776,7 +778,7 @@ describe("a deploy that is resumed after it created a credential", () => {
     await expect(
       runtime.nextProcess("first", declare(types, { secrets: ["a"] })),
     ).rejects.toThrow(
-      "secret:a takes token.Value, and the deploy run that received its value has ended.",
+      "`secret:a` takes `token.Value`, and the deploy run that received its value has ended.",
     );
 
     const resources = declare(types, { secrets: ["a"] });
