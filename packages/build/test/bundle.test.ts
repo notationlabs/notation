@@ -627,6 +627,28 @@ describe("Bundle", () => {
     );
   });
 
+  it("fails when the output calls a @resource tag of a package", async () => {
+    write(
+      "node_modules/refs-lib/package.json",
+      JSON.stringify({
+        name: "refs-lib",
+        type: "module",
+        exports: "./index.js",
+      }),
+    );
+    write(
+      "node_modules/refs-lib/index.js",
+      `/**\n * @resource\n */\nexport function text(strings, ...parts) { return { strings, parts }; }\n`,
+    );
+    write(
+      "src/worker.ts",
+      `import { text } from "refs-lib";\nexport default { fetch(request) { return text\`\${request.url}/x\`; } };`,
+    );
+    await expect(worker().deriveParams()).rejects.toThrow(
+      "text from refs-lib/index.js can't be used in bundle:router, because text() declares infrastructure",
+    );
+  });
+
   it("fails when the output renders a @declaration export of a package", async () => {
     write(
       "node_modules/fn-lib/package.json",

@@ -13,7 +13,10 @@ import {
   type LambdaFunctionInstance,
 } from "src/resources/lambda/lambda";
 import { LambdaIamRole } from "src/resources/lambda/lambda-role";
-import { ResourceAlreadyExistsError } from "@notation/resource";
+import {
+  ResourceAlreadyExistsError,
+  type DurableObject,
+} from "@notation/resource";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -164,7 +167,7 @@ describe("Lambda code", () => {
           id: "app",
           type: LambdaFunction.type,
           provider: "test",
-          config: lambda.config,
+          config: lambda.config as DurableObject,
           params,
           output: params,
           lastOperation: "create",

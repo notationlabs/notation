@@ -4,6 +4,7 @@ import type {
   DurableObjectDeclaration,
   Worker,
 } from "./declaration";
+import type { Resolved } from "@notation/resource";
 import type { DurableObjectDeclarationConfig } from "./durable-object";
 import type { WorkerDeclarationConfig } from "./worker";
 
@@ -20,8 +21,13 @@ export function $worker<
   const Id extends string,
   B extends Bindings = {},
   E = undefined,
->(config: WorkerDeclarationConfig<Id, B, E>): Worker<B, E> {
-  return { id: config.id } as unknown as Worker<B, E>;
+>(
+  config: WorkerDeclarationConfig<Id, B, E>,
+): Worker<{ [K in keyof B]: Resolved<B[K]> }, E> {
+  return { id: config.id } as unknown as Worker<
+    { [K in keyof B]: Resolved<B[K]> },
+    E
+  >;
 }
 
 /** Declares nothing at runtime. */

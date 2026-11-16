@@ -104,6 +104,14 @@ describe("analyzeModule", () => {
     ).toBeUndefined();
   });
 
+  it("counts a tagged template as a call", () => {
+    expect(
+      run(
+        `import { createTopic } from "@notation/aws/sqs";\nexport const t = createTopic\`orders\`;`,
+      ).resourceCall?.name,
+    ).toBe("createTopic");
+  });
+
   it("ignores a name that shadows the import", () => {
     const { declaration } = run(
       `import { $lambda } from "@notation/aws/lambda";\nexport const f = ($lambda) => $lambda({});`,

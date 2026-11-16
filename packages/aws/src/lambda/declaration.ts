@@ -1,4 +1,4 @@
-import type { StandardSchemaV1 } from "@notation/resource";
+import type { Input, Resolved, StandardSchemaV1 } from "@notation/resource";
 import type {
   APIGatewayEventRequestContextJWTAuthorizer,
   APIGatewayProxyEventV2,
@@ -475,7 +475,9 @@ type DecodeFor<E> =
 
 /**
  * A Lambda function, as `$lambda` declares it. Infra wires it, and the
- * function's code uses its types and its runtime API.
+ * function's code uses its types and its runtime API. In `Env`, `$lambda`
+ * replaces each output ref and derived value with the type of its value, so
+ * that the type of an exported Lambda names no type of `@notation/resource`.
  */
 export interface Lambda<
   E extends LambdaEvent | undefined = LambdaEvent | undefined,
@@ -491,7 +493,7 @@ export interface Lambda<
    * The variables that the declaration binds, read from the function's
    * environment. Throws when one of them is not set.
    */
-  env(): Readonly<Env>;
+  env(): Readonly<EnvValues<Env>>;
   /**
    * Decodes one item that the function received, and returns the item with
    * its decoded parts in place of the raw ones. For SQS the item is a record,
@@ -508,7 +510,16 @@ export interface Lambda<
   decode: DecodeFor<E>;
 }
 
-export type EnvVars = Record<string, string>;
+/**
+ * The variables that a declaration binds: each a string, or an output ref or
+ * a derived value that deploy fills in.
+ */
+export type EnvVars = Record<string, Input<string>>;
+
+/** The values of `Env` as the function reads them. */
+export type EnvValues<Env extends EnvVars> = {
+  [K in keyof Env]: Resolved<Env[K]>;
+};
 
 type HttpHandler<Event> = (
   event: Event,
@@ -550,9 +561,12 @@ export type LambdaHandler<
   L extends { readonly "~lambda"?: { event: LambdaEvent | undefined } },
 > = HandlerFor<NonNullable<L["~lambda"]>["event"]>;
 
-/** The variables that a Lambda's declaration binds. */
+/**
+ * The variables that a Lambda's declaration binds, as the function reads
+ * them. An output ref or a derived value gives its value.
+ */
 export type LambdaEnv<L extends { readonly "~lambda"?: { env: EnvVars } }> =
-  Readonly<NonNullable<L["~lambda"]>["env"]>;
+  Readonly<EnvValues<NonNullable<L["~lambda"]>["env"]>>;
 
 /** Thrown by `decode()` when an item is not valid. */
 export class DecodeError extends Error {
@@ -697,11 +711,13 @@ async function decodeClaims(
  * `env` option and removes the values, so the names are read from the
  * option, and the values from `process.env`.
  */
-export function createRuntimeEnv(options: RuntimeOptions): () => EnvVars {
-  let values: EnvVars | undefined;
+export function createRuntimeEnv(
+  options: RuntimeOptions,
+): () => Record<string, string> {
+  let values: Record<string, string> | undefined;
   return () => {
     if (values) return values;
-    const read: EnvVars = {};
+    const read: Record<string, string> = {};
     for (const name of Object.keys(options.env?.() ?? {})) {
       const value = process.env[name];
       if (value === undefined) {

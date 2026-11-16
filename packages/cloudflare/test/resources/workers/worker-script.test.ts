@@ -930,7 +930,7 @@ describe("WorkerScript", () => {
     await expect(
       script.deriveParams({
         id: script.id,
-        config: script.config,
+        config: { CompatibilityDate: params.CompatibilityDate },
         deps: {
           code: {
             output: { filePath: params.CodeFilePath, fileSha256: codeSha256 },

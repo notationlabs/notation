@@ -12,6 +12,7 @@ import {
   type LambdaEvent,
   type LambdaEventKind,
 } from "./declaration";
+import type { Resolved } from "@notation/resource";
 import { ScheduleGroup } from "src/event-bridge/schedule-group";
 import { isLambdaGroup, LambdaGroup, type LambdaConfig } from "./lambda";
 import { assertId, type NameSafe } from "src/id";
@@ -85,7 +86,9 @@ export function $lambda<
   const Id extends string,
   E extends LambdaEvent | undefined = undefined,
   Env extends EnvVars = {},
->(config: LambdaDeclarationConfig<Id, E, Env>): Lambda<E, Env> {
+>(
+  config: LambdaDeclarationConfig<Id, E, Env>,
+): Lambda<E, { [K in keyof Env]: Resolved<Env[K]> }> {
   assertId("$lambda", config.id);
   // The event is evaluated once, on first use, as infra modules that it
   // refers to may still be loading when $lambda is called.
@@ -95,7 +98,7 @@ export function $lambda<
     id: config.id,
     env: () => (config.env?.() ?? {}) as Env,
     decode: createDecode({ event: getEvent }),
-  } as unknown as Lambda<E, Env>;
+  } as unknown as Lambda<E, { [K in keyof Env]: Resolved<Env[K]> }>;
   let built: { group: LambdaGroup } | { error: unknown } | undefined;
   // A build that throws throws the same error on each later call, so the
   // group isn't made twice, or returned without its event's resources.

@@ -14,7 +14,11 @@ import {
   type ReconcilerEvent,
 } from "@notation/reconciler";
 import * as durable from "@notation/reconciler/durable";
-import { collectResourceGraph, declaredIn } from "@notation/resource";
+import {
+  collectResourceGraph,
+  declaredIn,
+  type CredentialRef,
+} from "@notation/resource";
 import * as std from "@notation/std/resources";
 import * as cloudflare from "src/resources";
 import { $worker } from "src/workers";
@@ -143,14 +147,13 @@ const declareWorker = () => {
     API_KEY: apiKey.credentials.value,
     ADMIN: admin.credentials.value,
   };
-  const chosen: Record<string, string> =
-    bindings === "none"
-      ? {}
-      : bindings === "both"
-        ? all
-        : bindings === "apiKey"
-          ? { API_KEY: all.API_KEY }
-          : { ADMIN: all.ADMIN };
+  const chosen: Record<string, CredentialRef<string>> = bindings === "none"
+    ? {}
+    : bindings === "both"
+      ? all
+      : bindings === "apiKey"
+        ? { API_KEY: all.API_KEY }
+        : { ADMIN: all.ADMIN };
   declaredIn(
     $worker({
       id: workerId,

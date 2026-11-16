@@ -17,6 +17,8 @@ import * as durable from "@notation/reconciler/durable";
 import {
   collectResourceGraph,
   ResourceGroup,
+  text,
+  UNKNOWN_AFTER_APPLY,
   type StandardSchemaV1,
 } from "@notation/resource";
 import { kvJson, type JsonPartial, type KVJsonGroup } from "src/kv";
@@ -309,6 +311,58 @@ describe("kvJson()", () => {
     });
 
     expect(values.get("flags")).toBe('{"features":{},"namespace":"ns1"}');
+  });
+
+  it("leaves the other keys known at plan when a contribution maps a ref, and plans its result once the ref is known", async () => {
+    let namespace!: InstanceType<typeof KVNamespace>;
+    let flags!: KVJsonGroup;
+    await collect((ns) => {
+      namespace = ns;
+      flags = kvJson({
+        id: "flags",
+        namespace,
+        key: "flags",
+        schema: v.object({
+          features: v.record(v.string(), v.boolean()),
+          namespace: v.string(),
+        }),
+        value: { features: {} },
+      });
+      flags.contribute({ features: { invoices: true } });
+      flags.contribute({
+        namespace: namespace.outputRef("NamespaceId").map((id) => `kv:${id}`),
+      });
+    });
+
+    expect((await flags.value.planParams()).Value).toEqual({
+      features: { invoices: true },
+      namespace: UNKNOWN_AFTER_APPLY,
+    });
+    namespace.setOutput({ NamespaceId: "ns1" } as any);
+    expect((await flags.value.planParams()).Value).toEqual({
+      features: { invoices: true },
+      namespace: "kv:ns1",
+    });
+  });
+
+  it("writes a contribution that maps a ref", async () => {
+    await deploy("first", (namespace) => {
+      const flags = kvJson({
+        id: "flags",
+        namespace,
+        key: "flags",
+        schema: v.object({
+          features: v.record(v.string(), v.boolean()),
+          namespace: v.string(),
+        }),
+        value: { features: {} },
+      });
+      flags.contribute({
+        namespace: text`kv:${namespace.outputRef("NamespaceId")}`,
+      });
+    });
+
+    expect(values.get("flags")).toBe('{"features":{},"namespace":"kv:ns1"}');
   });
 
   it.each(["not json", "[1e999]"])(

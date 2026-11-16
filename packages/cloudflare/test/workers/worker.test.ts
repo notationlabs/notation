@@ -14,11 +14,12 @@ import {
   declaredIn,
   ownPhysicalName,
   type BaseResource,
-  type OutputRef,
+  type CredentialRef,
   type RecordedOutputs,
   type ResourceGraph,
   generatedPhysicalName,
   onEvaluationEnd,
+  text,
   UNKNOWN_AFTER_APPLY,
 } from "@notation/resource";
 import { bundle } from "@notation/build/resources";
@@ -318,8 +319,9 @@ describe("$worker", () => {
     });
     const api = group(graph, "api");
 
-    const secret = api.script.config.Secrets?.API_KEY as unknown as OutputRef;
-    expect(Object.keys(api.script.config.Secrets ?? {})).toEqual(["API_KEY"]);
+    const secrets = api.script.config.Secrets as Record<string, CredentialRef>;
+    const secret = secrets.API_KEY!;
+    expect(Object.keys(secrets)).toEqual(["API_KEY"]);
     expect(secret.resource).toBe(apiKey);
     expect(secret.path).toEqual(["value"]);
     expect(api.script.getDependencies()).toEqual(
@@ -351,24 +353,85 @@ describe("$worker", () => {
     expect(group(graph, "api").script.config.Secrets).toBeUndefined();
   });
 
-  it("fails for an output of a resource that is not a credential", async () => {
+  it("binds an output ref and a derived value as plain text, and uploads after their resources", async () => {
+    let cache!: InstanceType<typeof kv.KVNamespace>;
+    const graph = await collect(() => {
+      cache = new kv.KVNamespace("cache", { config: { Title: "cache" } });
+      inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({
+            CACHE_ID: cache.outputRef("NamespaceId"),
+            CACHE_URL: text`https://kv.example.com/${cache.outputRef("NamespaceId")}`,
+          }),
+        }),
+        "runtime/api.ts",
+      );
+    });
+    const api = group(graph, "api");
+
+    expect(api.script.getDependencies()).toContain(cache);
+    cache.setOutput({ NamespaceId: "ns1" } as any);
+    expect((await deployParams(api, [])).Bindings).toEqual([
+      { type: "plain_text", name: "CACHE_ID", text: "ns1" },
+      {
+        type: "plain_text",
+        name: "CACHE_URL",
+        text: "https://kv.example.com/ns1",
+      },
+    ]);
+  });
+
+  it("fails for a ~state ref", async () => {
     await expect(
       collect(() => {
-        const cache = new kv.KVNamespace("cache", {
-          config: { Title: "cache" },
+        const uploads = new r2.R2Bucket("uploads", {
+          config: {
+            BucketName: "uploads",
+            Jurisdiction: "default",
+            StorageClass: "Standard",
+          },
         });
         inWorker(
           $worker({
             id: "api",
             compatibilityDate,
-            bindings: () => ({ CACHE_ID: cache.outputRef("NamespaceId") }),
+            bindings: () => ({
+              BUCKET: uploads["~state"].outputRef("BucketName") as any,
+            }),
           }),
           "runtime/api.ts",
         );
       }),
     ).rejects.toThrow(
-      `$worker({ id: "api" }) in runtime/api.ts binds CACHE_ID to the output NamespaceId of cache, which is not a credential.`,
+      `$worker({ id: "api" }) in runtime/api.ts binds BUCKET to a ~state ref of uploads.`,
     );
+  });
+
+  it("fails for an R2 bucket whose jurisdiction is an output ref", async () => {
+    await expect(
+      collect(() => {
+        const cache = new kv.KVNamespace("cache", {
+          config: { Title: "cache" },
+        });
+        const uploads = new r2.R2Bucket("uploads", {
+          config: {
+            BucketName: "uploads",
+            Jurisdiction: cache.outputRef("NamespaceId") as any,
+            StorageClass: "Standard",
+          },
+        });
+        inWorker(
+          $worker({
+            id: "api",
+            compatibilityDate,
+            bindings: () => ({ UPLOADS: uploads }),
+          }),
+          "runtime/api.ts",
+        );
+      }),
+    ).rejects.toThrow("whose Jurisdiction is an output ref or a derived value");
   });
 
   it("hosts a namespace whose class its module exports", async () => {
@@ -1576,6 +1639,34 @@ describe("WorkerEnv", () => {
     }>();
     expectTypeOf<Env["STORED"]>().toEqualTypeOf<cf.SecretsStoreSecret>();
     expectTypeOf<Env["API_KEY"]>().toEqualTypeOf<string>();
+  });
+
+  it("types an output ref and a derived value as a string", () => {
+    const cache = {} as InstanceType<typeof kv.KVNamespace>;
+    const worker = runtime.$worker({
+      id: "api",
+      compatibilityDate,
+      bindings: () => ({
+        CACHE_ID: cache.outputRef("NamespaceId"),
+        CACHE_URL: text`https://kv.example.com/${cache.outputRef("NamespaceId")}`,
+      }),
+    });
+    type Env = WorkerEnv<typeof worker>;
+
+    expectTypeOf<Env["CACHE_ID"]>().toEqualTypeOf<string>();
+    expectTypeOf<Env["CACHE_URL"]>().toEqualTypeOf<string>();
+  });
+
+  it("doesn't bind a ref to a value that isn't a string", () => {
+    const cache = {} as InstanceType<typeof kv.KVNamespace>;
+    runtime.$worker({
+      id: "api",
+      compatibilityDate,
+      // @ts-expect-error a binding takes a ref to a string
+      bindings: () => ({
+        COUNT: cache.outputRef("NamespaceId").map((id) => id.length),
+      }),
+    });
   });
 
   it("lets json() take a value typed as an interface, and no function", () => {

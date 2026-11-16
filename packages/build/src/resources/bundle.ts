@@ -188,6 +188,8 @@ export class Bundle extends BundleBase {
   declare schema: BundleBaseInstance["schema"];
   declare read: NonNullable<BundleBaseInstance["read"]>;
   declare delete: BundleBaseInstance["delete"];
+  // `bundle()` takes plain values, so config holds no ref.
+  declare config: BundleConfig;
 
   /** The generated modules, by import specifier. Not stored in state. */
   readonly modules: Record<string, string>;

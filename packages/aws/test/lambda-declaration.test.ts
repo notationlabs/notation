@@ -3,6 +3,7 @@ import type { APIGatewayProxyEventV2, SQSEvent, SQSRecord } from "aws-lambda";
 import { setConfigFile } from "@notation/core";
 import {
   collectResourceGraph,
+  text,
   type StandardSchemaV1,
 } from "@notation/resource";
 import * as infra from "src/lambda";
@@ -12,6 +13,7 @@ import {
   DecodeError,
   sqs,
   type JwtClaims,
+  type LambdaEnv,
   type LambdaHandler,
   type SqsOptions,
 } from "src/lambda";
@@ -290,6 +292,27 @@ test("a declaration types its handler, env() and decode()", () => {
 
   // @ts-expect-error env values are strings
   $lambda({ id: "numbers", env: () => ({ N: 1 }) });
+});
+
+test("LambdaEnv and env() give the values of output refs and derived values", () => {
+  const fn = $lambda({
+    id: "orders",
+    env: () => ({
+      QUEUE_URL: orders.url,
+      DLQ_ARN: text`${orders.arn}-dlq`,
+      HOST: orders.url.map((url) => new URL(url).host),
+    }),
+  });
+  type Env = { QUEUE_URL: string; DLQ_ARN: string; HOST: string };
+
+  expectTypeOf<LambdaEnv<typeof fn>>().toEqualTypeOf<Readonly<Env>>();
+  expectTypeOf(fn.env()).toEqualTypeOf<Readonly<Env>>();
+
+  // @ts-expect-error env takes a ref to a string
+  $lambda({
+    id: "lengths",
+    env: () => ({ N: orders.url.map((u) => u.length) }),
+  });
 });
 
 test("an SQS handler can return batch item failures only when the mapping reports them", () => {

@@ -277,6 +277,10 @@ export interface BaseResource {
    * has ended, or once the resource's params have been read.
    */
   contribute(values: {}): void;
+  /**
+   * @deprecated Contribute values instead. Place an output whole, join it
+   * with `text`, or compute with it in `map` or `all`.
+   */
   contribute<Deps extends Record<string, BaseResource>>(
     compute: ContributionFunction<Deps, {}>,
     options: { deps: Deps },
@@ -584,6 +588,10 @@ export abstract class Resource<
   }
 
   contribute(values: ContributionInput<T["collected"]>): void;
+  /**
+   * @deprecated Contribute values instead. Place an output whole, join it
+   * with `text`, or compute with it in `map` or `all`.
+   */
   contribute<Deps extends Record<string, BaseResource>>(
     compute: ContributionFunction<Deps, T["collected"]>,
     options: { deps: Deps },

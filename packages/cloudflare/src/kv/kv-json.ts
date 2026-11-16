@@ -2,6 +2,7 @@ import {
   ResourceGroup,
   type BaseResource,
   type ContributionFunction,
+  type DeepInput,
   type StandardSchemaV1,
 } from "@notation/resource";
 import { assertId, type IdOption } from "@notation/utils";
@@ -24,7 +25,7 @@ export type JsonPartial<T> = T extends readonly unknown[]
 
 type JsonInputSchema = StandardSchemaV1<unknown, unknown>;
 
-type Input<S extends JsonInputSchema> = StandardSchemaV1.InferInput<S>;
+type SchemaInput<S extends JsonInputSchema> = StandardSchemaV1.InferInput<S>;
 
 /**
  * `T` where it is JSON, `unknown` or `any`, and `never` where it is not. An
@@ -99,9 +100,9 @@ type NonJsonError<P> = [P] extends [never]
  * JSON at any depth here; see `JsonInput`. Its output type can be any type.
  */
 type JsonSchemaCheck<S extends JsonInputSchema> =
-  Input<S> extends JsonInput<Input<S>>
+  SchemaInput<S> extends JsonInput<SchemaInput<S>>
     ? S
-    : NonJsonError<NonJsonPath<Input<S>>>;
+    : NonJsonError<NonJsonPath<SchemaInput<S>>>;
 
 export type KVJsonConfig<S extends JsonInputSchema = JsonInputSchema> = {
   /**
@@ -121,8 +122,11 @@ export type KVJsonConfig<S extends JsonInputSchema = JsonInputSchema> = {
    * at any depth, as in a loose object.
    */
   schema: JsonSchemaCheck<S>;
-  /** The first part of the document, before the contributions. */
-  value?: JsonPartial<Input<S>>;
+  /**
+   * The first part of the document, before the contributions. It can hold
+   * output refs and derived values at any depth.
+   */
+  value?: DeepInput<JsonPartial<SchemaInput<S>>>;
 };
 
 /**
@@ -159,12 +163,16 @@ export class KVJsonGroup<
   /**
    * Adds keys to the document. Contributions merge object keys at every
    * depth. Two that set one key to different values conflict, and plan fails.
-   * An array or a scalar is set whole. With a function and its deps, the
-   * function computes the keys from the deps' outputs.
+   * An array or a scalar is set whole. A value can be an output ref or a
+   * derived value at any depth.
    */
-  contribute(value: JsonPartial<Input<S>>): void;
+  contribute(value: DeepInput<JsonPartial<SchemaInput<S>>>): void;
+  /**
+   * @deprecated Contribute values instead. Place an output whole, join it
+   * with `text`, or compute with it in `map` or `all`.
+   */
   contribute<Deps extends Record<string, BaseResource>>(
-    compute: ContributionFunction<Deps, JsonPartial<Input<S>>>,
+    compute: ContributionFunction<Deps, JsonPartial<SchemaInput<S>>>,
     options: { deps: Deps },
   ): void;
   contribute(

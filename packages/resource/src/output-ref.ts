@@ -75,6 +75,19 @@ export interface StateRef<T = unknown> extends RefMembers<T | undefined> {
 
 export type AnyOutputRef = OutputRef | CredentialRef | StateRef;
 
+/**
+ * The value that deploy fills in for `T`: the value of a ref, a credential or
+ * a derived value, and `T` itself otherwise. It doesn't recurse into objects.
+ */
+export type Resolved<T> =
+  T extends OutputRef<infer V>
+    ? V
+    : T extends CredentialRef<infer V>
+      ? V
+      : T extends Derived<infer V>
+        ? V
+        : T;
+
 /** A value, or a ref or a derived value that deploy fills in with one. */
 export type Input<T> = T | OutputRef<T> | Derived<T>;
 
@@ -704,7 +717,8 @@ function derivedStringError(derived: Derived): OutputRefStringError {
  * Joins strings, numbers, refs and derived values into a string that deploy
  * fills in: `` text`${api.url}/callback` ``. Each ref must hold a string or
  * a number when it is filled in. A credential or a `~state` ref can't be
- * joined.
+ * joined. Code that runs in a function can't call it.
+ * @resource
  */
 export function text(
   strings: TemplateStringsArray,
@@ -742,21 +756,20 @@ export function text(
   });
 }
 
-type ValueOf<R> =
-  R extends OutputRef<infer V> ? V : R extends Derived<infer V> ? V : never;
-
 /**
  * Gives a derived value of the list of the values of `refs`, to compute with
- * several outputs: `all([a.url, b.arn]).map(([url, arn]) => ...)`.
+ * several outputs: `all([a.url, b.arn]).map(([url, arn]) => ...)`. Code
+ * that runs in a function can't call it.
+ * @resource
  */
 export function all<const R extends readonly (OutputRef<any> | Derived<any>)[]>(
   refs: R,
-): Derived<{ -readonly [K in keyof R]: ValueOf<R[K]> }> {
+): Derived<{ -readonly [K in keyof R]: Resolved<R[K]> }> {
   const where = () => "all()";
   for (const ref of refs) assertDerivable(ref, where);
   return new Derived({
     inputs: [...refs],
-    compute: (values) => values as { -readonly [K in keyof R]: ValueOf<R[K]> },
+    compute: (values) => values as { -readonly [K in keyof R]: Resolved<R[K]> },
     describe: () =>
       `<all of ${refs.map((ref) => describeInput(ref)).join(", ")}>`,
   });

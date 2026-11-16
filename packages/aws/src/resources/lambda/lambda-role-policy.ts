@@ -6,10 +6,11 @@ import { AwsSchema } from "src/resources/utils/types";
 import type {
   PolicyDocument,
   PolicyStatement,
+  ResolvedPolicyStatement,
 } from "src/resources/templates/iam.policy";
 import type { LambdaIamRoleInstance } from "./lambda-role";
 
-export type { PolicyDocument, PolicyStatement };
+export type { PolicyDocument, PolicyStatement, ResolvedPolicyStatement };
 
 /**
  * An inline policy of a Lambda's role. The params hold the policy document
@@ -103,7 +104,7 @@ const lambdaRolePolicySchema = lambdaRolePolicy.defineSchema({
     collect: (items) => ({
       Version: "2012-10-17",
       Statement: items.flatMap(
-        (item) => (item.Statement ?? []) as PolicyStatement[],
+        (item) => (item.Statement ?? []) as ResolvedPolicyStatement[],
       ),
     }),
   },

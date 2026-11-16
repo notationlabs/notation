@@ -1,11 +1,5 @@
 import * as v from "valibot";
-import {
-  containsOutputRef,
-  planLookup,
-  resolveOutputRefs,
-  resource,
-  ResourceNotFoundError,
-} from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import { sortedJson } from "@notation/utils";
 import { accountId, cloudflareCreate } from "src/api/client";
 import {
@@ -249,18 +243,13 @@ export const AccountToken = accountTokenSchema.defineOperations({
   deriveParams: async ({ config }) => {
     const AccountId = accountId();
     const Policies = await resolvePolicies(AccountId, config.Policies!);
-    const derived: Partial<AccountTokenParams> = { Policies };
-    // Config still holds output refs when this runs. `planLookup` replaces
-    // each one whose resource has an output. A value that still holds an
-    // output ref is left as it is.
-    const resolve = <T>(value: T) => resolveOutputRefs(value, planLookup) as T;
-    const condition = resolve(config.Condition);
-    if (!containsOutputRef(condition)) {
-      derived.Condition = sortedCondition(condition);
-    }
+    const derived: Partial<AccountTokenParams> = {
+      Policies,
+      Condition: sortedCondition(config.Condition),
+    };
     for (const field of ["ExpiresOn", "NotBefore"] as const) {
-      const time = resolve(config[field]);
-      if (time && !containsOutputRef(time)) derived[field] = toSeconds(time);
+      const time = config[field];
+      if (time) derived[field] = toSeconds(time);
     }
     // The cast keeps the derived values out of the declared return type, so
     // that config keeps Policies with the groups' names.
