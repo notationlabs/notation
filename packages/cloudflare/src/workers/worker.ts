@@ -21,7 +21,12 @@ import {
   workerNames,
   workerResourceId,
 } from "src/id";
-import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
+import type {
+  Bindings,
+  DurableObjectDeclaration,
+  EntrypointType,
+  Worker,
+} from "./declaration";
 import {
   describeNamespace,
   registeredNamespace,
@@ -72,12 +77,20 @@ export type WorkerDeclarationConfig<
 export type WorkerConfig<
   Id extends string,
   B extends Bindings,
-> = WorkerDeclarationConfig<Id, B> & {
+  E = undefined,
+> = Omit<WorkerDeclarationConfig<Id, B>, "entrypoint"> & {
   /**
    * A prebuilt JavaScript module, uploaded as-is, or a bundle from `bundle()`
    * with `platform: "workerd"`. File paths are relative to the project root.
    */
   code: { type: "file"; path: string } | BundleLike;
+  /**
+   * The type of the class that the code exports as its default, from
+   * `entrypointType<typeof Api>()`. A Worker that binds this Worker gets
+   * `Service<Api>` in `env`. The build doesn't check that the entry exports
+   * the class.
+   */
+  entrypoint?: EntrypointType<E>;
 };
 
 /** The module that a Worker uploads: a file, or code declared elsewhere. */
@@ -329,19 +342,22 @@ export function $worker<
 
 /**
  * Declares a Cloudflare Worker whose code is a prebuilt file or a bundle
- * from `bundle()`. It takes the options of `$worker`,
- * and binds the same values. It hosts a Durable Object namespace that it
- * binds when the file or bundle's entry exports the namespace's class by name.
+ * from `bundle()`. It takes the options of `$worker`, and binds the same
+ * values. Its `entrypoint` takes `entrypointType()`, as infra code can't load
+ * the class. It hosts a Durable Object namespace that it binds when the file
+ * or bundle's entry exports the namespace's class by name.
  * @resource
  */
-export function worker<const Id extends string, B extends Bindings = {}>(
-  config: WorkerConfig<Id, B>,
-): Worker<B> {
+export function worker<
+  const Id extends string,
+  B extends Bindings = {},
+  E = undefined,
+>(config: WorkerConfig<Id, B, E>): Worker<B, E> {
   assertWorkerId("worker()", config.id);
   const label = `worker({ id: "${config.id}" })`;
   assertCompatibilityDate(label, config);
   const { code } = config;
-  const declaration = { id: config.id } as unknown as Worker<B>;
+  const declaration = { id: config.id } as unknown as Worker<B, E>;
   if (!isBundle(code)) {
     if (code?.type !== "file" || typeof code.path !== "string" || !code.path) {
       throw new Error(
@@ -533,7 +549,7 @@ export function addBindings(
   const entry = registeredWorker(worker);
   if (!entry) {
     throw new Error(
-      `addBindings() at ${at()} takes a Worker from $worker as its first argument.`,
+      `addBindings() at ${at()} takes a Worker from $worker or worker() as its first argument.`,
     );
   }
   if (evaluationEnded()) {

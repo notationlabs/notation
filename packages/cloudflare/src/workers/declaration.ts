@@ -60,9 +60,9 @@ export type BindingValue =
 export type Bindings = Record<string, BindingValue>;
 
 /**
- * A Cloudflare Worker declared with `$worker`. `E` is the type of the class
- * that the Worker's module exports as its default, from the `entrypoint`
- * option.
+ * A Cloudflare Worker declared with `$worker` or `worker()`. `E` is the type
+ * of the class that the Worker's module exports as its default, from the
+ * `entrypoint` option.
  *
  * `E` has no constraint. The class's `env` type depends on the Worker's
  * type, and with a constraint TypeScript resolves the class's base type
@@ -79,7 +79,7 @@ export interface Worker<B extends Bindings = Bindings, E = unknown> {
 
 /**
  * Names the type of an entrypoint class where the class's value can't be
- * loaded. It exists only in the type.
+ * loaded, from `entrypointType()`. It exists only in the type.
  */
 export interface EntrypointType<E> {
   readonly "~entrypoint": E;

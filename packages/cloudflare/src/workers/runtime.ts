@@ -11,6 +11,7 @@ import type { WorkerDeclarationConfig } from "./worker";
 // so it exports the same names as `index.ts`.
 
 export type * from "./declaration";
+export { entrypointType } from "./entrypoint";
 export { json } from "./json";
 export { KVJsonError, readKVJson } from "./kv-json";
 

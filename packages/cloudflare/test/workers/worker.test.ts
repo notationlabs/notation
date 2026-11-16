@@ -36,6 +36,7 @@ import {
   $durableObject,
   $worker,
   addBindings,
+  entrypointType,
   isWorkerGroup,
   json,
   worker,
@@ -47,6 +48,8 @@ import { kv, r2, secretsStore, tokens } from "src/resources";
 import { TestSource } from "../fixtures/test-source";
 import type * as rpc from "../fixtures/rpc-workers";
 import type Github from "../fixtures/rpc-workers";
+import type * as rpcPackage from "../fixtures/rpc-package";
+import type Channel from "../fixtures/rpc-package-worker";
 
 const projectDir = "/some/project";
 const compatibilityDate = "2026-10-12";
@@ -1296,13 +1299,13 @@ describe("addBindings", () => {
     },
   );
 
-  it("fails for a first argument that is not a Worker from $worker", async () => {
+  it("fails for a first argument that is not a Worker from $worker or worker()", async () => {
     await expect(
       collect(() => {
         addBindings({ id: "router" } as any, { A: "a" });
       }),
     ).rejects.toThrow(
-      /^addBindings\(\) at \S*worker\.test\.ts:\d+ takes a Worker from \$worker as its first argument\.$/,
+      /^addBindings\(\) at \S*worker\.test\.ts:\d+ takes a Worker from \$worker or worker\(\) as its first argument\.$/,
     );
   });
 
@@ -1595,6 +1598,26 @@ describe("WorkerEnv", () => {
     expectTypeOf<keyof WorkerEnv<typeof rpc.reports>>().toEqualTypeOf<never>();
   });
 
+  it("types a worker() with an entrypointType() marker as a Service of the class", () => {
+    type Env = WorkerEnv<typeof rpcPackage.router>;
+
+    expectTypeOf<Env["CHANNEL"]>().toEqualTypeOf<cf.Service<typeof Channel>>();
+    expectTypeOf<Env["PLAIN"]>().toEqualTypeOf<cf.Fetcher>();
+    expectTypeOf<
+      (typeof rpcPackage.plainBundle)["~worker"]["entrypoint"]
+    >().toEqualTypeOf<undefined>();
+    // Never called: the calls are only type-checked.
+    async (env: Env) => {
+      const received = await env.CHANNEL.receive("hello");
+      expectTypeOf(received.name).toEqualTypeOf<string>();
+      expectTypeOf(received.length).toEqualTypeOf<number>();
+      // @ts-expect-error an argument of the wrong type
+      await env.CHANNEL.receive(1);
+      // @ts-expect-error a method that the class doesn't have
+      await env.CHANNEL.send();
+    };
+  });
+
   it("rejects a binding that is another object with an id", () => {
     runtime.$worker({
       id: "api",
@@ -1755,6 +1778,64 @@ describe("worker()", () => {
     const after = group(await declare(true), "chat").script;
 
     expect(after.id).toBe(before.id);
+    expect(after.config).toEqual(before.config);
+  });
+
+  it("uploads the bindings that addBindings() adds, and fails for a name that its bindings also bind", async () => {
+    const graph = await collect(() => {
+      const github = inWorker(
+        $worker({ id: "github", compatibilityDate }),
+        "runtime/github.ts",
+      );
+      const router = worker({
+        id: "router",
+        code: routerBundle(`export default {};`),
+        compatibilityDate,
+        bindings: () => ({ GREETING: "hello" }),
+      });
+      addBindings(router, { CHANNEL_GITHUB: github });
+    });
+    const router = group(graph, "router");
+    const github = group(graph, "github");
+
+    expect(router.script.getDependencies()).toContain(github.script);
+    expect((await deployParams(router, [github])).Bindings).toEqual([
+      { type: "plain_text", name: "GREETING", text: "hello" },
+      {
+        type: "service",
+        name: "CHANNEL_GITHUB",
+        service: nameOf("github"),
+      },
+    ]);
+
+    await expect(
+      collect(() => {
+        const router = worker({
+          id: "router",
+          code: routerBundle(`export default {};`),
+          compatibilityDate,
+          bindings: () => ({ CHANNEL_GITHUB: "own" }),
+        });
+        addBindings(router, { CHANNEL_GITHUB: "added" });
+      }),
+    ).rejects.toThrow(
+      /^addBindings\(\) at \S*worker\.test\.ts:\d+ binds CHANNEL_GITHUB on worker\(\{ id: "router" \}\) with the entry virtual:main, which already binds CHANNEL_GITHUB in its bindings\. Give one of the bindings another name\.$/,
+    );
+  });
+
+  it("ignores the entrypointType() marker at deploy", async () => {
+    const declare = (marked: boolean) =>
+      collect(() =>
+        worker({
+          id: "router",
+          code: routerBundle(`export default {};`),
+          compatibilityDate,
+          ...(marked && { entrypoint: entrypointType<typeof Channel>() }),
+        }),
+      );
+    const before = group(await declare(false), "router").script;
+    const after = group(await declare(true), "router").script;
+
     expect(after.config).toEqual(before.config);
   });
 
