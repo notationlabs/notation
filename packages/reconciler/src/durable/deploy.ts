@@ -139,7 +139,7 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
       renewed.set(
         resource.id,
         stateNode && !isCreatingRecord(stateNode) && keepsResource(decision)
-          ? mintedCredentials({
+          ? await mintedCredentials({
               producer: resource,
               record: stateNode,
               consumers: credentialConsumers(resource, opts.resources).map(
@@ -148,6 +148,7 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
                   record: records.get(consumer.id),
                 }),
               ),
+              recordedOutputs,
               requested: opts.requested,
               deploymentId: opts.state.deploymentId,
             })

@@ -12,6 +12,7 @@ import {
   validateValues,
   type BaseResource,
   type CredentialMarker,
+  type RecordedOutputs,
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
 import { recordSecretValue, sortedJson } from "@notation/utils";
@@ -373,39 +374,56 @@ export function takesCredential(
  *
  * 1. The output in the producer's record has no version for it.
  * 2. A resource that takes it has no record, or a "creating" record.
- * 3. The record of a resource that takes it holds another version, because
- *    an earlier deploy failed before it updated the resource.
+ * 3. The record of a resource that takes it does not hold the version at
+ *    each path where its params take it, as `changedCredentials` compares
+ *    them. An earlier deploy failed before it updated the resource, or the
+ *    resource now takes the credential under another name, such as a
+ *    renamed Worker secret.
  *
  * A source's credential is never in the list: deploy loads its value again.
  */
-export function credentialsToMint(
+export async function credentialsToMint(
   producer: BaseResource,
   output: Record<string, unknown>,
   consumers: readonly { resource: BaseResource; record?: StateNode }[],
-): { name: string; consumer: BaseResource }[] {
+  recordedOutputs: RecordedOutputs,
+): Promise<{ name: string; consumer: BaseResource }[]> {
   if (isCredentialSource(producer)) return [];
-  return credentialNames(producer.schema).flatMap((name) => {
-    const taking = consumers.filter(({ resource }) =>
-      takesCredential(resource, producer, name),
-    );
+  const planned = new Map<BaseResource, Promise<Record<string, unknown>>>();
+  const paramsOf = (resource: BaseResource) => {
+    if (!planned.has(resource)) {
+      planned.set(resource, resource.planParams({ recordedOutputs }));
+    }
+    return planned.get(resource)!;
+  };
+  const needed: { name: string; consumer: BaseResource }[] = [];
+  for (const name of credentialNames(producer.schema)) {
     const marker = output[name];
-    const version = isCredentialMarker(marker)
-      ? marker.$credential.version
-      : null;
-    const needing = taking.find(
-      ({ record }) =>
-        version === null ||
+    const current =
+      isCredentialMarker(marker) && marker.$credential.version !== null
+        ? marker
+        : null;
+    const isThis = ({ $credential }: CredentialMarker) =>
+      $credential.resource === producer.id && $credential.name === name;
+    for (const { resource, record } of consumers) {
+      if (!takesCredential(resource, producer, name)) continue;
+      const needs =
+        !current ||
         !record ||
         isCreatingRecord(record) ||
-        !findCredentialMarkers(record.params).some(
-          ({ $credential: held }) =>
-            held.resource === producer.id &&
-            held.name === name &&
-            held.version === version,
-        ),
-    );
-    return needing ? [{ name, consumer: needing.resource }] : [];
-  });
+        changedCredentials(
+          mapCredentialMarkers(await paramsOf(resource), (found) =>
+            isThis(found) ? current : found,
+          ),
+          record.params,
+        ).some(isThis);
+      if (needs) {
+        needed.push({ name, consumer: resource });
+        break;
+      }
+    }
+  }
+  return needed;
 }
 
 /** The version that the producer's output holds for the credential. */

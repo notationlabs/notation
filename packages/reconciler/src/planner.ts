@@ -252,7 +252,7 @@ export async function createPlan({
       stateNode &&
       !isCreatingRecord(stateNode) &&
       keepsResource(action.decision)
-        ? mintedCredentials({
+        ? await mintedCredentials({
             producer: resource,
             record: stateNode,
             consumers: credentialConsumers(resource, resources).map(
@@ -261,6 +261,7 @@ export async function createPlan({
                 record: stateById.get(consumer.id),
               }),
             ),
+            recordedOutputs,
             requested: identified,
             deploymentId,
           })

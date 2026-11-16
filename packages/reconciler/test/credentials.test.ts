@@ -8,6 +8,8 @@ import { instanceHash } from "../src/deploy-request";
 import { UnobtainableCredentialError } from "../src/unobtainable-credential";
 import { createRuntime } from "./credentials-runtime";
 
+type Runtime = ReturnType<typeof createRuntime>;
+
 type TokenSchema = {
   Key: { id: string };
   CreateParams: { scope: string };
@@ -884,31 +886,73 @@ describe("an update that moves a credential to another binding", () => {
     ];
   };
 
-  it("uploads the value under the new name when a binding is renamed", async () => {
+  const plan = (resources: BaseResource[], runtime: Runtime) =>
+    createPlan({
+      nameScope: { app: "app", stage: "test" },
+      resources,
+      state: runtime.state,
+    });
+
+  it("fails at plan and deploy, without rotate, when a binding is renamed", async () => {
     const workers = new Map<string, Record<string, string>>();
     const types = defineResources(createProvider(), { rotate: false });
     const Worker = defineWorker(workers);
     const runtime = createRuntime();
     await runtime.deploy("first", declareWorker(types, Worker, ["A"]));
+    clearHeldCredentials();
 
-    await runtime.deploy("second", declareWorker(types, Worker, ["B"]));
+    const renamed = () => declareWorker(types, Worker, ["B"]);
+    const planned = await plan(renamed(), runtime).catch((e: Error) => e);
+    const deployed = await runtime
+      .deploy("second", renamed())
+      .catch((e: Error) => e);
 
-    expect(workers.get("worker")).toEqual({ B: "token-value-1" });
+    expect(UnobtainableCredentialError.is(planned)).toBe(true);
+    expect(UnobtainableCredentialError.is(deployed)).toBe(true);
+    expect(workers.get("worker")).toEqual({ A: "token-value-1" });
     runtime.close();
   });
 
-  it("uploads the value for a second binding of the same credential", async () => {
+  it("rotates, with rotate, when a binding is renamed, and plans the rotate", async () => {
     const workers = new Map<string, Record<string, string>>();
-    const types = defineResources(createProvider(), { rotate: false });
+    const types = defineResources(createProvider(), { rotate: true });
     const Worker = defineWorker(workers);
     const runtime = createRuntime();
     await runtime.deploy("first", declareWorker(types, Worker, ["A"]));
+    clearHeldCredentials();
 
+    const planned = await plan(declareWorker(types, Worker, ["B"]), runtime);
+    await runtime.deploy("second", declareWorker(types, Worker, ["B"]));
+
+    expect(planned.nodes[0]).toMatchObject({
+      decision: "noop",
+      rotates: ["Value"],
+    });
+    expect(workers.get("worker")).toEqual({ B: "token-value-2" });
+    runtime.close();
+  });
+
+  it("rotates, with rotate, for a second binding of the same credential", async () => {
+    const workers = new Map<string, Record<string, string>>();
+    const types = defineResources(createProvider(), { rotate: true });
+    const Worker = defineWorker(workers);
+    const runtime = createRuntime();
+    await runtime.deploy("first", declareWorker(types, Worker, ["A"]));
+    clearHeldCredentials();
+
+    const planned = await plan(
+      declareWorker(types, Worker, ["A", "B"]),
+      runtime,
+    );
     await runtime.deploy("second", declareWorker(types, Worker, ["A", "B"]));
 
+    expect(planned.nodes[0]).toMatchObject({
+      decision: "noop",
+      rotates: ["Value"],
+    });
     expect(workers.get("worker")).toEqual({
-      A: "token-value-1",
-      B: "token-value-1",
+      A: "token-value-2",
+      B: "token-value-2",
     });
     runtime.close();
   });

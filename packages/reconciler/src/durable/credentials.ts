@@ -92,15 +92,18 @@ export async function* mintNeededCredentials(
   if (consumers.length === 0) return current;
   const output = current.node.output;
   const needed = yield* step.run("credentials:needed", async () =>
-    credentialsToMint(
-      resource,
-      output,
-      await Promise.all(
-        consumers.map(async (consumer) => ({
-          resource: consumer,
-          record: await opts.state.get(consumer.id),
-        })),
-      ),
+    (
+      await credentialsToMint(
+        resource,
+        output,
+        await Promise.all(
+          consumers.map(async (consumer) => ({
+            resource: consumer,
+            record: await opts.state.get(consumer.id),
+          })),
+        ),
+        opts.recordedOutputs,
+      )
     ).map(({ name, consumer }) => ({ name, consumer: consumer.id })),
   );
   for (const { name, consumer } of needed) {

@@ -1,4 +1,4 @@
-import type { BaseResource } from "@notation/resource";
+import type { BaseResource, RecordedOutputs } from "@notation/resource";
 import type { StateNode } from "@notation/state";
 import { credentialsToMint, credentialVersion } from "./credentials";
 import {
@@ -126,18 +126,24 @@ export function unobtainableCredential(opts: {
  * validate step call this for a resource that deploy keeps, and whose
  * record is not "creating".
  */
-export function mintedCredentials(opts: {
+export async function mintedCredentials(opts: {
   producer: BaseResource;
   record: StateNode;
   consumers: readonly { resource: BaseResource; record?: StateNode }[];
+  recordedOutputs: RecordedOutputs;
   requested: DeployRequest | undefined;
   deploymentId: string | undefined;
-}): string[] {
+}): Promise<string[]> {
   const { producer, record, requested, deploymentId } = opts;
   const minted = (requested?.credential ?? [])
     .filter((target) => target.id === producer.id)
     .map((target) => target.name);
-  const needed = credentialsToMint(producer, record.output, opts.consumers);
+  const needed = await credentialsToMint(
+    producer,
+    record.output,
+    opts.consumers,
+    opts.recordedOutputs,
+  );
   for (const { name, consumer } of needed) {
     if (minted.includes(name)) continue;
     if (!producer.rotate?.[name]) {
