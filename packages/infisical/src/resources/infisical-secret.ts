@@ -80,6 +80,10 @@ export const InfisicalSecret = credentialSourceResource<InfisicalSecretSchema>({
     value: { propertyType: "credential", value: v.string() },
   } as const)
   .defineOperations({
+    // The revision is one of: `<id>:<version>` for a secret without
+    // references, the execution ID for a secret with a reference, or an
+    // `hmac:` or `scrypt:` hash with `track`. `loadCredential` tells the
+    // formats apart.
     read: async (params, context) => {
       if (params.track) {
         sources.assertTrackKey(params.track);
