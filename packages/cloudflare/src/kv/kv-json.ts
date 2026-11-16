@@ -7,7 +7,6 @@ import {
 import { assertId, type IdOption } from "@notation/utils";
 import type { Json } from "src/json";
 import type { KVNamespaceInstance } from "src/resources/kv/kv-namespace";
-import type { JsonValue } from "src/workers/declaration";
 import {
   KVJsonValue,
   type KVJsonValueInstance,
@@ -28,18 +27,81 @@ type JsonInputSchema = StandardSchemaV1<unknown, unknown>;
 type Input<S extends JsonInputSchema> = StandardSchemaV1.InferInput<S>;
 
 /**
- * `S` when the input type of the schema `S` is JSON or `unknown`, and an
- * error otherwise. It uses `JsonValue` rather than `Json`, so an input typed as
- * an interface passes. `JsonValue<unknown>` is `never`, so `unknown` is let
- * through first; the class's validator still checks what deploy writes. Its
- * output type can be any type.
+ * `T` where it is JSON, `unknown` or `any`, and `never` where it is not. An
+ * interface passes, though it has no index signature and so isn't assignable
+ * to `Json`. `unknown` passes at any depth, such as the rest of a loose
+ * object, because the validator of `KVJsonValue` checks what deploy writes.
+ * A type assignable to `Json`, such as a recursive JSON type, passes without
+ * being walked.
+ */
+type JsonInput<T> = unknown extends T
+  ? T
+  : T extends Json
+    ? T
+    : T extends (...args: any[]) => unknown
+      ? never
+      : T extends object
+        ? { [K in keyof T]: JsonInput<T[K]> }
+        : never;
+
+type Depth = [never, 0, 1, 2, 3, 4, 5, 6, 7];
+
+type Join<P extends string, K extends string> = P extends "" ? K : `${P}.${K}`;
+
+type Values<M> = M[keyof M];
+
+// Named at their own key, rather than at one of their methods.
+type BuiltIn =
+  Date | RegExp | Map<unknown, unknown> | Set<unknown> | Promise<unknown>;
+
+/**
+ * The paths of the keys in `T` that aren't JSON, such as `"a.b"`,
+ * `"list[]"` or `"map[string]"`, or `""` for `T` itself. It stops at a depth
+ * of 8, as a recursive type would not end. It is only computed for an error
+ * message, so it lets `undefined` through, as from an optional key.
+ */
+type NonJsonPath<T, P extends string = "", D extends number = 8> = [D] extends [
+  never,
+]
+  ? never
+  : unknown extends T
+    ? never
+    : T extends Json | undefined
+      ? never
+      : T extends ((...args: any[]) => unknown) | BuiltIn
+        ? P
+        : T extends readonly (infer E)[]
+          ? NonJsonPath<E, `${P}[]`, Depth[D]>
+          : T extends object
+            ? | Values<{
+                  [
+                    K in keyof T as string extends K
+                      ? never
+                      : number extends K
+                        ? never
+                        : K
+                  ]-?: NonJsonPath<T[K], Join<P, K & string>, Depth[D]>;
+                }>
+              | (string extends keyof T
+                  ? NonJsonPath<T[string & keyof T], `${P}[string]`, Depth[D]>
+                  : never)
+            : P;
+
+type NonJsonError<P> = [P] extends [never]
+  ? "kvJson(): the input type of the schema must be JSON"
+  : P extends ""
+    ? "kvJson(): the input type of the schema must be JSON"
+    : `kvJson(): the input type of the schema must be JSON, but the key ${P & string} isn't`;
+
+/**
+ * `S` when the input type of the schema `S` is JSON, and otherwise an error
+ * message that names the first key that isn't JSON. `unknown` and `any` are
+ * JSON at any depth here; see `JsonInput`. Its output type can be any type.
  */
 type JsonSchemaCheck<S extends JsonInputSchema> =
-  unknown extends Input<S>
+  Input<S> extends JsonInput<Input<S>>
     ? S
-    : Input<S> extends JsonValue<Input<S>>
-      ? S
-      : S & { "~error": "The input type of the schema must be JSON" };
+    : NonJsonError<NonJsonPath<Input<S>>>;
 
 export type KVJsonConfig<S extends JsonInputSchema = JsonInputSchema> = {
   /**
@@ -55,7 +117,8 @@ export type KVJsonConfig<S extends JsonInputSchema = JsonInputSchema> = {
   /**
    * Validates the document at plan and deploy, after the contributions are
    * merged. Import it from a shared module, so that a Worker can pass it to
-   * `readKVJson()`. Its input type must be JSON.
+   * `readKVJson()`. Its input type must be JSON, though `unknown` is allowed
+   * at any depth, as in a loose object.
    */
   schema: JsonSchemaCheck<S>;
   /** The first part of the document, before the contributions. */
@@ -73,8 +136,10 @@ export class KVJsonGroup<
   readonly schema: S;
   readonly value: KVJsonValueInstance;
 
-  constructor({ id, namespace, key, schema, value }: KVJsonConfig<S>) {
+  constructor({ id, namespace, key, schema: checked, value }: KVJsonConfig<S>) {
     assertId("kvJson()", id);
+    // The type check leaves `S`, or an error message that no value matches.
+    const schema = checked as S;
     if (typeof schema?.["~standard"]?.validate !== "function") {
       throw new Error(
         `kvJson() "${id}" requires a schema: a Standard Schema, such as a valibot or Zod schema, imported from a shared module.`,

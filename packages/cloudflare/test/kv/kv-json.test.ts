@@ -379,6 +379,82 @@ describe("kvJson()", () => {
     expectTypeOf(declare).toBeFunction();
   });
 
+  it("accepts unknown at any depth of the schema's input, and a recursive JSON schema", async () => {
+    type Tree =
+      string | number | boolean | null | Tree[] | { [key: string]: Tree };
+    const Tree: v.GenericSchema<Tree> = v.lazy(() =>
+      v.union([
+        v.string(),
+        v.number(),
+        v.boolean(),
+        v.null(),
+        v.array(Tree),
+        v.record(v.string(), Tree),
+      ]),
+    );
+    const declare = (namespace: InstanceType<typeof KVNamespace>) => {
+      kvJson({
+        id: "loose",
+        namespace,
+        key: "loose",
+        schema: v.looseObject({ provider: v.string() }),
+        value: { provider: "stripe" },
+      });
+      kvJson({
+        id: "rest",
+        namespace,
+        key: "rest",
+        schema: v.objectWithRest({ provider: v.string() }, v.unknown()),
+      });
+      kvJson({
+        id: "nested",
+        namespace,
+        key: "nested",
+        schema: v.object({ settings: v.record(v.string(), v.unknown()) }),
+      });
+      kvJson({ id: "tree", namespace, key: "tree", schema: Tree });
+      kvJson({
+        id: "trees",
+        namespace,
+        key: "trees",
+        schema: v.object({ root: Tree, label: v.optional(v.string()) }),
+      });
+    };
+    expectTypeOf(declare).toBeFunction();
+  });
+
+  it("refuses a schema with a non-JSON field at any depth, and names the key", async () => {
+    const fns = {} as StandardSchemaV1<
+      { a: { run: () => void } },
+      { a: { run: () => void } }
+    >;
+    const declare = (namespace: InstanceType<typeof KVNamespace>) => {
+      kvJson({
+        id: "date",
+        namespace,
+        key: "date",
+        // @ts-expect-error A Date isn't JSON, even next to unknown keys.
+        schema: v.looseObject({ meta: v.object({ at: v.date() }) }),
+      });
+      // @ts-expect-error A function isn't JSON.
+      kvJson({ id: "fn", namespace, key: "fn", schema: fns });
+    };
+    expectTypeOf(declare).toBeFunction();
+
+    type Check<S extends StandardSchemaV1<unknown, unknown>> = Parameters<
+      typeof kvJson<S>
+    >[0]["schema"];
+    expectTypeOf<
+      Check<typeof fns>
+    >().toEqualTypeOf<"kvJson(): the input type of the schema must be JSON, but the key a.run isn't">();
+    const dates = v.looseObject({
+      meta: v.object({ at: v.date(), note: v.optional(v.string()) }),
+    });
+    expectTypeOf<
+      Check<typeof dates>
+    >().toEqualTypeOf<"kvJson(): the input type of the schema must be JSON, but the key meta.at isn't">();
+  });
+
   it("types each contribution as a partial of the schema's input", () => {
     type Partial = JsonPartial<v.InferInput<typeof Flags>>;
     expectTypeOf<{ features: { uploads: true } }>().toExtend<Partial>();
