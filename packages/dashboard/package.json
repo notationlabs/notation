@@ -1,6 +1,6 @@
 {
   "name": "@notation/dashboard",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "type": "module",
   "main": "dist/server.js",
   "scripts": {

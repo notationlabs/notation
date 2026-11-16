@@ -1,5 +1,22 @@
 # @notation/resource
 
+## 0.23.0
+
+### Minor Changes
+
+- d1b66f5: `notation deploy --replace <id>@<hash>` replaces a resource whose params have not changed, as a changed param that forces replacement would. The hash is the resource's instance hash in the stage, so a command copied from another stage fails. `notation plan --replace <id>` plans the replace and prints the deploy command with the hash, and `plan --json` adds `instanceHash` to each node with a record. The R2 bucket and the KV namespace refuse a requested replace in `rejectChange`, and `--override-loss-protection <id>` turns that check off for a resource that `--replace` names. The request is saved with the execution, and a resume uses it.
+- eddbf36: `$worker` sends a Worker's secrets in the upload of its code. `cloudflare.workers.WorkerScript` has a `Secrets` param, which maps each binding name to where its value comes from. Deploy reads each value and sends it as a `secret_text` binding. Every upload of a Worker reads every secret that has a source, so each source must be available on any deploy that changes the Worker. A secret without a source is sent only when the Worker doesn't have it. A secret that the Worker stops binding is deleted after the upload. A Worker's name is always generated.
+
+  `cloudflare.workers.WorkerSecret` and `cloudflare.workers.WorkerScriptPlaceholder` are removed. A deployment that has these resources in its state is not migrated.
+
+  Deploy fails, before it uploads, when a Worker is in a gradual rollout, as an upload ends the rollout.
+
+  `PhysicalNameRule` no longer has `suppliable`.
+
+### Patch Changes
+
+- @notation/utils@0.23.0
+
 ## 0.22.0
 
 ### Minor Changes
