@@ -2,6 +2,8 @@ import fs from "node:fs";
 import { readEntryExports } from "@notation/build";
 import { filePaths, fromProjectRoot, toProjectRoot } from "@notation/core";
 import {
+  captureCallSiteLazily,
+  evaluationEnded,
   getDeclaredIn,
   isOutputRef,
   onEvaluationEnd,
@@ -250,7 +252,10 @@ type WorkerSource = {
 
 type Entry = WorkerSource & {
   id: string;
+  /** The Worker's own bindings and the ones from `addBindings()`. */
   bindings: () => Bindings;
+  /** The bindings from `addBindings()`, in the order of the calls. */
+  added: AddedBindings[];
   /** `chain` lists the Workers being built whose bindings led to this one. */
   build: (chain?: Entry[]) => WorkerGroup;
   /**
@@ -259,6 +264,12 @@ type Entry = WorkerSource & {
    * the Worker that binds it.
    */
   whenBuilt: (callback: (group: WorkerGroup) => void) => void;
+};
+
+type AddedBindings = {
+  bindings: Bindings;
+  /** The location of the code that called `addBindings()`. */
+  caller: () => string;
 };
 
 const workerRegistration = Symbol.for("@notation/cloudflare/WorkerDeclaration");
@@ -412,7 +423,9 @@ function registerWorker(
     ...source,
     id: config.id,
     // Called once, after all infra modules have loaded.
-    bindings: () => (bindings ??= config.bindings?.() ?? {}),
+    bindings: () =>
+      (bindings ??= withAdded(entry, config.bindings?.() ?? {})),
+    added: [],
     // A Worker that is already in `chain` means the bindings form a cycle.
     build: (chain = []) => {
       if (group) return group;
@@ -501,6 +514,62 @@ function registerWorker(
     workers.push(entry);
     onEvaluationEnd(() => entry.build());
   }
+}
+
+/**
+ * Adds bindings to a Worker from other infra code, such as a library that
+ * adds a feature to a Worker that it didn't declare. The values are the
+ * ones that `bindings` accepts, and the Worker resolves them together with
+ * its own bindings. `WorkerEnv` doesn't include them in its type.
+ *
+ * Call it while the infra modules load. It fails from an `onEvaluationEnd`
+ * callback, as the Workers read their bindings once the modules have loaded.
+ */
+export function addBindings(
+  worker: Worker<any, unknown>,
+  bindings: Bindings,
+): void {
+  const caller = captureCallSiteLazily(addBindings);
+  const at = () => caller() ?? "an unknown location";
+  const entry = registeredWorker(worker);
+  if (!entry) {
+    throw new Error(
+      `addBindings() at ${at()} takes a Worker from $worker as its first argument.`,
+    );
+  }
+  if (evaluationEnded()) {
+    throw new Error(
+      `addBindings() was called for ${entry.describe()} from an onEvaluationEnd callback, at ${at()}. Bindings are read once the infra modules have loaded, so addBindings() must be called while they load, such as in the function that declares what it binds.`,
+    );
+  }
+  for (const name of Object.keys(bindings)) {
+    const earlier = entry.added.find((added) =>
+      Object.hasOwn(added.bindings, name),
+    );
+    if (earlier) {
+      throw new Error(
+        `addBindings() at ${at()} binds ${name} on ${entry.describe()}, which addBindings() already bound at ${earlier.caller()}. Give one of the bindings another name.`,
+      );
+    }
+  }
+  entry.added.push({ bindings: { ...bindings }, caller: at });
+}
+
+// A name in a Worker's own bindings is checked here, not in addBindings(),
+// as the Worker's `bindings` is first called at the end of evaluation.
+function withAdded(entry: Entry, own: Bindings): Bindings {
+  const merged = { ...own };
+  for (const added of entry.added) {
+    for (const [name, value] of Object.entries(added.bindings)) {
+      if (Object.hasOwn(own, name)) {
+        throw new Error(
+          `addBindings() at ${added.caller()} binds ${name} on ${entry.describe()}, which already binds ${name} in its bindings. Give one of the bindings another name.`,
+        );
+      }
+      merged[name] = value;
+    }
+  }
+  return merged;
 }
 
 // Workers are built from onEvaluationEnd, when a collection is always

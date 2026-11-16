@@ -47,3 +47,10 @@ export class WorkerGroup {
 export function isWorkerGroup(_value: unknown): false {
   return false;
 }
+
+export function addBindings(
+  _worker: Worker<any, unknown>,
+  _bindings: Bindings,
+): never {
+  throw infraOnly("addBindings()");
+}

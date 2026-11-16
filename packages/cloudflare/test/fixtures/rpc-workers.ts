@@ -1,6 +1,6 @@
 // Only type-checked. The tests import its types, so vitest never loads it.
 import type * as cf from "@cloudflare/workers-types";
-import { $worker, type WorkerEnv } from "src/workers";
+import { $worker, addBindings, type WorkerEnv } from "src/workers";
 import type { secretsStore } from "src/resources";
 
 // The classes of `cloudflare:workers`, which the package's types declare
@@ -44,3 +44,25 @@ export const router = $worker({
   compatibilityDate: "2026-10-12",
   bindings: () => ({ GITHUB: github, PLAIN: plain, ROOM: room }),
 });
+
+// Bound in one direction through `bindings`, which keeps that direction
+// typed, and in the other through addBindings().
+export class Reports extends WorkerEntrypoint<WorkerEnv<typeof reports>> {
+  total() {
+    return 1;
+  }
+}
+
+export const reports = $worker({
+  id: "reports",
+  compatibilityDate: "2026-10-12",
+  entrypoint: Reports,
+});
+
+export const api = $worker({
+  id: "api",
+  compatibilityDate: "2026-10-12",
+  bindings: () => ({ REPORTS: reports }),
+});
+
+addBindings(reports, { API: api });

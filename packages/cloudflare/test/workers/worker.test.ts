@@ -18,6 +18,7 @@ import {
   type RecordedOutputs,
   type ResourceGraph,
   generatedPhysicalName,
+  onEvaluationEnd,
   UNKNOWN_AFTER_APPLY,
 } from "@notation/resource";
 import { bundle } from "@notation/build/resources";
@@ -34,6 +35,7 @@ import { WorkerScript } from "src/resources/workers/worker-script";
 import {
   $durableObject,
   $worker,
+  addBindings,
   isWorkerGroup,
   json,
   worker,
@@ -1129,6 +1131,189 @@ describe("$worker", () => {
   });
 });
 
+describe("addBindings", () => {
+  it("uploads the bindings that it adds with the Worker's own bindings", async () => {
+    let cache!: InstanceType<typeof kv.KVNamespace>;
+    const graph = await collect(() => {
+      cache = new kv.KVNamespace("cache", { config: { Title: "cache" } });
+      const github = inWorker(
+        $worker({ id: "github", compatibilityDate }),
+        "runtime/github.ts",
+      );
+      const router = inWorker(
+        $worker({
+          id: "router",
+          compatibilityDate,
+          bindings: () => ({ GREETING: "hello" }),
+        }),
+        "runtime/router.ts",
+      );
+      addBindings(router, { CHANNEL_GITHUB: github });
+      addBindings(router, { CACHE: cache, MODE: "test" });
+    });
+    const router = group(graph, "router");
+    const github = group(graph, "github");
+
+    expect(router.script.getDependencies()).toEqual(
+      expect.arrayContaining([github.script, cache]),
+    );
+    cache.setOutput({ NamespaceId: "ns1" } as any);
+    expect((await deployParams(router, [github])).Bindings).toEqual([
+      { type: "plain_text", name: "GREETING", text: "hello" },
+      { type: "kv_namespace", name: "CACHE", namespace_id: "ns1" },
+      { type: "plain_text", name: "MODE", text: "test" },
+      {
+        type: "service",
+        name: "CHANNEL_GITHUB",
+        service: nameOf("github"),
+      },
+    ]);
+  });
+
+  it("binds a namespace from addBindings() on the Worker that hosts it", async () => {
+    const graph = await collect(() => {
+      const counters = inModule(
+        $durableObject({ id: "counters", class: Counter }),
+        "runtime/counter.ts",
+      );
+      inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters }),
+        }),
+        "runtime/api.ts",
+        ["Counter"],
+      );
+      const reports = inWorker(
+        $worker({ id: "reports", compatibilityDate }),
+        "runtime/reports.ts",
+      );
+      addBindings(reports, { COUNTERS: counters });
+    });
+    const api = group(graph, "api");
+    const reports = group(graph, "reports");
+
+    expect(await deployParams(reports, [api])).toMatchObject({
+      Bindings: [
+        {
+          type: "durable_object_namespace",
+          name: "COUNTERS",
+          class_name: "Counter",
+          script_name: nameOf("api"),
+        },
+      ],
+    });
+  });
+
+  it("contributes the service bindings of two Workers that bind each other through addBindings()", async () => {
+    const graph = await collect(() => {
+      const api = inWorker(
+        $worker({ id: "api", compatibilityDate }),
+        "runtime/api.ts",
+      );
+      const reports = inWorker(
+        $worker({ id: "reports", compatibilityDate }),
+        "runtime/reports.ts",
+      );
+      addBindings(api, { REPORTS: reports });
+      addBindings(reports, { API: api });
+    });
+    const api = group(graph, "api");
+    const reports = group(graph, "reports");
+
+    expect(api.script.getFixedDependencies()).not.toContain(reports.script);
+    expect(reports.script.getFixedDependencies()).not.toContain(api.script);
+    expect(await deployParams(api, [reports])).toMatchObject({
+      Bindings: [
+        { type: "service", name: "REPORTS", service: nameOf("reports") },
+      ],
+    });
+    expect(await deployParams(reports, [api])).toMatchObject({
+      Bindings: [{ type: "service", name: "API", service: nameOf("api") }],
+    });
+  });
+
+  it("fails at the second of two calls that bind the same name", async () => {
+    let second: unknown;
+    await collect(() => {
+      const router = inWorker(
+        $worker({ id: "router", compatibilityDate }),
+        "runtime/router.ts",
+      );
+      addBindings(router, { CHANNEL: "a" });
+      try {
+        addBindings(router, { CHANNEL: "b" });
+      } catch (error) {
+        second = error;
+      }
+    });
+
+    expect((second as Error).message).toMatch(
+      /^addBindings\(\) at \S*worker\.test\.ts:\d+ binds CHANNEL on \$worker\(\{ id: "router" \}\) in runtime\/router\.ts, which addBindings\(\) already bound at \S*worker\.test\.ts:\d+\. Give one of the bindings another name\.$/,
+    );
+  });
+
+  it("fails for a name that the Worker's bindings also bind, and names the caller", async () => {
+    await expect(
+      collect(() => {
+        const router = inWorker(
+          $worker({
+            id: "router",
+            compatibilityDate,
+            bindings: () => ({ CHANNEL_GITHUB: "own" }),
+          }),
+          "runtime/router.ts",
+        );
+        addBindings(router, { CHANNEL_GITHUB: "added" });
+      }),
+    ).rejects.toThrow(
+      /^addBindings\(\) at \S*worker\.test\.ts:\d+ binds CHANNEL_GITHUB on \$worker\(\{ id: "router" \}\) in runtime\/router\.ts, which already binds CHANNEL_GITHUB in its bindings\. Give one of the bindings another name\.$/,
+    );
+  });
+
+  it.each([
+    ["before", true],
+    ["after", false],
+  ])(
+    "fails in an onEvaluationEnd callback that runs %s the Worker is built",
+    async (_, callbackFirst) => {
+      const late = () =>
+        onEvaluationEnd(() => addBindings(router, { LATE: "late" }));
+      let router!: ReturnType<typeof $worker>;
+      await expect(
+        collect(() => {
+          if (callbackFirst) late();
+          router = inWorker(
+            $worker({ id: "router", compatibilityDate }),
+            "runtime/router.ts",
+          );
+          if (!callbackFirst) late();
+        }),
+      ).rejects.toThrow(
+        /^addBindings\(\) was called for \$worker\(\{ id: "router" \}\) in runtime\/router\.ts from an onEvaluationEnd callback, at \S*worker\.test\.ts:\d+\. Bindings are read once the infra modules have loaded/,
+      );
+    },
+  );
+
+  it("fails for a first argument that is not a Worker from $worker", async () => {
+    await expect(
+      collect(() => {
+        addBindings({ id: "router" } as any, { A: "a" });
+      }),
+    ).rejects.toThrow(
+      /^addBindings\(\) at \S*worker\.test\.ts:\d+ takes a Worker from \$worker as its first argument\.$/,
+    );
+  });
+
+  it("throws in a Worker", () => {
+    const router = runtime.$worker({ id: "router", compatibilityDate });
+    expect(() => runtime.addBindings(router, { A: "a" })).toThrow(
+      "addBindings() declares infrastructure, so it can't run in a Worker.",
+    );
+  });
+});
+
 describe("plan", () => {
   const record = (resource: BaseResource, params: Record<string, unknown>) => ({
     version: 1,
@@ -1401,6 +1586,13 @@ describe("WorkerEnv", () => {
     expectTypeOf<
       (typeof rpc.plain)["~worker"]["entrypoint"]
     >().toEqualTypeOf<undefined>();
+  });
+
+  it("types a Worker that is bound back through addBindings(), and leaves the added binding out of env", () => {
+    expectTypeOf<WorkerEnv<typeof rpc.api>["REPORTS"]>().toEqualTypeOf<
+      cf.Service<typeof rpc.Reports>
+    >();
+    expectTypeOf<keyof WorkerEnv<typeof rpc.reports>>().toEqualTypeOf<never>();
   });
 
   it("rejects a binding that is another object with an id", () => {

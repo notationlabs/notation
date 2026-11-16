@@ -12,6 +12,7 @@ export * from "./credential";
 export * from "./credential-source";
 export {
   collectResourceGraph,
+  evaluationEnded,
   getActiveResourceCollection,
   onEvaluationEnd,
   perCollection,
@@ -31,6 +32,7 @@ export {
   type PhysicalNameRule,
 } from "./physical-name";
 export {
+  captureCallSiteLazily,
   ContributionConflictError,
   mergeContributions,
   type CollectContext,

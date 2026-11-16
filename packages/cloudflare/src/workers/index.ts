@@ -6,6 +6,7 @@ export {
 } from "./durable-object";
 export {
   $worker,
+  addBindings,
   isWorkerGroup,
   worker,
   WorkerGroup,
