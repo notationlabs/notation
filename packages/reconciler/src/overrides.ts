@@ -20,7 +20,10 @@ export type ReplaceTarget = {
 export type CredentialTarget = {
   id: string;
   name: string;
-  /** The instance hash of the resource `id`. Optional for plan, and required for deploy. */
+  /**
+   * The instance hash of the resource `id`. Optional for plan, and required
+   * for deploy.
+   */
   instanceHash?: string;
   /** The environment variable that holds the value. */
   variable: string;
@@ -87,7 +90,7 @@ export function parseCredentialTarget(value: string): CredentialTarget {
   const dot = target.lastIndexOf(".");
   const id = target.slice(0, dot);
   const name = target.slice(dot + 1);
-  if (equals < 0 || !variable || dot <= 0 || !name) {
+  if (equals < 0 || !variable || dot <= 0 || !name || hash === "") {
     throw new Error(
       `--credential ${value} is malformed. Give it as <resource id>.<credential>@<instance hash>=<variable>.`,
     );
@@ -381,7 +384,7 @@ function assertCredentialOverrides(
     const actual = instanceHash(deploymentId, resource, record);
     if (actual !== given) {
       throw new Error(
-        `${id} has the instance hash ${actual} in this stage, not ${given}.`,
+        `${flag}: ${id} has the instance hash ${actual} in this stage, not ${given}.`,
       );
     }
     if (point === "deploy" && !process.env[variable]) {

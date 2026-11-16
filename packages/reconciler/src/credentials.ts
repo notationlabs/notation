@@ -413,6 +413,17 @@ export type CredentialNeed =
   | "not-held";
 
 /**
+ * The reason that a consumer's record gives by itself: the consumer has no
+ * record, or a "creating" record.
+ */
+export function getConsumerNeed(
+  record: StateNode | undefined,
+): "consumer-added" | "consumer-create-unfinished" | undefined {
+  if (!record) return "consumer-added";
+  return isCreatingRecord(record) ? "consumer-create-unfinished" : undefined;
+}
+
+/**
  * The credentials of `producer` that need a new value, each with the first
  * resource that needs it and the reason. A resource takes the credential,
  * and one of these holds:
@@ -458,18 +469,15 @@ export async function getCredentialsToMint(
       if (!takesCredential(resource, producer, name)) continue;
       const reason: CredentialNeed | undefined = !current
         ? "no-version"
-        : !record
-          ? "consumer-added"
-          : isCreatingRecord(record)
-            ? "consumer-create-unfinished"
-            : getChangedCredentials(
-                  mapCredentialMarkers(await paramsOf(resource), (found) =>
-                    isThis(found) ? current : found,
-                  ),
-                  record.params,
-                ).some(isThis)
-              ? "consumer-behind"
-              : undefined;
+        : (getConsumerNeed(record) ??
+          (getChangedCredentials(
+            mapCredentialMarkers(await paramsOf(resource), (found) =>
+              isThis(found) ? current : found,
+            ),
+            record!.params,
+          ).some(isThis)
+            ? "consumer-behind"
+            : undefined));
       if (reason) {
         needed.push({ name, consumer: resource, reason });
         break;

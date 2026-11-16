@@ -111,21 +111,15 @@ export function targetFlags(deployment: Deployment, config?: string): string {
 }
 
 function overrideFlags(result: Plan, overrides: Overrides): string {
+  const withHash = <T extends { id: string }>(target: T) => ({
+    ...target,
+    instanceHash: findRecordNode(result, target.id)?.instanceHash,
+  });
   return formatOverrides({
     ...overrides,
-    replace: overrides.replace.map(({ id }) => ({
-      id,
-      instanceHash: findRecordNode(result, id)?.instanceHash,
-    })),
+    replace: overrides.replace.map(withHash),
     ...(overrides.credential
-      ? {
-          credential: overrides.credential.map((target) => ({
-            ...target,
-            instanceHash:
-              findRecordNode(result, target.id)?.instanceHash ??
-              target.instanceHash,
-          })),
-        }
+      ? { credential: overrides.credential.map(withHash) }
       : {}),
   });
 }

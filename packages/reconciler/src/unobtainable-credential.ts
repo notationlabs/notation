@@ -1,7 +1,11 @@
 import type { BaseResource, RecordedOutputs } from "@notation/resource";
 import type { StateNode } from "@notation/state";
 import { isCreatingRecord } from "@notation/state";
-import { getCredentialsToMint, type CredentialNeed } from "./credentials";
+import {
+  getConsumerNeed,
+  getCredentialsToMint,
+  type CredentialNeed,
+} from "./credentials";
 import {
   formatCredential,
   formatOverrides,
@@ -160,7 +164,9 @@ function credentialLines(
     credential.rotateManually ??
     `Issue a new value of ${quoted(name)} at the provider of ${type}.`;
   return [
-    `${need} Notation does not store the value, and ${type} has no operation that issues another.`,
+    credential.reason === "no-version"
+      ? `${need} ${type} has no operation that issues one.`
+      : `${need} Notation does not store the value, and ${type} has no operation that issues another.`,
     "",
     `  ${issue} Then set the environment variable ${quoted(variable)} to the value, and pass it:`,
     `    ${prefix}--credential ${shellQuote(passed)}`,
@@ -266,11 +272,7 @@ export function rotatesForCreate(opts: {
   opts.unobtainable.push(
     unobtainableCredential({
       ...opts,
-      reason: !consumerRecord
-        ? "consumer-added"
-        : isCreatingRecord(consumerRecord)
-          ? "consumer-create-unfinished"
-          : "consumer-replaced",
+      reason: getConsumerNeed(consumerRecord) ?? "consumer-replaced",
     }),
   );
   return false;

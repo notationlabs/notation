@@ -214,6 +214,9 @@ describe("parseCredentialTarget", () => {
     expect(() => parseCredentialTarget("app@7b1e52c0=KEY")).toThrow(
       "is malformed",
     );
+    expect(() => parseCredentialTarget("app.privateKey@=KEY")).toThrow(
+      "--credential app.privateKey@=KEY is malformed.",
+    );
   });
 
   it("throws for an instance hash that is not 8 hex characters", () => {

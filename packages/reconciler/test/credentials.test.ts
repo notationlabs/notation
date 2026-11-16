@@ -9,6 +9,7 @@ import { instanceHash } from "../src/overrides";
 import {
   UnobtainableCredentialError,
   credentialVariable,
+  unobtainableCredentialMessage,
 } from "../src/unobtainable-credential";
 import { createRuntime } from "./credentials-runtime";
 
@@ -297,6 +298,25 @@ describe("a resource that takes a credential in a later deploy", () => {
     );
     expect(provider.calls).toEqual([]);
     runtime.close();
+  });
+
+  it("does not say that the value is stored nowhere when state has no record of one", () => {
+    const [first] = unobtainableCredentialMessage(
+      [
+        {
+          consumer: "secret:b",
+          producer: "token",
+          producerType: "test/credentials/Token",
+          name: "Value",
+          reason: "no-version",
+        },
+      ],
+      "notation deploy",
+    ).split("\n");
+
+    expect(first).toBe(
+      "`secret:b` takes `token.Value`, and state has no record of a value for it. `test/credentials/Token` has no operation that issues one.",
+    );
   });
 
   it("prints the class's rotateManually sentence above the --credential command", async () => {
@@ -1152,7 +1172,7 @@ describe("--credential", () => {
 
     const hash = await tokenHash(runtime, declare(types, { secrets: [] })[0]!);
     expect((error as Error).message).toBe(
-      `token has the instance hash ${hash} in this stage, not 0badbeef.`,
+      `--credential token.Value: token has the instance hash ${hash} in this stage, not 0badbeef.`,
     );
     expect(provider.calls).toEqual([]);
     runtime.close();

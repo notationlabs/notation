@@ -117,6 +117,8 @@ The first sentence gives the reason that the resource needs the value now. The m
 | `` `app-key-secret` takes `app.privateKey`, and state has no record of a value for it.``            | The create of the app returned no value for the credential, or one that its validator rejects.                   |
 | `` `app-key-secret` takes `app.privateKey`, and the deploy run that received its value has ended.`` | The deploy stopped after it created the app, and was resumed.                                                    |
 
+With the fifth reason, the second sentence is `` `github/App` has no operation that issues one.``
+
 - **`--credential`** gives deploy a value that you issue at the provider. The app keeps its ID. The sentence above the command comes from the resource's class. A class that gives none prints ``Issue a new value of `privateKey` at the provider of `github/App`.``
 - **`--replace`** replaces the resource, as in [Replacing a resource](#replacing-a-resource). The new app has a new ID and a new key, and whatever exists only in the old app is lost.
 
@@ -165,8 +167,10 @@ The flag has four parts:
 **The hash ties the command to one resource in one stage.** The same resource has another hash in every other stage. So a command copied from the plan of another stage fails:
 
 ```text
-✗ app has the instance hash 9e04b7d1 in this stage, not 5d2e8b17.
+✗ --credential app.privateKey: app has the instance hash 9e04b7d1 in this stage, not 5d2e8b17.
 ```
+
+The hash names the resource, and not a value of the credential. It stays the same after you pass a new value, so a saved command passes the check again later. Make sure that the variable holds the current value before you run a saved command.
 
 Plan prints the hash, so you do not type it. Deploy fails when `--credential` has no hash. To get the command with the hash, run [`notation plan --credential <id>.<credential>=<variable>`](./plan.md#passing-a-credential).
 
@@ -183,7 +187,7 @@ Deploy fails, before it changes anything, when:
 | `--replace` names the same resource          | `--credential app.privateKey cannot be given with --replace app: the replacement is created with a new value.`                                                                        |
 | The resource is not in state                 | `--credential app.privateKey: app is not in state, so it has no value to set. Deploy creates it, and the create returns the value.`                                                   |
 | The hash is not 8 hex characters             | `The instance hash 5d2e8b1 of app is malformed. An instance hash is 8 hex characters.`                                                                                                |
-| The hash does not match                      | `app has the instance hash 9e04b7d1 in this stage, not 5d2e8b17.`                                                                                                                     |
+| The hash does not match                      | `--credential app.privateKey: app has the instance hash 9e04b7d1 in this stage, not 5d2e8b17.`                                                                                        |
 | The variable is not set                      | `--credential app.privateKey reads APP_PRIVATE_KEY, which is not set.`                                                                                                                |
 | The flag names the same credential twice     | `--credential app.privateKey is given more than once.`                                                                                                                                |
 
