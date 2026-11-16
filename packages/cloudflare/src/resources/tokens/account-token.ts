@@ -197,9 +197,9 @@ export const AccountToken = accountTokenSchema.defineOperations({
 
   // Runs when a create may have made a token and its outcome is unknown.
   // A token made then can't be used, as its value is lost, so every token
-  // with the name is deleted and the create runs again. Only a change to
-  // Name or AccountId replaces a token, so a replacement's name is not the
-  // name of a tracked token in its account.
+  // with the name is deleted and the create runs again. A replacement has a
+  // different name, because `physicalName` generates a new one on replace,
+  // so the name is not the name of a tracked token in its account.
   find: async (params) => {
     const ids = await findTokensByName(params.AccountId, params.Name);
     await Promise.all(ids.map((id) => deleteToken(params.AccountId, id)));
