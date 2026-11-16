@@ -178,6 +178,13 @@ export function $worker(config) { return config; }`;
   ])("fails for %s", (_, source, message) => {
     expect(() => runWorker(source)).toThrow(message);
   });
+
+  it("leaves out the hint when the default export isn't a class declaration", () => {
+    const source = `const handler = { fetch() {} };\nexport default handler;\nexport class Admin {}\n${declare("Admin")}`;
+    expect(() => runWorker(source)).toThrow(
+      /entrypoint must name the class that github\.ts declares and exports as its default\.$/,
+    );
+  });
 });
 
 describe("ModuleAnalyses", () => {

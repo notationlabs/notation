@@ -151,10 +151,26 @@ function checkEntryOption(
       `${option} is ${name}, which ${file} imports from ${imported.source}. Declare it in ${file} and export it as ${asEntry}.`,
     );
   }
+  const hint =
+    exported && declaresClass(table.module.body, exported)
+      ? `. Pass ${option}: ${exported}`
+      : "";
   return fail(
     property.value,
-    `${option} must name the class that ${file} declares and exports as ${asEntry}${exported ? `. Pass ${option}: ${exported}` : ""}.`,
+    `${option} must name the class that ${file} declares and exports as ${asEntry}${hint}.`,
   );
+}
+
+// Whether a top-level statement declares `name` as a class.
+function declaresClass(body: Node[], name: string): boolean {
+  return body.some((statement) => {
+    const node =
+      statement.type === "ExportNamedDeclaration" ||
+      statement.type === "ExportDefaultDeclaration"
+        ? statement.declaration
+        : statement;
+    return node?.type === "ClassDeclaration" && node.id?.name === name;
+  });
 }
 
 function markOf(
