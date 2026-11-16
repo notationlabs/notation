@@ -32,7 +32,11 @@ import { isJsonBinding } from "./json";
 // which workerd only provides under this flag.
 const NODEJS_COMPAT = "nodejs_compat";
 
-export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
+export type WorkerDeclarationConfig<
+  Id extends string,
+  B extends Bindings,
+  E = undefined,
+> = {
   /**
    * Keys the Worker in state. Deploy names the Worker in Cloudflare
    * `<app>--<stage>--<id>-<instance>` when it creates it, with 8 random hex
@@ -53,6 +57,14 @@ export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
   compatibilityFlags?: string[];
   /** Serves the Worker on its workers.dev URL. Defaults to `true`, as in wrangler. */
   url?: boolean;
+  /**
+   * The class that the module exports as its default, such as
+   * `class Api extends WorkerEntrypoint`. A Worker that binds this Worker
+   * gets `Service<Api>` in `env`, so its RPC calls are typed. The class
+   * must be declared in the module, before `$worker`. Deploy doesn't read
+   * the value.
+   */
+  entrypoint?: E;
 };
 
 export type WorkerConfig<
@@ -228,7 +240,7 @@ type WorkerExports = {
 
 /** How a Worker was declared, and where its code comes from. */
 type WorkerSource = {
-  declaration: Worker<any>;
+  declaration: Worker<any, unknown>;
   /** Names the Worker in errors, with its module if known. */
   describe: () => string;
   /** Undefined when the module is not known. */
@@ -267,12 +279,14 @@ const declaredWorkers = perCollection(
  * to a Worker whose module imports this one.
  * @declaration shared: id, bindings; keys: bindings; entry: default; platform: workerd
  */
-export function $worker<const Id extends string, B extends Bindings = {}>(
-  config: WorkerDeclarationConfig<Id, B>,
-): Worker<B> {
+export function $worker<
+  const Id extends string,
+  B extends Bindings = {},
+  E = undefined,
+>(config: WorkerDeclarationConfig<Id, B, E>): Worker<B, E> {
   assertWorkerId("$worker", config.id);
   assertCompatibilityDate(`$worker({ id: "${config.id}" })`, config);
-  const declaration = { id: config.id } as unknown as Worker<B>;
+  const declaration = { id: config.id } as unknown as Worker<B, E>;
   registerWorker(config, {
     declaration,
     describe: () => {
@@ -387,7 +401,7 @@ const noModuleError = (id: string) =>
  * it.
  */
 function registerWorker(
-  config: WorkerDeclarationConfig<string, Bindings>,
+  config: WorkerDeclarationConfig<string, Bindings, unknown>,
   source: WorkerSource,
 ) {
   let bindings: Bindings | undefined;

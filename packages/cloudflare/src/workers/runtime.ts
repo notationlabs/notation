@@ -15,10 +15,12 @@ export { json } from "./json";
 export { KVJsonError, readKVJson } from "./kv-json";
 
 /** Declares nothing at runtime. The Worker reads its bindings from `env`. */
-export function $worker<const Id extends string, B extends Bindings = {}>(
-  config: WorkerDeclarationConfig<Id, B>,
-): Worker<B> {
-  return { id: config.id } as unknown as Worker<B>;
+export function $worker<
+  const Id extends string,
+  B extends Bindings = {},
+  E = undefined,
+>(config: WorkerDeclarationConfig<Id, B, E>): Worker<B, E> {
+  return { id: config.id } as unknown as Worker<B, E>;
 }
 
 /** Declares nothing at runtime. */

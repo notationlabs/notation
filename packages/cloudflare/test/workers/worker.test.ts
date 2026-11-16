@@ -43,6 +43,8 @@ import {
 import * as runtime from "src/workers/runtime";
 import { kv, r2, secretsStore, tokens } from "src/resources";
 import { TestSource } from "../fixtures/test-source";
+import type * as rpc from "../fixtures/rpc-workers";
+import type Github from "../fixtures/rpc-workers";
 
 const projectDir = "/some/project";
 const compatibilityDate = "2026-10-12";
@@ -1373,6 +1375,32 @@ describe("WorkerEnv", () => {
     expectTypeOf<WorkerEnv<typeof worker>["CONFIG"]>().toEqualTypeOf<Config>();
     // @ts-expect-error a function is not a JSON value
     runtime.json({ retries: 3, fetch: () => 1 });
+  });
+
+  it("types a Worker with a WorkerEntrypoint as its entrypoint as a Service of the class", () => {
+    type Env = WorkerEnv<typeof rpc.router>;
+
+    expectTypeOf<Env["GITHUB"]>().toEqualTypeOf<cf.Service<typeof Github>>();
+    // Never called: the calls are only type-checked.
+    (async (env: Env) => {
+      const received = await env.GITHUB.receive({ headers: {}, body: "" });
+      expectTypeOf(received.key).toEqualTypeOf<string>();
+      expectTypeOf(received.length).toEqualTypeOf<number>();
+      // @ts-expect-error an argument of the wrong type
+      await env.GITHUB.receive({ body: 1 });
+      // @ts-expect-error a method that the class doesn't have
+      await env.GITHUB.send();
+    });
+  });
+
+  it("types a Worker with no entrypoint, or one that isn't a WorkerEntrypoint, as a Fetcher", () => {
+    type Env = WorkerEnv<typeof rpc.router>;
+
+    expectTypeOf<Env["PLAIN"]>().toEqualTypeOf<cf.Fetcher>();
+    expectTypeOf<Env["ROOM"]>().toEqualTypeOf<cf.Fetcher>();
+    expectTypeOf<
+      (typeof rpc.plain)["~worker"]["entrypoint"]
+    >().toEqualTypeOf<undefined>();
   });
 
   it("rejects a binding that is another object with an id", () => {

@@ -59,15 +59,41 @@ export type BindingValue =
 
 export type Bindings = Record<string, BindingValue>;
 
-/** A Cloudflare Worker declared with `$worker`. */
-export interface Worker<B extends Bindings = Bindings> {
+/**
+ * A Cloudflare Worker declared with `$worker`. `E` is the type of the class
+ * that the Worker's module exports as its default, from the `entrypoint`
+ * option.
+ *
+ * `E` has no constraint. The class's `env` type depends on the Worker's
+ * type, and with a constraint TypeScript resolves the class's base type
+ * while it is still resolving it, which fails.
+ */
+export interface Worker<B extends Bindings = Bindings, E = unknown> {
   readonly id: string;
   /**
    * Exists only in the type. It is required, so that an arbitrary object
    * with an `id` is not accepted as a Worker.
    */
-  readonly "~worker": { bindings: B };
+  readonly "~worker": { bindings: B; entrypoint: E };
 }
+
+/**
+ * Names the type of an entrypoint class where the class's value can't be
+ * loaded. It exists only in the type.
+ */
+export interface EntrypointType<E> {
+  readonly "~entrypoint": E;
+}
+
+// A Worker whose entrypoint is a `WorkerEntrypoint` class gets RPC types.
+// Any other Worker, or one with no entrypoint, gets a plain `Fetcher`.
+type ServiceOf<W> = W extends {
+  readonly "~worker": { entrypoint: infer E };
+}
+  ? E extends new (...args: any[]) => cf.Rpc.WorkerEntrypointBranded
+    ? cf.Service<E>
+    : cf.Fetcher
+  : cf.Fetcher;
 
 type NamespaceOf<C> = C extends abstract new (...args: any[]) => infer I
   ? I extends cf.Rpc.DurableObjectBranded
@@ -81,7 +107,7 @@ type BindingType<V> =
   V extends DurableObjectDeclaration<any>
     ? NamespaceOf<ClassOf<V>>
     : V extends { readonly "~worker": unknown }
-      ? cf.Fetcher
+      ? ServiceOf<V>
       : V extends JsonBinding<infer T>
         ? T
         : V extends R2BucketInstance
