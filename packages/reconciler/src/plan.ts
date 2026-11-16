@@ -6,15 +6,11 @@ import {
   type RejectChange,
   type RejectChangeContext,
   type ReplaceField,
-  type ResourceType,
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
 import type { ReplaceOrder } from "./events";
-import type { RequestedReplace } from "./replace-request";
-import {
-  resolveResourceClass,
-  type ResourceRegistry,
-} from "./resource-registry";
+import type { ReplaceOverride } from "./overrides";
+import { resolveRecordClass, type ResourceRegistry } from "./resource-registry";
 
 export {
   UNKNOWN_AFTER_APPLY,
@@ -88,18 +84,12 @@ export type PlanNode = {
    */
   brokenDependents?: string[];
   /**
-   * Set when deploy rotates credentials of the resource, because a resource
-   * that takes one needs its value: the names of the credentials. Deploy
-   * updates every resource that takes one of them.
+   * Set when credentials of the resource get a new value: the names of the
+   * credentials. Deploy rotates a credential that a resource needs, and
+   * sets one that `--credential` names. It updates every resource that
+   * takes one of them.
    */
   rotates?: string[];
-  /**
-   * Set when deploy fails at this resource: it creates the resource again,
-   * the resource takes these credentials, deploy holds no value for them,
-   * and they have no `rotate` operation. The deploy after it replaces the
-   * resources that have the credentials.
-   */
-  unheldCredentials?: { resource: string; name: string }[];
   /**
    * Set when the resource is in a dependency cycle: the IDs of the other
    * resources in the cycle.
@@ -117,7 +107,8 @@ export type PlanNode = {
    */
   mayTakeOver?: true;
   /**
-   * The hash for `--replace <id>@<instance hash>`. Set for a resource in
+   * The hash for `--replace <id>@<instance hash>` and
+   * `--credential <id>.<credential>@<instance hash>`. Set for a resource in
    * code that has a record.
    */
   instanceHash?: string;
@@ -142,6 +133,12 @@ export type ResourceAction =
       decision: "drift-update";
       patch: Record<string, unknown>;
       diff: PlanDiff;
+      /**
+       * The read of the remote, which the update compares credentials with:
+       * it receives the value of each credential whose marker the read
+       * does not hold.
+       */
+      remote: Record<string, unknown>;
     }
   | {
       decision: "replace";
@@ -157,16 +154,16 @@ export type ResourceAction =
     };
 
 /**
- * Decides what deploy does with the resource. With `requested`, a resource
+ * Decides what deploy does with the resource. With `replaceOverride`, a resource
  * that has a record is replaced, with the replace field `{ requested: true }`.
  */
 export function decideAction(opts: {
   resource: BaseResource;
   stateNode?: StateNode;
   params: Record<string, unknown>;
-  requested?: RequestedReplace;
+  replaceOverride?: ReplaceOverride;
 }): ResourceAction {
-  const { resource, stateNode, params, requested } = opts;
+  const { resource, stateNode, params, replaceOverride } = opts;
   // A create that left a "creating" record may or may not have made the
   // resource. Create runs again, and takes the resource over if the provider
   // reports that it already exists.
@@ -185,28 +182,28 @@ export function decideAction(opts: {
   if (replaceFields.length > 0) {
     assertReplaceAllowed(resource, stateNode.params, params, replaceFields);
   }
-  if (!requested?.overrideLossProtection) {
+  if (!replaceOverride?.overrideLossProtection) {
     assertChangeAllowed(
       resource.id,
       resource.rejectChange,
       stateNode.params,
       params,
       {
-        replace: Boolean(requested) || replaceFields.length > 0,
-        ...(requested ? { requested: true as const } : {}),
+        replace: Boolean(replaceOverride) || replaceFields.length > 0,
+        ...(replaceOverride ? { requested: true as const } : {}),
       },
-      requested
+      replaceOverride
         ? `To replace it, pass --override-loss-protection ${resource.id} with --replace.`
         : undefined,
     );
   }
 
-  if (requested || replaceFields.length > 0) {
+  if (replaceOverride || replaceFields.length > 0) {
     return {
       decision: "replace",
       patch,
       diff,
-      replaceFields: requested
+      replaceFields: replaceOverride
         ? [...replaceFields, { requested: true, known: true }]
         : replaceFields,
     };
@@ -266,8 +263,7 @@ export function assertOrphanDeleteAllowed(
 ): void {
   assertChangeAllowed(
     stateNode.id,
-    resolveResourceClass(registry, stateNode.type as ResourceType)
-      ?.rejectChange,
+    resolveRecordClass(registry, stateNode)?.rejectChange,
     stateNode.params,
     undefined,
     { replace: false },
@@ -289,9 +285,10 @@ export function decideDriftAction(opts: {
     return { decision: "drift-recreate" };
   }
 
+  const remote = pick(driftRead.output, params);
   const { patch, diff, replaceFields } = diffParams(
     resource.schema,
-    pick(driftRead.output, params),
+    remote,
     pick(params, driftRead.output),
     { canUpdate: Boolean(resource.update) },
   );
@@ -300,7 +297,7 @@ export function decideDriftAction(opts: {
     return { decision: "drift-replace", patch, diff, replaceFields };
   }
   if (Object.keys(patch).length > 0) {
-    return { decision: "drift-update", patch, diff };
+    return { decision: "drift-update", patch, diff, remote };
   }
 
   return { decision: "noop" };

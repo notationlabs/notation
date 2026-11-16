@@ -60,7 +60,6 @@ export const deploy = {
             { label: "notation plan", slug: "cli/plan" },
             { label: "notation deploy", slug: "cli/deploy" },
             { label: "notation destroy", slug: "cli/destroy" },
-            { label: "notation secret", slug: "cli/secret" },
             { label: "notation dashboard", slug: "cli/dashboard" },
             { label: "notation viz", slug: "cli/viz" },
           ],

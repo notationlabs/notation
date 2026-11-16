@@ -249,11 +249,13 @@ describe("KVNamespace", () => {
     it("fails, and names the flag that allows it", async () => {
       await expect(
         createPlan({
+          app: "app",
+          stage: "test",
           resources: [namespace],
           state: stateWith(namespace, { ...params, ...key }),
           driftDetection: false,
           deploymentId: "app:prod",
-          requested: { replace: [{ id: "kv:cache" }] },
+          overrides: { replace: [{ id: "kv:cache" }] },
         }),
       ).rejects.toThrow(
         "kv:cache: Replacing this KV namespace would delete it and its keys. To replace it, pass --override-loss-protection kv:cache with --replace.",
@@ -262,11 +264,13 @@ describe("KVNamespace", () => {
 
     it("is planned with --override-loss-protection", async () => {
       const plan = await createPlan({
+        app: "app",
+        stage: "test",
         resources: [namespace],
         state: stateWith(namespace, { ...params, ...key }),
         driftDetection: false,
         deploymentId: "app:prod",
-        requested: {
+        overrides: {
           replace: [{ id: "kv:cache" }],
           overrideLossProtection: ["kv:cache"],
         },

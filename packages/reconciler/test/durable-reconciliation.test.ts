@@ -35,7 +35,7 @@ import {
 } from "../src/resource-registry";
 import { ResourceTypeChangedError } from "../src/resource-type";
 import { ResourceCycleError } from "../src/cycles";
-import { instanceHash, type ReplaceRequest } from "../src/replace-request";
+import { instanceHash, type Overrides } from "../src/overrides";
 
 const logger = pino({ level: "silent" });
 
@@ -2634,6 +2634,8 @@ describe("rejectChange", () => {
 
     resources.splice(0);
     await createPlan({
+      app: "app",
+      stage: "test",
       resources,
       state: runtime.state,
       registry: createResourceRegistry([Guarded]),
@@ -6631,12 +6633,12 @@ describe("dependency cycles", () => {
     const b = worker("b");
     bind(a, b);
     bind(b, a);
-    const options: { requested?: ReplaceRequest } = {};
+    const options: { overrides?: Overrides } = {};
     const runtime = createRuntime([a, b], "cycle-requested", options);
     await runtime.run("cycle-requested-1");
     calls.length = 0;
 
-    options.requested = {
+    options.overrides = {
       replace: [
         {
           id: "b",
@@ -7665,6 +7667,8 @@ describe("create-first replacement", () => {
 
     const retired = (await runtime.state.get("bus"))!.retired![0]!;
     const plan = await createPlan({
+      app: "app",
+      stage: "test",
       resources,
       state: runtime.state,
       driftDetection: false,
@@ -8550,14 +8554,14 @@ describe("requested replace", () => {
       });
     const orders = new Queue("orders", { config: {} as any });
     const mirror = new Queue("mirror", { config: {} as any });
-    mirror.config.target = orders.outputRef("name");
+    (mirror.config as any).target = orders.outputRef("name");
     return { calls, resources: [orders, mirror], orders, Queue };
   }
 
   async function deployed(deploymentId: string) {
     const queues = defineQueues();
     const options: {
-      requested?: ReplaceRequest;
+      overrides?: Overrides;
       emit?: (event: ReconcilerEvent) => void;
     } = {};
     const runtime = createRuntime(queues.resources, deploymentId, options);
@@ -8576,7 +8580,7 @@ describe("requested replace", () => {
     const before = await runtime.state.get("orders");
     const events: ReconcilerEvent[] = [];
     options.emit = (event) => void events.push(event);
-    options.requested = {
+    options.overrides = {
       replace: [{ id: "orders", instanceHash: hash }],
     };
 
@@ -8603,7 +8607,7 @@ describe("requested replace", () => {
     );
 
     calls.length = 0;
-    options.requested = undefined;
+    options.overrides = undefined;
     await runtime.run("requested-3");
     expect(calls).toEqual([]);
     runtime.close();
@@ -8612,11 +8616,11 @@ describe("requested replace", () => {
   it("fails before any change without the hash, or with a hash that does not match", async () => {
     const { calls, runtime, options, hash } = await deployed("requested-hash");
 
-    options.requested = { replace: [{ id: "orders" }] };
+    options.overrides = { replace: [{ id: "orders" }] };
     await expect(runtime.run("requested-hash-2")).rejects.toThrow(
       "--replace orders has no instance hash.",
     );
-    options.requested = {
+    options.overrides = {
       replace: [{ id: "orders", instanceHash: "00000000" }],
     };
     await expect(runtime.run("requested-hash-3")).rejects.toThrow(
@@ -8647,11 +8651,11 @@ describe("requested replace", () => {
           context.requested ? "Replacing this bucket deletes it." : undefined,
       });
     const bucket = new Bucket("bucket", { config: { name: "b" } as any });
-    const options: { requested?: ReplaceRequest } = {};
+    const options: { overrides?: Overrides } = {};
     const runtime = createRuntime([bucket], "requested-protected", options);
     await runtime.run("requested-protected-1");
 
-    options.requested = {
+    options.overrides = {
       replace: [{ id: "bucket", instanceHash: "00000000" }],
     };
     await expect(runtime.run("requested-protected-2")).rejects.toThrow(
@@ -8680,7 +8684,7 @@ describe("requested replace", () => {
     // while orders still has its first instance.
     const early = new Queue("early", { config: {} as any });
     const deploymentId = "requested-concurrent";
-    const options: { requested?: ReplaceRequest } = {};
+    const options: { overrides?: Overrides } = {};
     const runtime = createRuntime([early, ...resources], deploymentId, options);
     await runtime.run(`${deploymentId}-1`);
     calls.length = 0;
@@ -8689,8 +8693,8 @@ describe("requested replace", () => {
       orders,
       (await runtime.state.get("orders"))!,
     );
-    options.requested = { replace: [{ id: "orders", instanceHash: hash }] };
-    early.config.target = "elsewhere";
+    options.overrides = { replace: [{ id: "orders", instanceHash: hash }] };
+    (early.config as any).target = "elsewhere";
 
     block = true;
     const first = runtime.run(`${deploymentId}-a`);
@@ -8721,7 +8725,7 @@ describe("requested replace", () => {
     const prod = await deployed("shop:prod");
 
     expect(dev.hash).not.toBe(prod.hash);
-    prod.options.requested = {
+    prod.options.overrides = {
       replace: [{ id: "orders", instanceHash: dev.hash }],
     };
     await expect(prod.runtime.run("shop:prod-2")).rejects.toThrow(
@@ -8734,18 +8738,18 @@ describe("requested replace", () => {
   it("takes the same decisions when an execution resumes after the replacement was created", async () => {
     const queues = defineQueues();
     const deploymentId = "requested-resume";
-    const options: { requested?: ReplaceRequest; crashAfterStep?: string } = {};
+    const options: { overrides?: Overrides; crashAfterStep?: string } = {};
     const runtime = createRuntime(queues.resources, deploymentId, {
       ...options,
       crashAfterStep:
         "notation:deploy:orders:replace:create:create:remote:effect:0",
-      get requested() {
-        return options.requested;
+      get overrides() {
+        return options.overrides;
       },
     });
     await runtime.run("requested-resume-1");
     queues.calls.length = 0;
-    options.requested = {
+    options.overrides = {
       replace: [
         {
           id: "orders",
@@ -8852,19 +8856,19 @@ describe("requested replace", () => {
   it("replaces delete-first a resource whose class refuses the replace, with --override-loss-protection", async () => {
     const { calls, bucket } = defineBuckets();
     const deploymentId = "requested-override";
-    const options: { requested?: ReplaceRequest } = {};
+    const options: { overrides?: Overrides } = {};
     const runtime = createRuntime([bucket], deploymentId, options);
     await runtime.run(`${deploymentId}-1`);
     calls.length = 0;
     const replace = await targets(runtime, deploymentId, [bucket]);
 
-    options.requested = { replace };
+    options.overrides = { replace };
     await expect(runtime.run(`${deploymentId}-2`)).rejects.toThrow(
       "bucket: Replacing this deletes data. To replace it, pass --override-loss-protection bucket with --replace.",
     );
     expect(calls).toEqual([]);
 
-    options.requested = { replace, overrideLossProtection: ["bucket"] };
+    options.overrides = { replace, overrideLossProtection: ["bucket"] };
     await runtime.run(`${deploymentId}-3`);
     expect(calls).toEqual(["delete bucket b", "create bucket b"]);
     runtime.close();
@@ -8873,20 +8877,20 @@ describe("requested replace", () => {
   it("deletes a requested dependent that blocks the delete of another replaced resource, and creates it again once", async () => {
     const { calls, bucket, binding } = defineBuckets();
     const deploymentId = "requested-blocking";
-    const options: { requested?: ReplaceRequest } = {};
+    const options: { overrides?: Overrides } = {};
     const runtime = createRuntime([bucket, binding], deploymentId, options);
     await runtime.run(`${deploymentId}-1`);
     calls.length = 0;
     const replace = await targets(runtime, deploymentId, [bucket, binding]);
 
     // The binding's own refusal, with the flag that overrides it.
-    options.requested = { replace, overrideLossProtection: ["bucket"] };
+    options.overrides = { replace, overrideLossProtection: ["bucket"] };
     await expect(runtime.run(`${deploymentId}-2`)).rejects.toThrow(
       "binding: Replacing this deletes data. To replace it, pass --override-loss-protection binding with --replace.",
     );
     expect(calls).toEqual([]);
 
-    options.requested = {
+    options.overrides = {
       replace,
       overrideLossProtection: ["bucket", "binding"],
     };
@@ -8916,7 +8920,7 @@ function createRuntime(
     driftDetection?: boolean;
     dryRun?: boolean;
     emit?: (event: ReconcilerEvent) => void;
-    requested?: ReplaceRequest;
+    overrides?: Overrides;
   } = {},
 ) {
   const database = createSqliteDb({ path: ":memory:" });
@@ -8949,9 +8953,10 @@ function createRuntime(
       dryRun: options.dryRun,
       emit: options.emit,
       maxOperationAttempts: options.maxOperationAttempts,
-      nameScope: { app: "shop", stage: "prod" },
+      app: "shop",
+      stage: "prod",
       // Read at execution time, as is `dryRun`.
-      requested: options.requested,
+      overrides: options.overrides,
     });
   });
   const destroy = workflow(async function* (step, event) {

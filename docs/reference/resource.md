@@ -4,6 +4,17 @@ Every cloud resource is represented as a typed, schema-driven object.
 
 Source: `@notation/resource`
 
+Resources come in two kinds. Each kind has its own builder and base class:
+
+| Kind     | `kind`                | Builder                      | Credentials  | Operations                                                                           |
+| -------- | --------------------- | ---------------------------- | ------------ | ------------------------------------------------------------------------------------ |
+| Resource | `"resource"`          | `resource()`                 | any number   | `create`, `delete`; optional `read`, `update`, `find`, and `rotate` for a credential |
+| Source   | `"credential-source"` | `credentialSourceResource()` | one, `value` | `read`, `loadCredential`                                                             |
+
+A resource is something that deploy creates at a provider. A source supplies a value that exists outside Notation, such as an environment variable. Most of this page is about resources. See [Credential sources](#credential-sources) for sources.
+
+The reconciler reads the kind from the `kind` field of `BaseResource`, which each base class sets. It does not use `instanceof`, which fails when two copies of `@notation/resource` are loaded. `isCredentialSource(resource)` checks the field.
+
 ## Defining a resource
 
 A resource is defined using the `defineResource` builder. The full chain looks like this:
@@ -126,7 +137,7 @@ Deploy lists state before each delete of a resource of such a type, so set it on
 
 ### Provider packages
 
-When a resource's type no longer appears in code, deploy and destroy load the class from the package or package subpath that `provider` names, to delete the resource. `@notation/core` resolves it with `require.resolve` from the project, and then imports it. The provider must meet these conditions, or the record is left in place with a `reconciler.provider.load-failed` warning:
+When a resource's type no longer appears in code, deploy and destroy load the class from the package or package subpath that `provider` names, to delete the resource. A source needs no class to be deleted, so its package is not loaded. `@notation/core` resolves it with `require.resolve` from the project, and then imports it. The provider must meet these conditions, or the record is left in place with a `reconciler.provider.load-failed` warning:
 
 - Its entry in `exports` must have a `require` or `default` condition. An entry with only an `import` condition can't be resolved.
 - Its entry must export resource classes, or namespaces of them, such as `export * as lambda from "./lambda"`. The loader registers each resource class among the exports and among the values of each exported namespace, and ignores other values. It also ignores a class whose `provider` names another package, such as a class re-exported from another provider. Give the provider its own entry, such as a `/resources` subpath, so that loading it does not import the rest of the package.
@@ -234,8 +245,6 @@ script.contribute({
 
 A ref from a resource to one of its own `physicalName` params is not a dependency, so the Worker is not a [cycle](#cycles) of one. Deploy fills in the ref when it fills in the name, before it calls `create`. So `create` receives the name as a plain string in both params, and the Worker is created once, with the binding. A replacement gets its new name in both params. Plan shows the ref as it shows the name: the recorded name, or unknown when there is no record or the resource is replaced. A ref to any other output of the resource itself is still a dependency.
 
-**`scopedPhysicalName` makes a fixed name on a class without `physicalName`.** `scopedPhysicalName(name, rule)` from `@notation/resource` returns `<app>--<stage>--<name>`, shortened with a hash when it is longer than `rule.maxLength`. It is the same on every deploy. A construct puts the result in config. Two declarations with the same `name` get the same result, so the construct must check that no two declarations give the same name. A fixed name can also belong to a resource that someone else made, which deploy then [takes over](../internals/reconciler.md#the-takeover-rule). No class in `@notation/aws` or `@notation/cloudflare` is named this way: deploy generates every name.
-
 ### Value types
 
 Every schema item has a required `value`, which can be any [Standard Schema](https://standardschema.dev): a valibot, Zod, ArkType or Effect schema, for example. The engine calls only `~standard.validate`, so it depends on no validator library.
@@ -299,16 +308,17 @@ An issue in a statement that holds an unknown is still dropped, because the stat
 
 `defineOperations` accepts CRUD handlers and parameter derivation:
 
-| Field          | Required | Signature / Description                                                                                                                                           |
-| -------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create`       | yes      | `(params, context?) => Promise<CreateResult<S>>` – create the resource, return its computed key and its [credentials](#credentials).                              |
-| `rotate`       | no       | `{ [credential]: (key, state) => Promise<value> }` – issue a new value for a credential. See [Credentials](#credentials).                                         |
-| `find`         | no       | `(params) => Promise<ComputedPrimaryKey<S>>` – find the resource that a create with `params` makes, and return its computed key. See [`find`](#find).             |
-| `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                                              |
-| `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                                                |
-| `delete`       | yes      | `(key, state, context?, deletion?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
-| `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                                             |
-| `rejectChange` | no       | `(previous, desired, { replace }) => string \| undefined` – return a message to fail plan and deploy with. See [Rejecting a change](#rejecting-a-change).         |
+| Field            | Required | Signature / Description                                                                                                                                           |
+| ---------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create`         | yes      | `(params, context?) => Promise<CreateResult<S>>` – create the resource, return its computed key and its [credentials](#credentials).                              |
+| `rotate`         | no       | `{ [credential]: (key, state) => Promise<value> }` – issue a new value for a credential. See [Credentials](#credentials).                                         |
+| `rotateManually` | no       | `{ [credential]: string }` – for a credential without `rotate`, how the user issues a new value at the provider. See [Credentials](#credentials).                 |
+| `find`           | no       | `(params) => Promise<ComputedPrimaryKey<S>>` – find the resource that a create with `params` makes, and return its computed key. See [`find`](#find).             |
+| `read`           | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                                              |
+| `update`         | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                                                |
+| `delete`         | yes      | `(key, state, context?, deletion?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
+| `deriveParams`   | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                                             |
+| `rejectChange`   | no       | `(previous, desired, { replace }) => string \| undefined` – return a message to fail plan and deploy with. See [Rejecting a change](#rejecting-a-change).         |
 
 The reconciler records params, results and state, so each must be a durable value as `@notation/durable` 0.9.0 defines it: `null`, a boolean, number, string or `bigint`, `undefined`, a `Date`, an `Error`, or an array, `Map`, `Set` or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
 
@@ -425,7 +435,7 @@ create: awsCreate(
 
 When the provider's create call overwrites or returns an existing resource instead of failing, as `PutRule` and `CreateQueue` do, `create` must check for the resource first and throw `ResourceAlreadyExistsError` itself.
 
-**Start each resource's name with the app and the stage.** The reconciler does not check who made the existing resource. It takes over any resource with the same key, and then updates or replaces it to match config. This is only safe when no other deployment can use the key. A name that deploy generates for a `physicalName` param starts with `<app>--<stage>--`, and so does a name from `scopedPhysicalName`, so a resource with either name belongs to the same app and stage. See [Physical names](#physical-names). A resource that lives inside another resource, such as a route in an API, needs no prefix when its parent's name has one.
+**Start each resource's name with the app and the stage.** The reconciler does not check who made the existing resource. It takes over any resource with the same key, and then updates or replaces it to match config. This is only safe when no other deployment can use the key. A name that deploy generates for a `physicalName` param starts with `<app>--<stage>--`, so a resource with such a name belongs to the same app and stage. See [Physical names](#physical-names). A resource that lives inside another resource, such as a route in an API, needs no prefix when its parent's name has one.
 
 See [Recoverable creates](../internals/reconciler.md#recoverable-creates) for the takeover steps and their limits.
 
@@ -520,7 +530,7 @@ The ref has two effects:
 
 ### Credentials
 
-Some providers return a secret only in the response that creates a resource: the value of an API token, or the private key of a GitHub App. A `credential` property holds such a secret. `create` returns it with the computed key:
+Some providers return a secret only in the response that creates a resource: the value of an API token, or the private key of a GitHub App. A `credential` property holds such a secret. `create` returns it with the computed key. A [source](#credential-sources) has a credential too, whose value it loads from outside Notation.
 
 ```ts
 const githubAppSchema = githubApp.defineSchema({
@@ -549,16 +559,20 @@ export const GithubApp = githubAppSchema.defineOperations({
 Another resource takes the value with `resource.credentials.<name>`, which is an output ref:
 
 ```ts
-new cloudflare.secretsStore.SecretsStoreSecret("secret:app-key", {
-  config: { Name: name, StageScoped: true, Value: app.credentials.PrivateKey },
+new cloudflare.secretsStore.SecretsStoreSecret("app-key-secret", {
+  config: { Value: app.credentials.PrivateKey },
   dependencies: { store },
 });
 ```
 
 The resource that takes the credential receives the value in two places:
 
-- `create` receives it in its params.
-- `update` receives it in its patch, and in its params, only when the patch holds it. When an update changes another param, the credential's param is `undefined` in the params. An `update` that sends the whole config to the provider has to leave the credential's param out of the request when the patch does not hold it. Otherwise it removes the value at the provider.
+- `create` receives every credential in its params.
+- `update` receives the value of a credential, in its patch and in its params, only when the credential's version differs from the version in the resource's record. Every other credential is `undefined` in its place. The rule applies to each credential, not to each param: a param that holds several credentials, such as the `Secrets` of a Cloudflare Worker, receives only the values whose version changed.
+
+The rule matters because deploy holds a value only in the process that received it. If a change anywhere in a param needed every value in it, an update would need values that an earlier deploy made, and a credential without `rotate` could not be issued again. So an `update` that sends the whole config to the provider has to leave an `undefined` credential out of the request. Otherwise it removes the value at the provider.
+
+A drift update is the exception. When `read` shows that the provider lost a value, such as a Worker secret deleted outside Notation, the update receives the value of that credential. A `read` can return the credential markers of the params that it received, for the credentials that the provider still holds, and leave out the others.
 
 The other operations never receive the value: `find` receives the marker in its params. The `state` that `update`, `delete` and `rotate` receive has no property for a credential of the resource itself, and `undefined` for a param that takes a credential. A value that `read` returns for a credential is dropped.
 
@@ -570,7 +584,7 @@ Deploy keeps the value in memory only:
 - A string value is removed from error messages.
 - `read` never returns a credential, and `resource.output` has no property for it.
 
-A create or a rotate gives the credential a new version. The params of each resource that takes it then differ from its record, so deploy updates it with the new value. More than one resource can take the same credential.
+A create, a rotate or [`--credential`](../cli/deploy.md#a-credential-that-you-rotate-by-hand) gives the credential a new version. The params of each resource that takes it then differ from its record, so deploy updates it with the new value. More than one resource can take the same credential.
 
 Deploy holds a value only in the process that received it. It gets a new value when a resource that takes the credential needs one and deploy holds none:
 
@@ -578,7 +592,25 @@ Deploy holds a value only in the process that received it. It gets a new value w
 2. The record of a resource that takes the credential holds an older version, because an earlier deploy failed before it updated the resource.
 3. A resource that takes the credential is created again: it is replaced, or drift detection found it gone.
 
-To get a new value, deploy calls the credential's `rotate` operation, which returns a value and makes the provider revoke the one before. Without `rotate`, deploy replaces the resource that has the credential. In cases 1 and 2 it does so before it reaches the resources that take the credential, and plan shows it. In case 3 with `rotate`, deploy rotates when it reaches the resource, and then updates the resources before it that take the credential. Plan shows the rotation and the updates. In case 3 without `rotate`, the deploy fails, and the next deploy replaces the resource that has the credential. Plan shows that the deploy fails at the resource.
+To get a new value, deploy calls the credential's `rotate` operation, which returns a value and makes the provider revoke the one before. In cases 1 and 2 it rotates before it reaches the resources that take the credential. In case 3 it rotates when it reaches the resource, and then updates the resources before it that take the credential. Plan shows the rotation and the updates.
+
+**Without `rotate`, the user rotates the credential by hand.** Plan fails, and deploy fails before it writes the resource that needs the value. Both print two commands: `notation deploy --credential`, which passes a value that the user issues at the provider, and `notation deploy --replace`, which replaces the resource that has the credential. See [A credential that you rotate by hand](../cli/deploy.md#a-credential-that-you-rotate-by-hand). Leave out `rotate` only when the provider has no API to issue another value.
+
+For such a credential, give `rotateManually`: one sentence for each credential that tells the user how to issue a new value at the provider. The error prints it above the `--credential` command. Without it, the error prints ``Issue a new value of `<credential>` at the provider of `<type>`.``
+
+```ts
+export const App = appSchema.defineOperations({
+  create: async (params) => {
+    const app = await createApp(params);
+    return { AppId: app.id, PrivateKey: app.pem };
+  },
+  rotateManually: {
+    PrivateKey:
+      "Generate a new private key in the GitHub App's settings, under Private keys.",
+  },
+  delete: async (key) => deleteApp(key.AppId),
+});
+```
 
 The provider revokes the old value when deploy rotates, before any resource has the new one. If the deploy then fails before it updates a resource that takes the credential, that resource holds a revoked value until a later deploy succeeds. That deploy rotates again.
 
@@ -610,6 +642,66 @@ A state ref differs from an output ref in five ways:
 - **It can only be placed in a contribution.** `create` and `update` read the refs in config from the live outputs of their targets, which a state ref's target may not have yet. `getDependencies()` throws when config holds a state ref.
 
 Make each state ref while infra is evaluated. Deploy reads the outputs of the resources that state refs name before it resolves any params, and a state ref made later fails at deploy.
+
+## Credential sources
+
+A source supplies a value that exists outside Notation, such as an environment variable or a secret in Infisical. Deploy creates nothing at a provider for a source, and never replaces one. `credentialSourceResource()` builds the class. A shortened `sources.Env` from `@notation/std/resources`, without `track`:
+
+```ts [packages/std/src/resources/sources/env.ts]
+import * as v from "valibot";
+import { credentialSourceResource } from "@notation/resource";
+
+export const Env = credentialSourceResource<{
+  Params: { key: string };
+  Value: string;
+}>({
+  type: "std/sources/Env",
+  provider: "@notation/std/resources",
+})
+  .defineSchema({
+    key: { propertyType: "param", presence: "required", value: v.string() },
+    revision: {
+      propertyType: "computed",
+      presence: "required",
+      value: v.string(),
+    },
+    value: { propertyType: "credential", value: v.string() },
+  } as const)
+  .defineOperations({
+    read: async (params, context) => ({ revision: context.executionId }),
+    loadCredential: async (state, context) => {
+      const value = process.env[state.key];
+      if (!value) throw new Error(`${state.key} is not set.`);
+      return value;
+    },
+  });
+```
+
+The schema has params, a computed `revision`, any other computed outputs, and one credential, `value`. Another resource takes the value as `source.credentials.value`, as for any [credential](#credentials).
+
+| Operation        | Called                                                                                           | Returns                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `read`           | by plan and deploy, for every source                                                             | the `revision`, and never the value. It may read the value to work the revision out.                           |
+| `loadCredential` | by deploy, when a resource that takes the value is created or updated, and deploy holds no value | the value of `value` for the `revision` in `state`. It returns the same value each time for the same revision. |
+
+**The credential's version is a SHA-256 of the source's ID, its params and its `revision`.** A change to a param or to the `revision` gives the credential a new version, so deploy updates every resource that takes it. A source with the same params and revision has the same version in every deploy, so loading the value again changes no other resource. Return a `revision` that changes whenever the value changes, such as a version that the secrets manager assigns. When the source has no such version, return `context.executionId`, so that the value is written on every deploy.
+
+`read` receives a context:
+
+| Field          | Description                                                                                     |
+| -------------- | ----------------------------------------------------------------------------------------------- |
+| `id`           | The source's ID.                                                                                |
+| `executionId`  | The ID of the deploy's execution, which a resumed deploy keeps. Each plan has an ID of its own. |
+| `app`, `stage` | The app and the stage.                                                                          |
+| `state`        | The outputs in the source's record, without its credential. Undefined when there is no record.  |
+| `warn`         | `(message) => void`. Shows a warning for the source in the output of plan and deploy.           |
+
+`loadCredential` receives `state` and the context without `state` and `warn`. `state` holds the params and the outputs that `read` returned in this deploy, without the credential.
+
+- A source that no resource takes is never loaded.
+- When a source leaves the code, deploy deletes its record and calls nothing. It does not load the source's provider package to do this.
+- `--replace` and `--credential` refuse a source.
+- Pass every value that `read` reads to `recordSecretValue` from `@notation/utils`, so that it is removed from error messages. The reconciler does this for the value that `loadCredential` returns.
 
 ## Contributions
 

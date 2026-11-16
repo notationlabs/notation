@@ -22,15 +22,17 @@ vi.mock("@notation/core", async (importOriginal) => {
     createNdjsonEventEmitter: () => () => undefined,
     deployApp,
     destroyApp,
-    formatRequest: core.formatRequest,
+    formatOverrides: core.formatOverrides,
+    parseCredentialTarget: core.parseCredentialTarget,
     parseReplaceTarget: core.parseReplaceTarget,
     shellQuote: core.shellQuote,
+    UnobtainableCredentialError: core.UnobtainableCredentialError,
     resolveDeploymentId: (d: Deployment) => `${d.app}:${d.stage}`,
   };
 });
 vi.mock("../src/compile", () => ({ compile: vi.fn(async () => undefined) }));
 
-const { deploy, replaceRequest } = await import("../src/deploy");
+const { deploy, parseOverrides } = await import("../src/deploy");
 const { destroy } = await import("../src/destroy");
 
 describe.each([
@@ -128,19 +130,19 @@ describe("replace flags", () => {
   it("reads --replace and --override-loss-protection, and passes them to deploy", async () => {
     deployApp.mockClear();
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    const requested = replaceRequest({
+    const overrides = parseOverrides({
       replace: ["bucket:uploads@3c1f9a02"],
       overrideLossProtection: ["bucket:uploads"],
     });
 
-    await deploy(deployment, { compile: false, logger, requested });
+    await deploy(deployment, { compile: false, logger, overrides });
 
-    expect(requested).toEqual({
+    expect(overrides).toEqual({
       replace: [{ id: "bucket:uploads", instanceHash: "3c1f9a02" }],
       overrideLossProtection: ["bucket:uploads"],
     });
     expect(deployApp).toHaveBeenCalledWith(
-      expect.objectContaining({ requested }),
+      expect.objectContaining({ overrides }),
     );
   });
 
@@ -153,7 +155,7 @@ describe("replace flags", () => {
         compile: false,
         logger,
         config: "infra/notation config.ts",
-        requested: replaceRequest({ replace: ["bucket:uploads"] }),
+        overrides: parseOverrides({ replace: ["bucket:uploads"] }),
       }),
     ).rejects.toThrow(
       "--replace bucket:uploads needs the instance hash, as --replace bucket:uploads@<instance hash>. Run notation plan --config 'infra/notation config.ts' --stage prod --replace bucket:uploads to print the deploy command with the hash.",
@@ -169,13 +171,86 @@ describe("replace flags", () => {
       compile: false,
       logger,
       executionId: "crashed-execution",
-      requested: replaceRequest({ replace: ["bucket:uploads"] }),
+      overrides: parseOverrides({ replace: ["bucket:uploads"] }),
     });
 
     expect(deployApp).toHaveBeenCalledOnce();
   });
 
-  it("gives no request without either flag", () => {
-    expect(replaceRequest({})).toBeUndefined();
+  it("fails a --credential with no instance hash with the plan command", async () => {
+    deployApp.mockClear();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    await expect(
+      deploy(deployment, {
+        compile: false,
+        logger,
+        overrides: parseOverrides({ credential: ["app.privateKey=APP_KEY"] }),
+      }),
+    ).rejects.toThrow(
+      "--credential app.privateKey needs the instance hash, as --credential app.privateKey@<instance hash>=APP_KEY. Run notation plan --stage prod --credential app.privateKey=APP_KEY to print the deploy command with the hash.",
+    );
+    expect(deployApp).not.toHaveBeenCalled();
+  });
+
+  it("passes --credential to deploy as a target with an instance hash and a variable", () => {
+    expect(
+      parseOverrides({ credential: ["app.privateKey@7b1e52c0=APP_KEY"] }),
+    ).toEqual({
+      replace: [],
+      credential: [
+        {
+          id: "app",
+          name: "privateKey",
+          instanceHash: "7b1e52c0",
+          variable: "APP_KEY",
+        },
+      ],
+    });
+  });
+
+  it("fails for a credential that deploy cannot get, with deploy commands for the same config, stage and request", async () => {
+    const core =
+      await vi.importActual<typeof import("@notation/core")>("@notation/core");
+    deployApp.mockRejectedValueOnce(
+      new core.UnobtainableCredentialError(
+        [
+          {
+            consumer: "app-key-secret",
+            producer: "app",
+            producerType: "github/App",
+            name: "privateKey",
+            reason: "not-held",
+            instanceHash: "5d2e8b17",
+          },
+        ],
+        { replace: [{ id: "queue", instanceHash: "0c4d9e21" }] },
+      ),
+    );
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const error = await deploy(deployment, {
+      compile: false,
+      logger,
+      config: "jobs.config.ts",
+      overrides: parseOverrides({ replace: ["queue@0c4d9e21"] }),
+    }).catch((e: Error) => e);
+
+    expect((error as Error).message).toBe(
+      [
+        "`app-key-secret` takes `app.privateKey`, and the deploy run that received its value has ended. Notation does not store the value, and `github/App` has no operation that issues another.",
+        "",
+        "  Issue a new value of `privateKey` at the provider of `github/App`. Then set the environment variable `APP_PRIVATE_KEY` to the value, and pass it:",
+        "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --credential app.privateKey@5d2e8b17=APP_PRIVATE_KEY",
+        "",
+        "  Or replace `app`. Deploy deletes `app` and creates it again with a new value, so whatever exists only in the old `app` is lost:",
+        "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --replace app@5d2e8b17",
+      ].join("\n"),
+    );
+    expect((error as Error).stack).toContain("--stage prod");
+  });
+
+  it("gives no request without any flag", () => {
+    expect(parseOverrides({})).toBeUndefined();
   });
 });

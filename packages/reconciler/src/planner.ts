@@ -1,8 +1,13 @@
+import { randomUUID } from "node:crypto";
 import {
   assertRequiredOutputs,
+  containsUnknownAfterApply,
+  diffParams,
   fillPhysicalNames,
   findCredentialMarkers,
+  isCredentialSource,
   validateParams,
+  type BaseCredentialSource,
   type BaseResource,
   type RecordedOutputs,
 } from "@notation/resource";
@@ -19,9 +24,7 @@ import { isCycle, orderDeployUnits, type DeployUnit } from "./cycles";
 import { createBlocksDelete } from "./delete-cascade";
 import {
   assertNoHiddenCredential,
-  credentialConsumers,
-  credentialsToMint,
-  mintAction,
+  findCredentialConsumers,
   setRecordedOutput,
   takesCredential,
 } from "./credentials";
@@ -51,11 +54,20 @@ import {
 } from "./physical-names";
 import { readRecordedOutputs } from "./recorded-outputs";
 import {
-  assertReplaceRequest,
+  assertNoPassedCredential,
+  assertOverrides,
   instanceHash,
-  requestedReplace,
-  type ReplaceRequest,
-} from "./replace-request";
+  findReplaceOverride,
+  withStateIdentifiers,
+  type Overrides,
+} from "./overrides";
+import { readAndDecideSource } from "./sources";
+import {
+  mintedCredentials,
+  rotatesForCreate,
+  throwIfUnobtainable,
+  type UnobtainableCredential,
+} from "./unobtainable-credential";
 import { assertSameType } from "./resource-type";
 import { createStepRunner, runOperation } from "./step-runner";
 
@@ -84,14 +96,20 @@ export type CreatePlanOptions = {
   maxOperationAttempts?: number;
   /** As for deploy: the classes of the types that only orphans have. */
   registry?: ResourceRegistry;
-  /** The replaces that the user asked for. */
-  requested?: ReplaceRequest;
+  /** The replaces and the credentials that the user asked for. */
+  overrides?: Overrides;
   /**
    * The key of the deployment's state. With it, each node of a resource in
    * code that has a record gets its instance hash. Required with
-   * `requested`.
+   * `overrides`.
    */
   deploymentId?: string;
+  /** The app, for the `read` of each source. */
+  app: string;
+  /** The stage, for the `read` of each source. */
+  stage: string;
+  /** The execution ID that each source's `read` receives. Defaults to a new one. */
+  executionId?: string;
 };
 
 export async function createPlan({
@@ -101,8 +119,11 @@ export async function createPlan({
   emit,
   maxOperationAttempts,
   registry,
-  requested,
+  overrides,
   deploymentId,
+  app,
+  stage,
+  executionId = randomUUID(),
 }: CreatePlanOptions): Promise<Plan> {
   const resourceById = new Map(
     resources.map((resource) => [resource.id, resource]),
@@ -112,18 +133,31 @@ export async function createPlan({
   assertDependenciesPresent(resources);
 
   const stateNodes = await state.values();
-  if (requested) {
+  if (overrides) {
     if (deploymentId === undefined) {
       throw new Error("createPlan needs deploymentId to plan --replace.");
     }
-    assertReplaceRequest(requested, {
+    assertOverrides(overrides, {
       resources,
       records: stateNodes,
       deploymentId,
       point: "plan",
     });
   }
+  // The overrides that each UnobtainableCredentialError gives, with the
+  // hashes that deploy requires.
+  const identified =
+    overrides && deploymentId !== undefined
+      ? withStateIdentifiers(overrides, {
+          resources,
+          records: stateNodes,
+          deploymentId,
+        })
+      : overrides;
   const recordedOutputs = await readRecordedOutputs(resources, state);
+  // The credentials that deploy cannot get. Plan goes on as if `--credential`
+  // passed each, and fails after the last resource with all of them.
+  const unobtainable: UnobtainableCredential[] = [];
   // The edges in state as deploy finds them when it replaces a resource.
   // Deploy writes the edges in code for each resource it reaches, so a
   // resource takes those once it is planned.
@@ -143,11 +177,54 @@ export async function createPlan({
   // the ID of the replaced resource.
   const cascaded = new Map<string, string>();
 
+  // As deploy does in `reconcileSource`: plan reads every source.
+  const planSource = async (
+    source: BaseCredentialSource,
+  ): Promise<PlanNode> => {
+    const { stateNode, params } = await planKnownParams(
+      source,
+      state,
+      "plan",
+      recordedOutputs,
+    );
+    const record =
+      stateNode && !isCreatingRecord(stateNode) ? stateNode : undefined;
+    const node = {
+      id: source.id,
+      type: source.type,
+      params,
+      dependsOn: getDependencyIds(source),
+    };
+    if (containsUnknownAfterApply(params)) {
+      // The read needs every param, so the revision is unknown, and so is
+      // the version of the credential.
+      source.setOutput(null as any);
+      if (!record) return { ...node, decision: "create" };
+      const { diff } = diffParams(source.schema, record.params, params, {
+        canUpdate: true,
+      });
+      return { ...node, decision: "update", diff };
+    }
+    const { decision, output, diff } = await runOperation(
+      readAndDecideSource(
+        createStepRunner(),
+        () => emitStep,
+        source,
+        params,
+        { id: source.id, executionId, app, stage },
+        record,
+      ),
+    );
+    source.setOutput(output);
+    return { ...node, decision, ...(diff ? { diff } : {}) };
+  };
+
   const planResource = async (
     resource: BaseResource,
     cycle: DeployUnit | undefined,
     detectDrift = driftDetection,
   ): Promise<PlanNode> => {
+    if (isCredentialSource(resource)) return planSource(resource);
     const known = await planKnownParams(
       resource,
       state,
@@ -156,18 +233,18 @@ export async function createPlan({
     );
     const { stateNode } = known;
     let { params } = known;
-    const requestedFor = requestedReplace(requested, resource.id);
-    let action: ResourceAction = await runOperation(
+    const replaceOverride = findReplaceOverride(overrides, resource.id);
+    const action: ResourceAction = await runOperation(
       applyDriftDetection(createStepRunner(), {
         action: decideAction({
           resource,
           stateNode,
           params,
-          requested: requestedFor,
+          replaceOverride,
         }),
         // A requested replace creates the resource again, so a read of it
         // would change nothing.
-        driftDetection: requestedFor ? false : detectDrift,
+        driftDetection: replaceOverride ? false : detectDrift,
         resource,
         resourceParams: params,
         persistedOutput: stateNode?.output,
@@ -178,28 +255,34 @@ export async function createPlan({
 
     // As deploy does before it reaches the resources that take a credential
     // of this one. See `mintNeededCredentials`.
-    const { rotates, replace } = mintAction(
-      resource,
+    const rotates =
       stateNode &&
-        !isCreatingRecord(stateNode) &&
-        keepsResource(action.decision)
-        ? credentialsToMint(
-            resource,
-            stateNode.output,
-            credentialConsumers(resource, resources).map((consumer) => ({
-              resource: consumer,
-              record: stateById.get(consumer.id),
-            })),
-          )
-        : [],
-    );
-    if (replace) action = replace;
+      !isCreatingRecord(stateNode) &&
+      keepsResource(action.decision)
+        ? await mintedCredentials({
+            producer: resource,
+            record: stateNode,
+            consumers: findCredentialConsumers(resource, resources).map(
+              (consumer) => ({
+                resource: consumer,
+                record: stateById.get(consumer.id),
+              }),
+            ),
+            recordedOutputs,
+            overrides: identified,
+            deploymentId,
+            unobtainable,
+          })
+        : [];
 
     const dependsOn = getDependencyIds(resource);
     const replaceFields =
       "replaceFields" in action ? action.replaceFields : undefined;
     const replacedDependency = cascaded.get(resource.id);
     const replaced = Boolean(replaceFields || replacedDependency);
+    if (replaced || !keepsResource(action.decision)) {
+      assertNoPassedCredential(overrides, resource);
+    }
     // A resource deleted in a cascade is deleted before it is created again,
     // whatever its class.
     const order = replacedDependency ? "delete-first" : replaceOrder(resource);
@@ -354,14 +437,19 @@ export async function createPlan({
       const at = find(id);
       if (!producer || !at) continue;
       const producerNode = at.list[at.index]!;
+      if (isCredentialSource(producer)) continue;
       if (producerNode.rotates?.includes(name)) continue;
-      if (!producer.rotate?.[name]) {
-        const unheld = (node.unheldCredentials ??= []);
-        if (!unheld.some((c) => c.resource === id && c.name === name)) {
-          unheld.push({ resource: id, name });
-        }
-        continue;
-      }
+      const rotates = rotatesForCreate({
+        consumer: resourceById.get(node.id)!,
+        consumerRecord: stateById.get(node.id),
+        producer,
+        name,
+        record: stateById.get(id),
+        overrides: identified,
+        deploymentId,
+        unobtainable,
+      });
+      if (!rotates) continue;
       producerNode.rotates = [...(producerNode.rotates ?? []), name];
       producer.setOutput({ ...producer.output, [name]: UNKNOWN_AFTER_APPLY });
       // Deploy updates the resources before this one that take the
@@ -430,6 +518,7 @@ export async function createPlan({
       nodes.push(node);
     }
   }
+  throwIfUnobtainable(unobtainable, identified);
 
   const inCode = new Set(resourceById.keys());
   const { swept, edgesById: sweptEdges } = sweptRecords(stateNodes, inCode);

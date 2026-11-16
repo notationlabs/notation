@@ -155,6 +155,8 @@ describe("Lambda code", () => {
       ...stored,
     };
     const plan = await createPlan({
+      app: "app",
+      stage: "test",
       resources: [lambda],
       state: new MemoryStateBackend({
         app: {

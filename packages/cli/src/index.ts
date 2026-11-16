@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 import { Option, program } from "commander";
 import { compile } from "./compile";
-import { deploy, replaceRequest } from "./deploy";
+import { deploy, parseOverrides } from "./deploy";
 import { destroy } from "./destroy";
 import { plan } from "./plan";
 import { resolveOutputMode } from "./output";
 import { defaultLogger } from "./logger";
 import { runWithErrorHandling } from "./run-with-error-handling";
-import { secretDelete, secretSet } from "./secret";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
 import { startDashboardServer } from "@notation/dashboard";
@@ -47,6 +46,12 @@ const replaceOption = (hash: string) =>
   [
     `--replace <id${hash}>`,
     `replace the resource with this ID in state, as for a param that forces replacement (repeatable)`,
+    collect,
+  ] as const;
+const credentialOption = (hash: string) =>
+  [
+    `--credential <id.credential${hash}=variable>`,
+    "give deploy the value of a credential without rotate, from the environment variable (repeatable)",
     collect,
   ] as const;
 const overrideLossProtectionOption = [
@@ -95,12 +100,7 @@ program
   .option("--no-drift-detection", "skip drift detection")
   .option(...replaceOption("@hash"))
   .option(...overrideLossProtectionOption)
-  .addOption(
-    new Option(
-      "--prompt-secrets",
-      "ask on the terminal for secret values even with --json",
-    ).hideHelp(),
-  )
+  .option(...credentialOption("@hash"))
   .action(async (options) => {
     const project = await load(options);
     const deployment = await resolveResumableDeployment(project, options);
@@ -110,10 +110,8 @@ program
       resumeCommand: resumeCommand("deploy", options),
       compile: options.compile,
       driftDetection: options.driftDetection,
-      requested: replaceRequest(options),
+      overrides: parseOverrides(options),
       config: options.config,
-      // Without --json, a person may still be at the terminal.
-      promptSecrets: options.promptSecrets || options.json !== true,
     });
   });
 
@@ -147,12 +145,13 @@ program
   .addOption(prettyOption())
   .option(...replaceOption("[@hash]"))
   .option(...overrideLossProtectionOption)
+  .option(...credentialOption("[@hash]"))
   .action(async (options) => {
     const project = await load(options);
     const deployment = resolveDeployment(project, { stage: options.stage });
     await plan(deployment, {
       output: resolveOutputMode(options),
-      requested: replaceRequest(options),
+      overrides: parseOverrides(options),
       config: options.config,
     });
   });
@@ -160,10 +159,11 @@ program
 program
   .command("viz")
   .option(...configOption)
+  .option(...stageOption)
   .description("Visualise Notation App")
   .action(async (options) => {
     const project = await load(options);
-    await visualise(resolveBuild(project));
+    await visualise(resolveDeployment(project, { stage: options.stage }));
   });
 
 program
@@ -175,35 +175,6 @@ program
     const project = await load(options);
     const deployment = resolveDeployment(project, { stage: options.stage });
     await watch(deployment);
-  });
-
-const secret = program
-  .command("secret")
-  .description("Set or delete the values of secrets");
-
-secret
-  .command("set <id>")
-  .option(...configOption)
-  .option(...stageOption)
-  .description(
-    "Set a secret's value, from a hidden prompt on a terminal or from stdin",
-  )
-  .action(async (id: string, options) => {
-    const project = await load(options);
-    const deployment = resolveDeployment(project, { stage: options.stage });
-    await secretSet(deployment, id);
-  });
-
-secret
-  .command("delete <id>")
-  .option(...configOption)
-  .option(...stageOption)
-  .option("--yes", "delete without asking for confirmation")
-  .description("Delete a secret from its store")
-  .action(async (id: string, options) => {
-    const project = await load(options);
-    const deployment = resolveDeployment(project, { stage: options.stage });
-    await secretDelete(deployment, id, { yes: options.yes });
   });
 
 function load(options: { config?: string }) {

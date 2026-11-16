@@ -1,10 +1,12 @@
 import { filePaths, fromProjectRoot, toProjectRoot } from "@notation/core";
 import {
   getDeclaredIn,
+  isOutputRef,
   onEvaluationEnd,
   perCollection,
   ResourceGroup,
   type DeclaredIn,
+  type OutputRef,
 } from "@notation/resource";
 import * as std from "@notation/std/resources";
 import * as cloudflare from "src/resources";
@@ -15,7 +17,6 @@ import {
   workerNames,
   workerResourceId,
 } from "src/id";
-import type { SecretValueFrom } from "src/secrets/value";
 import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
 import {
   describeNamespace,
@@ -24,8 +25,6 @@ import {
   type Registered,
 } from "./durable-object";
 import { isJsonBinding } from "./json";
-import { isWorkerSecret } from "./secret";
-import { boundSecret } from "./secrets-store";
 
 // Always set: the build imports Node's built-in modules as `node:` modules,
 // which workerd only provides under this flag.
@@ -40,10 +39,10 @@ export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
   id: Id;
   /**
    * The values that the Worker reads from `env`: a `$durableObject`
-   * namespace, another Worker, a secret from `secretsStore.bind()` or
-   * `workerSecret()`, an `R2Bucket`, a `KVNamespace`, a value from
-   * `json()` or a string. Return an object literal with no spread or
-   * computed keys.
+   * namespace, another Worker, a credential such as
+   * `source.credentials.value` (a Worker secret), a `SecretsStoreSecret`, an
+   * `R2Bucket`, a `KVNamespace`, a value from `json()` or a string. Return
+   * an object literal with no spread or computed keys.
    */
   bindings?: () => B;
   /** Such as `"2026-10-12"`. */
@@ -61,8 +60,11 @@ export type WorkerGroupConfig = {
   compatibilityDate: string;
   compatibilityFlags: string[];
   bindings: cloudflare.workers.WorkerBinding[];
-  /** The `secret_text` bindings by name, which the upload of the code sends. */
-  secrets: Record<string, SecretValueFrom>;
+  /**
+   * The `secret_text` bindings by name, each a credential of a resource,
+   * which the upload of the code sends.
+   */
+  secrets: Record<string, string>;
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotectedNamespaces?: string[];
@@ -361,7 +363,7 @@ function bindingCycleError(cycle: Entry[]): Error {
 
 type ResolvedBindings = {
   bindings: cloudflare.workers.WorkerBinding[];
-  secrets: Record<string, SecretValueFrom>;
+  secrets: Record<string, string>;
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotected: Set<string>;
@@ -432,28 +434,18 @@ function resolveBindings(
       }
       continue;
     }
-    const secret = boundSecret(value);
-    if (secret) {
-      // The output refs make the Worker depend on the secret, so the secret
-      // exists when the Worker is uploaded. Cloudflare fails an upload that
-      // binds a missing secret.
-      const reference = secret["~secret"]();
-      resolved.bindings.push({
-        type: "secrets_store_secret",
-        name,
-        store_id: reference.outputRef("StoreId"),
-        secret_name: reference.outputRef("Name"),
-      });
+    if (isOutputRef(value)) {
+      if (!isCredentialRef(value)) {
+        throw new Error(
+          `${self.describe()} binds ${name} to the output ${value.path.join(".")} of ${value.resource.id}, which is not a credential. A Worker binds an output of a resource only as a secret, and only a credential, such as \`token.credentials.Value\`, can be a secret.`,
+        );
+      }
+      resolved.secrets[name] = value as unknown as string;
       continue;
     }
     const worker = registeredWorker(value);
     if (worker) {
       resolved.services.push({ name, worker });
-      continue;
-    }
-    if (isWorkerSecret(value)) {
-      value.boundBy({ nameBody: workerNames(self.id).nameBody, name });
-      resolved.secrets[name] = value.valueFrom;
       continue;
     }
     if (hasResourceType(value, "cloudflare/r2/R2Bucket")) {
@@ -477,21 +469,36 @@ function resolveBindings(
       });
       continue;
     }
+    if (
+      hasResourceType(value, "cloudflare/secrets-store/SecretsStoreSecret")
+    ) {
+      // The output refs make the Worker depend on the secret, so the secret
+      // exists when the Worker is uploaded. Cloudflare fails an upload that
+      // binds a missing secret.
+      const secret =
+        value as unknown as cloudflare.secretsStore.SecretsStoreSecretInstance;
+      resolved.bindings.push({
+        type: "secrets_store_secret",
+        name,
+        store_id: secret.outputRef("StoreId"),
+        secret_name: secret.outputRef("Name"),
+      });
+      continue;
+    }
     if (isJsonBinding(value)) {
       resolved.bindings.push({ type: "json", name, json: value["~json"] });
       continue;
     }
-    if (typeof value === "object" && value !== null && "~secret" in value) {
-      throw new Error(
-        `${self.describe()} binds ${name} to a secret directly. Bind it with \`${name}: secretsStore.bind(secret)\`.`,
-      );
-    }
     throw new Error(
-      `${self.describe()} binds ${name} to a value that a Worker can't bind. Bind a Durable Object namespace from $durableObject, a Worker from $worker, a secret with secretsStore.bind() or workerSecret(), an R2Bucket, a KVNamespace, a value with json(), or a string.`,
+      `${self.describe()} binds ${name} to a value that a Worker can't bind. Bind a Durable Object namespace from $durableObject, a Worker from $worker, a credential such as \`source.credentials.value\`, a SecretsStoreSecret, an R2Bucket, a KVNamespace, a value with json(), or a string.`,
     );
   }
   return resolved;
 }
+
+const isCredentialRef = (ref: OutputRef): boolean =>
+  ref.path.length === 1 &&
+  ref.resource.schema[ref.path[0]!]?.propertyType === "credential";
 
 // Compared by type, not instanceof, so that a resource from another loaded
 // copy of the package is still recognised.

@@ -2,16 +2,21 @@ import fs from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SqliteRuntime, createSqliteDb } from "@notation/durable/sqlite/node";
 import type { ReconcilerEvent } from "@notation/reconciler";
 import {
   DurableStateBackend,
   resourceStateStore,
 } from "@notation/reconciler/durable";
-import { resource, type BaseResource } from "@notation/resource";
+import {
+  credentialSourceResource,
+  resource,
+  type BaseResource,
+} from "@notation/resource";
+import * as v from "valibot";
 import { resolveDeploymentId } from "src/config/deployment";
-import { deployApp } from "src/provisioner";
+import { deployApp, destroyApp, planApp } from "src/provisioner";
 import {
   loadProviderRegistry,
   stateProviderPackages,
@@ -43,6 +48,25 @@ const SubpathQueue = defineQueue(
   "test/acme/SubpathQueue",
   "@acme/queues/resources",
 );
+
+// Its package, @acme/sources, is never installed.
+const Source = credentialSourceResource<{
+  Params: { key: string };
+  Value: string;
+}>({ type: "test/acme/Source", provider: "@acme/sources" })
+  .defineSchema({
+    key: { propertyType: "param", presence: "required", value: v.string() },
+    revision: {
+      propertyType: "computed",
+      presence: "required",
+      value: v.string(),
+    },
+    value: { propertyType: "credential", value: v.string() },
+  } as const)
+  .defineOperations({
+    read: async () => ({ revision: "1" }),
+    loadCredential: async () => "value",
+  });
 
 const deployment = {
   app: "orders",
@@ -166,6 +190,19 @@ it("names no package for a record whose type has a class in code", () => {
       [{ id: "queue", type: Queue.type, provider: "@acme/uninstalled" }],
       [new Queue("queue")],
     ),
+  ).toEqual([]);
+});
+
+it("names no package for a source's record", () => {
+  expect(
+    stateProviderPackages([
+      {
+        id: "key",
+        type: Source.type,
+        provider: "@acme/sources",
+        kind: "credential-source",
+      },
+    ]),
   ).toEqual([]);
 });
 
@@ -573,4 +610,58 @@ it("loads no provider package, and warns of none, when every record's type has a
   expect(events.map((event) => event.event)).not.toContain(
     "reconciler.provider.load-failed",
   );
+});
+
+describe("a source that has left the code, whose provider package is not installed", () => {
+  beforeEach(async () => {
+    installPackage("@acme/queues", [Queue]);
+    const queue = new Queue("queue");
+    const source = new Source("key", { config: { key: "KEY" } });
+    source.dependOn(queue);
+    graph.resources = [queue, source];
+    await deploy("deploy-1");
+    graph.resources = [];
+  });
+
+  const warnings = () =>
+    events.filter(
+      (event) =>
+        event.event === "reconciler.provider.load-failed" ||
+        event.event === "reconciler.orphan-deletion.skipped",
+    );
+
+  it("is planned as a delete, with no warning", async () => {
+    const plan = await planApp({
+      deployment,
+      databasePath,
+      emit: (event) => void events.push(event),
+    });
+
+    expect(plan.nodes.map(({ id, decision }) => `${decision} ${id}`)).toEqual([
+      "delete-orphan key",
+      "delete-orphan queue",
+    ]);
+    expect(warnings()).toEqual([]);
+  });
+
+  it("has its record deleted by deploy, with what it depends on, and no warning", async () => {
+    await deploy("deploy-2");
+
+    expect(deleted.mock.calls).toEqual([[Queue.type]]);
+    expect(await withState((state) => state.values())).toEqual([]);
+    expect(warnings()).toEqual([]);
+  });
+
+  it("has its record deleted by destroy, with what it depends on, and no warning", async () => {
+    await destroyApp({
+      deployment,
+      databasePath,
+      executionId: "destroy-1",
+      emit: (event) => void events.push(event),
+    });
+
+    expect(deleted.mock.calls).toEqual([[Queue.type]]);
+    expect(await withState((state) => state.values())).toEqual([]);
+    expect(warnings()).toEqual([]);
+  });
 });

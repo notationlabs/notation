@@ -1,22 +1,25 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   credentialMarker,
   credentialNames,
   findCredentialMarkers,
   forEachOutputRef,
   isCredentialMarker,
+  isCredentialSource,
+  isPlainObject,
   mapCredentialMarkers,
+  toComparableParams,
   validateValues,
   type BaseResource,
   type CredentialMarker,
+  type RecordedOutputs,
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
-import { recordSecretValue } from "@notation/utils";
-import type { ResourceAction } from "./plan";
+import { recordSecretValue, sortedJson } from "@notation/utils";
 
 // The values of credentials, by version. They are kept here only, for the
 // life of the process, so a resumed deploy starts with none. A process runs
-// one deploy: `credentialsToMint` reads records and not this map, so a
+// one deploy: `getCredentialsToMint` reads records and not this map, so a
 // second deploy in the process would rotate a credential whose value is
 // still held.
 const held = new Map<string, unknown>();
@@ -25,18 +28,65 @@ const held = new Map<string, unknown>();
 // this process. An operation that is replayed from the journal receives none.
 const given = new WeakMap<BaseResource, Set<string>>();
 
+// The error that an operation of each resource throws when it reveals a
+// credential that deploy cannot get, by the credential's resource and name.
+const unobtainable = new WeakMap<BaseResource, Map<string, Error>>();
+
+/**
+ * Sets the error that `revealCredentials` throws when an operation of
+ * `taker` receives the credential `name` of `resource` and deploy holds no
+ * value for it.
+ */
+export function deferUnobtainable(
+  taker: BaseResource,
+  resource: string,
+  name: string,
+  error: Error,
+): void {
+  if (!unobtainable.has(taker)) unobtainable.set(taker, new Map());
+  unobtainable.get(taker)!.set(`${resource}.${name}`, error);
+}
+
 /**
  * Keeps a credential's value in memory, and returns the version that names
- * it. Every string in the value is removed from error messages from then on.
+ * it: `version`, or a new one. Every string in the value is removed from
+ * error messages from then on.
  */
-export function holdCredential(value: unknown): string {
+export function holdCredential(
+  value: unknown,
+  version: string = randomUUID(),
+): string {
   recordSecretStrings(value);
-  const version = randomUUID();
   held.set(version, value);
   return version;
 }
 
-function recordSecretStrings(value: unknown): void {
+/**
+ * The version of a source's credential: a SHA-256 of the source's ID, the
+ * credential's name, its comparable params and its revision. A source with
+ * the same params and revision gives the same version in every deploy, so
+ * loading the value again changes no resource that takes it.
+ */
+export function computeSourceCredentialVersion(
+  source: BaseResource,
+  name: string,
+  params: Record<string, unknown>,
+  revision: unknown,
+): string {
+  return createHash("sha256")
+    .update(
+      sortedJson.encode([
+        source.id,
+        name,
+        toComparableParams(source.schema, params),
+        revision,
+      ]),
+    )
+    .digest("hex");
+}
+
+/** Removes every string in `value` from error messages from now on. */
+export function recordSecretStrings(value: unknown): void {
   if (typeof value === "string") recordSecretValue(value);
   else if (value && typeof value === "object") {
     Object.values(value).forEach(recordSecretStrings);
@@ -57,7 +107,7 @@ export function clearHeldCredentials(): void {
  * The marker has no version, so deploy gets a new value before a resource
  * takes the credential.
  */
-export function withCredentialMarkers(
+export function addCredentialMarkers(
   resource: BaseResource,
   output: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -72,17 +122,17 @@ export function withCredentialMarkers(
 
 /**
  * Sets the resource's output from a record or a read, with a marker for each
- * credential. See `withCredentialMarkers`.
+ * credential. See `addCredentialMarkers`.
  */
 export function setRecordedOutput(
   resource: BaseResource,
   output: Record<string, unknown>,
 ): void {
-  resource.setOutput(withCredentialMarkers(resource, output));
+  resource.setOutput(addCredentialMarkers(resource, output));
 }
 
 /** `value` without the properties that are credentials of the resource. */
-export function withoutCredentials<T extends {} | null | void>(
+export function omitCredentials<T extends {} | null | void>(
   resource: BaseResource,
   value: T,
 ): T {
@@ -97,15 +147,15 @@ export function withoutCredentials<T extends {} | null | void>(
  * `state`: without its own credentials, and with `undefined` in place of
  * each credential that it takes.
  */
-export function operationState(resource: BaseResource): {} {
+export function getOperationState(resource: BaseResource): {} {
   return mapCredentialMarkers(
-    resource.toState(withoutCredentials(resource, resource.output)),
+    resource.toState(omitCredentials(resource, resource.output)),
     () => undefined,
   ) as {};
 }
 
 /** The credential markers in the resource's output. */
-export function credentialOutputs(
+export function getCredentialOutputs(
   resource: BaseResource,
 ): Record<string, unknown> {
   const output = (resource.output ?? {}) as Record<string, unknown>;
@@ -152,15 +202,27 @@ export async function holdCreated(
 
 /**
  * Copies a value, with the held value in place of each credential marker.
- * Throws for a marker whose value is not held. `taker` is the resource whose
- * operation receives the copy.
+ * Throws for a marker whose value is not held: the error that
+ * `deferUnobtainable` set, if any. `taker` is the resource whose operation
+ * receives the copy.
+ *
+ * With `recorded`, a marker that `recorded` holds at the same path is
+ * `undefined` in the copy: the record of `taker` shows that it already has
+ * that version there.
  */
-export function revealCredentials<T>(value: T, taker: BaseResource): T {
-  return mapCredentialMarkers(value, (marker) => {
+export function revealCredentials<T>(
+  value: T,
+  taker: BaseResource,
+  recorded?: unknown,
+): T {
+  return mapChangedCredentials(value, recorded, (marker) => {
     const { resource, name, version } = marker.$credential;
     if (!holdsCredential(version)) {
-      throw new Error(
-        `Deploy holds no value for the credential ${name} of ${resource}`,
+      throw (
+        unobtainable.get(taker)?.get(`${resource}.${name}`) ??
+        new Error(
+          `Deploy holds no value for the credential ${name} of ${resource}`,
+        )
       );
     }
     if (!given.has(taker)) given.set(taker, new Set());
@@ -170,27 +232,100 @@ export function revealCredentials<T>(value: T, taker: BaseResource): T {
 }
 
 /**
- * Whether an operation of `taker` has received, in this process, the value
- * of every credential marker in `value`.
+ * The credential markers in `value` that `recorded` does not hold at the
+ * same path.
  */
-export function wasGivenCredentials(
-  taker: BaseResource,
+export function getChangedCredentials(
   value: unknown,
-): boolean {
-  return findCredentialMarkers(value).every(
-    ({ $credential }) =>
-      given.get(taker)?.has($credential.version ?? "") ?? false,
+  recorded: unknown,
+): CredentialMarker[] {
+  const changed: CredentialMarker[] = [];
+  mapChangedCredentials(value, recorded, (marker) => changed.push(marker));
+  return changed;
+}
+
+/**
+ * Copies a value, with `onMarker` applied to each credential marker that
+ * differs from the value at the same path in `recorded`. A marker that is
+ * the same there is `undefined` in the copy. A marker found at another path
+ * does not count: a resource that took the credential under one name has
+ * not taken it under another.
+ */
+function mapChangedCredentials(
+  value: unknown,
+  recorded: unknown,
+  onMarker: (marker: CredentialMarker) => unknown,
+): unknown {
+  if (isCredentialMarker(value)) {
+    return isCredentialMarker(recorded) && isSameMarker(value, recorded)
+      ? undefined
+      : onMarker(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry, index) =>
+      mapChangedCredentials(
+        entry,
+        Array.isArray(recorded) ? recorded[index] : undefined,
+        onMarker,
+      ),
+    );
+  }
+  if (isPlainObject(value)) {
+    const previous = isPlainObject(recorded) ? recorded : {};
+    const mapped: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      mapped[key] = mapChangedCredentials(entry, previous[key], onMarker);
+    }
+    return mapped;
+  }
+  return value;
+}
+
+function isSameMarker(a: CredentialMarker, b: CredentialMarker): boolean {
+  return (
+    a.$credential.resource === b.$credential.resource &&
+    a.$credential.name === b.$credential.name &&
+    a.$credential.version === b.$credential.version
   );
 }
 
 /**
- * Copies a value, with no version in each credential marker, as in the
- * record of a resource that has not taken the credential's current value.
+ * The credentials in `markers` whose values an operation of `taker` has not
+ * received in this process. The credentials of the sources among
+ * `resources` are left out: a source gives the same value for the same
+ * version, so an operation replayed from the journal received that value.
+ * The credentials without `rotate` are left out too: the resource received
+ * their value when the operation first ran.
  */
-export function staleCredentialMarkers<T>(value: T): T {
-  return mapCredentialMarkers(value, ({ $credential }) =>
-    credentialMarker($credential.resource, $credential.name, null),
-  ) as T;
+export function findCredentialsNotReceived(
+  taker: BaseResource,
+  markers: readonly CredentialMarker[],
+  resources: readonly BaseResource[],
+): CredentialMarker[] {
+  return markers.filter(({ $credential }) => {
+    const producer = resources.find(({ id }) => id === $credential.resource);
+    if (producer && isCredentialSource(producer)) return false;
+    // Deploy cannot give the value of a credential without `rotate` again.
+    if (producer && !producer.rotate?.[$credential.name]) return false;
+    return !(given.get(taker)?.has($credential.version ?? "") ?? false);
+  });
+}
+
+/**
+ * Copies a value, with no version in each credential marker whose version
+ * is in `versions`, as in the record of a resource that has not taken those
+ * values.
+ */
+export function markCredentialsStale<T>(
+  value: T,
+  versions: readonly string[],
+): T {
+  return mapCredentialMarkers(value, (marker) => {
+    const { resource, name, version } = marker.$credential;
+    return version !== null && versions.includes(version)
+      ? credentialMarker(resource, name, null)
+      : marker;
+  }) as T;
 }
 
 /**
@@ -212,26 +347,12 @@ export function assertNoHiddenCredential(resource: BaseResource): void {
   }
 }
 
-/**
- * `revealCredentials` for the params of an update. A param that holds a
- * credential whose value is not held is left out.
- */
-export function revealHeldCredentials(
-  params: Record<string, unknown>,
-  taker: BaseResource,
-): Record<string, unknown> {
-  const revealed: Record<string, unknown> = {};
-  for (const [field, value] of Object.entries(params)) {
-    if (unheldCredentials(value).length > 0) continue;
-    revealed[field] = revealCredentials(value, taker);
-  }
-  return revealed;
-}
-
-/** The credential markers in a value whose values are not held. */
-export function unheldCredentials(value: unknown): CredentialMarker[] {
+/** The credentials in `markers` whose values are not held, each once. */
+export function findUnheldCredentials(
+  markers: readonly CredentialMarker[],
+): CredentialMarker[] {
   const seen = new Set<string>();
-  return findCredentialMarkers(value).filter((marker) => {
+  return markers.filter((marker) => {
     const { resource, name, version } = marker.$credential;
     const id = JSON.stringify([resource, name]);
     if (holdsCredential(version) || seen.has(id)) return false;
@@ -244,7 +365,7 @@ export function unheldCredentials(value: unknown): CredentialMarker[] {
  * Copies a value, with each credential marker replaced by the marker that
  * its resource's output holds now.
  */
-export function currentCredentialMarkers<T>(
+export function refreshCredentialMarkers<T>(
   value: T,
   resources: readonly BaseResource[],
 ): T {
@@ -273,46 +394,110 @@ export function takesCredential(
     );
 }
 
+/** Why a resource needs the value of a credential that deploy does not hold. */
+export type CredentialNeed =
+  /** The producer's record has no version for the credential. */
+  | "no-version"
+  /** The consumer has no record. */
+  | "consumer-added"
+  /** The consumer has a "creating" record. */
+  | "consumer-create-unfinished"
+  /** Deploy replaces the consumer. */
+  | "consumer-replaced"
+  /** The consumer's record does not hold the credential's version. */
+  | "consumer-behind"
+  /**
+   * An operation of the consumer receives the value, and the process holds
+   * none: the process that received it has ended, as before a resume.
+   */
+  | "not-held";
+
 /**
- * The credentials of `producer` that need a new value: a resource takes the
- * credential, and one of these holds:
+ * The reason that a consumer's record gives by itself: the consumer has no
+ * record, or a "creating" record.
+ */
+export function getConsumerNeed(
+  record: StateNode | undefined,
+): "consumer-added" | "consumer-create-unfinished" | undefined {
+  if (!record) return "consumer-added";
+  return isCreatingRecord(record) ? "consumer-create-unfinished" : undefined;
+}
+
+/**
+ * The credentials of `producer` that need a new value, each with the first
+ * resource that needs it and the reason. A resource takes the credential,
+ * and one of these holds:
  *
  * 1. The output in the producer's record has no version for it.
  * 2. A resource that takes it has no record, or a "creating" record.
- * 3. The record of a resource that takes it holds another version, because
- *    an earlier deploy failed before it updated the resource.
+ * 3. The record of a resource that takes it does not hold the version at
+ *    each path where its params take it, as `getChangedCredentials` compares
+ *    them. An earlier deploy failed before it updated the resource, or the
+ *    resource now takes the credential under another name, such as a
+ *    renamed Worker secret.
+ *
+ * A source's credential is never in the list: deploy loads its value again.
  */
-export function credentialsToMint(
+export async function getCredentialsToMint(
   producer: BaseResource,
   output: Record<string, unknown>,
   consumers: readonly { resource: BaseResource; record?: StateNode }[],
-): string[] {
-  return credentialNames(producer.schema).filter((name) => {
-    const taking = consumers.filter(({ resource }) =>
-      takesCredential(resource, producer, name),
-    );
-    if (taking.length === 0) return false;
+  recordedOutputs: RecordedOutputs,
+): Promise<{ name: string; consumer: BaseResource; reason: CredentialNeed }[]> {
+  if (isCredentialSource(producer)) return [];
+  const planned = new Map<BaseResource, Promise<Record<string, unknown>>>();
+  const paramsOf = (resource: BaseResource) => {
+    if (!planned.has(resource)) {
+      planned.set(resource, resource.planParams({ recordedOutputs }));
+    }
+    return planned.get(resource)!;
+  };
+  const needed: {
+    name: string;
+    consumer: BaseResource;
+    reason: CredentialNeed;
+  }[] = [];
+  for (const name of credentialNames(producer.schema)) {
     const marker = output[name];
-    const version = isCredentialMarker(marker)
-      ? marker.$credential.version
-      : null;
-    if (version === null) return true;
-    return taking.some(
-      ({ record }) =>
-        !record ||
-        isCreatingRecord(record) ||
-        !findCredentialMarkers(record.params).some(
-          ({ $credential: held }) =>
-            held.resource === producer.id &&
-            held.name === name &&
-            held.version === version,
-        ),
-    );
-  });
+    const current =
+      isCredentialMarker(marker) && marker.$credential.version !== null
+        ? marker
+        : null;
+    const isThis = ({ $credential }: CredentialMarker) =>
+      $credential.resource === producer.id && $credential.name === name;
+    for (const { resource, record } of consumers) {
+      if (!takesCredential(resource, producer, name)) continue;
+      const reason: CredentialNeed | undefined = !current
+        ? "no-version"
+        : (getConsumerNeed(record) ??
+          (getChangedCredentials(
+            mapCredentialMarkers(await paramsOf(resource), (found) =>
+              isThis(found) ? current : found,
+            ),
+            record!.params,
+          ).some(isThis)
+            ? "consumer-behind"
+            : undefined));
+      if (reason) {
+        needed.push({ name, consumer: resource, reason });
+        break;
+      }
+    }
+  }
+  return needed;
+}
+
+/** The version that the producer's output holds for the credential. */
+export function getCredentialVersion(
+  producer: BaseResource,
+  name: string,
+): string | null {
+  const marker = (producer.output as Record<string, unknown> | null)?.[name];
+  return isCredentialMarker(marker) ? marker.$credential.version : null;
 }
 
 /** The resources that take a credential of `producer`. */
-export function credentialConsumers(
+export function findCredentialConsumers(
   producer: BaseResource,
   resources: readonly BaseResource[],
 ): BaseResource[] {
@@ -321,33 +506,4 @@ export function credentialConsumers(
     (candidate) =>
       candidate !== producer && takesCredential(candidate, producer),
   );
-}
-
-/**
- * How deploy gets a new value for each of the credentials `names` of
- * `producer`. It rotates them when each has a `rotate` operation. Otherwise
- * it replaces the producer, and `replace` is the action for that.
- */
-export function mintAction(
-  producer: BaseResource,
-  names: string[],
-): {
-  rotates: string[];
-  replace?: Extract<ResourceAction, { decision: "replace" }>;
-} {
-  const unrotatable = names.filter((name) => !producer.rotate?.[name]);
-  if (unrotatable.length === 0) return { rotates: names };
-  return {
-    rotates: [],
-    replace: {
-      decision: "replace",
-      patch: {},
-      diff: { added: {}, deleted: {}, updated: {} },
-      replaceFields: unrotatable.map((name) => ({
-        name,
-        known: true,
-        credential: true,
-      })),
-    },
-  };
 }

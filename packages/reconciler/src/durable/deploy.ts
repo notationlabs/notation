@@ -1,12 +1,29 @@
-import type { StateNode } from "@notation/state";
+import {
+  credentialNames,
+  findCredentialMarkers,
+  isCredentialSource,
+  type BaseResource,
+} from "@notation/resource";
+import { isCreatingRecord, type StateNode } from "@notation/state";
+import { findCredentialConsumers } from "../credentials";
 import { isCycle, orderDeployUnits } from "../cycles";
 import { assertDependenciesPresent } from "../dependency-graph";
 import { sweepSteps, sweptRecords } from "../orphan-sweep";
-import { assertOrphanDeleteAllowed, decideAction } from "../plan";
+import {
+  assertOrphanDeleteAllowed,
+  decideAction,
+  keepsResource,
+} from "../plan";
 import { loadUnit, planKnownParams } from "../planner";
 import { readRecordedOutputs } from "../recorded-outputs";
-import { assertReplaceRequest, requestedReplace } from "../replace-request";
+import { assertOverrides, findReplaceOverride } from "../overrides";
 import { workflowRegistry, type ResourceRegistry } from "../resource-registry";
+import {
+  mintedCredentials,
+  rotatesForCreate,
+  throwIfUnobtainable,
+  type UnobtainableCredential,
+} from "../unobtainable-credential";
 import { reconcileCycle } from "./cycle";
 import { withDeploymentHold } from "./deployment-hold";
 import { reconcileResource, sweepOrphans } from "./reconcile";
@@ -26,16 +43,16 @@ export async function* deploy(
     // message, not a class's refusal of the replace. Outside the hold, this
     // can fail with "not in state" while another deploy is in a delete-first
     // replace of the target. That is accepted.
-    await checkReplaceRequest(opts);
+    await checkOverrides(opts);
     await validateKnownParams(opts);
     return null;
   });
   yield* withDeploymentHold(step, opts, async function* () {
     // Again inside the hold, so that a deploy that waited for another one
     // checks the hashes against the records that the other one left.
-    if (opts.requested) {
-      yield* step.run("notation:replace-request", async () => {
-        await checkReplaceRequest(opts);
+    if (opts.overrides) {
+      yield* step.run("notation:overrides", async () => {
+        await checkOverrides(opts);
         return null;
       });
     }
@@ -68,9 +85,9 @@ export async function* deploy(
   });
 }
 
-async function checkReplaceRequest(opts: DurableDeployOptions): Promise<void> {
-  if (!opts.requested) return;
-  assertReplaceRequest(opts.requested, {
+async function checkOverrides(opts: DurableDeployOptions): Promise<void> {
+  if (!opts.overrides) return;
+  assertOverrides(opts.overrides, {
     resources: opts.resources,
     records: await opts.state.values(),
     deploymentId: opts.state.deploymentId,
@@ -91,9 +108,20 @@ async function checkReplaceRequest(opts: DurableDeployOptions): Promise<void> {
  * drift reads and on the outputs of dependencies that deploy creates again.
  * Neither is known yet, so the check would fail deploys that succeed. Plan
  * still checks before any change.
+ *
+ * A credential without `rotate` that deploy needs and cannot get is checked
+ * here as plan checks it, from the decisions without drift. As in plan, the
+ * error lists every such credential.
  */
 async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
   const recordedOutputs = await readRecordedOutputs(opts.resources, opts.state);
+  const records = new Map(
+    (await opts.state.values()).map((node) => [node.id, node]),
+  );
+  // The credentials that get a new value before deploy reaches the resources
+  // that take them, by the ID of their resource.
+  const renewed = new Map<string, readonly string[]>();
+  const unobtainable: UnobtainableCredential[] = [];
   for (const unit of orderDeployUnits(opts.resources)) {
     for (const resource of await loadUnit(unit, opts.state)) {
       const { stateNode, params } = await planKnownParams(
@@ -102,16 +130,48 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
         "deploy",
         recordedOutputs,
       );
-      if (stateNode) {
-        decideAction({
+      // A source is never replaced, so no change to it is checked.
+      if (isCredentialSource(resource)) continue;
+      const decision = stateNode
+        ? decideAction({
+            resource,
+            stateNode,
+            params,
+            replaceOverride: findReplaceOverride(opts.overrides, resource.id),
+          }).decision
+        : "create";
+      renewed.set(
+        resource.id,
+        stateNode && !isCreatingRecord(stateNode) && keepsResource(decision)
+          ? await mintedCredentials({
+              producer: resource,
+              record: stateNode,
+              consumers: findCredentialConsumers(resource, opts.resources).map(
+                (consumer) => ({
+                  resource: consumer,
+                  record: records.get(consumer.id),
+                }),
+              ),
+              recordedOutputs,
+              overrides: opts.overrides,
+              deploymentId: opts.state.deploymentId,
+              unobtainable,
+            })
+          : credentialNames(resource.schema),
+      );
+      if (!keepsResource(decision)) {
+        findCredentialsForCreate(
+          opts,
           resource,
-          stateNode,
           params,
-          requested: requestedReplace(opts.requested, resource.id),
-        });
+          records,
+          renewed,
+          unobtainable,
+        );
       }
     }
   }
+  throwIfUnobtainable(unobtainable, opts.overrides);
   const registry = workflowRegistry(opts);
   for (const stateNode of orphansDeployDeletes(
     await opts.state.values(),
@@ -119,6 +179,39 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
     registry,
   )) {
     assertOrphanDeleteAllowed(registry, stateNode);
+  }
+}
+
+/**
+ * Adds to `unobtainable` each credential that `resource` takes, and that
+ * deploy cannot get when it creates `resource` again. See
+ * `rotatesForCreate`.
+ */
+function findCredentialsForCreate(
+  opts: DurableDeployOptions,
+  resource: BaseResource,
+  params: Record<string, unknown>,
+  records: ReadonlyMap<string, StateNode>,
+  renewed: Map<string, readonly string[]>,
+  unobtainable: UnobtainableCredential[],
+): void {
+  for (const { $credential } of findCredentialMarkers(params)) {
+    const { resource: id, name } = $credential;
+    const producer = opts.resources.find((candidate) => candidate.id === id);
+    if (!producer || isCredentialSource(producer)) continue;
+    // As in plan, a producer that comes later in a cycle is skipped.
+    if (!renewed.has(id) || renewed.get(id)!.includes(name)) continue;
+    const rotates = rotatesForCreate({
+      consumer: resource,
+      consumerRecord: records.get(resource.id),
+      producer,
+      name,
+      record: records.get(id),
+      overrides: opts.overrides,
+      deploymentId: opts.state.deploymentId,
+      unobtainable,
+    });
+    if (rotates) renewed.set(id, [...(renewed.get(id) ?? []), name]);
   }
 }
 

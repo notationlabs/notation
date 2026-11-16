@@ -1,13 +1,18 @@
 export {
   createLoggerReconcilerSubscriber,
   createNdjsonEventEmitter,
-  formatRequest,
+  UnobtainableCredentialError,
+  formatOverrides,
+  parseCredentialTarget,
   parseReplaceTarget,
+  findCredentialOverride,
   shellQuote,
+  unobtainableCredentialMessage,
   type Logger,
   type ReconcilerEvent,
   type ReconcilerEventEmitter,
-  type ReplaceRequest,
+  type CredentialTarget,
+  type Overrides,
   type ReplaceTarget,
 } from "@notation/reconciler";
 export * from "./workflow.deploy";

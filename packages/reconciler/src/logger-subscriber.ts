@@ -66,5 +66,7 @@ export function formatReconcilerEvent(event: ReconcilerEvent): string {
     }
     case "reconciler.provider.load-failed":
       return `provider load failed: ${event.provider} error: ${event.errorMessage}`;
+    case "reconciler.source.warning":
+      return `source warning: ${event.resourceId} (${event.resourceType}) ${event.message}`;
   }
 }

@@ -70,7 +70,7 @@ export type ResourceOpts<C, D> = OptionalIfAllPropertiesOptional<"config", C> &
  * The arguments a resource takes after its ID. The options can be left out
  * when neither config nor dependencies has a required property.
  */
-type ResourceArgs<C, D> =
+export type ResourceArgs<C, D> =
   {} extends ResourceOpts<C, D>
     ? [opts?: ResourceOpts<C, D>]
     : [opts: ResourceOpts<C, D>];
@@ -132,7 +132,16 @@ export type ConfigParams<
  */
 export type ResourceGroupRef = { type: string; id: string };
 
+/**
+ * `resource`: something that deploy creates at a provider. `credential-source`:
+ * a value that exists outside notation, which `credentialSourceResource`
+ * builds. The reconciler reads this field and not `instanceof`, which fails
+ * when two copies of this package are loaded.
+ */
+export type ResourceKind = "resource" | "credential-source";
+
 export interface BaseResource {
+  readonly kind: ResourceKind;
   readonly type: ResourceType;
   readonly provider: string;
   readonly schema: Schema;
@@ -156,6 +165,8 @@ export interface BaseResource {
     string,
     ((key: any, state: any) => Promise<unknown>) | undefined
   >;
+  /** See `ResourceOperationsOptions.rotateManually`. */
+  rotateManually?: Record<string, string | undefined>;
   read?: (
     key: any,
     context?: ResourceOperationContext,
@@ -269,6 +280,7 @@ export abstract class Resource<
   D extends Record<string, BaseResource | void> = {},
   C extends Record<string, any> = T["params"],
 > implements BaseResource {
+  readonly kind: ResourceKind = "resource";
   config: C;
   id: string;
   declare readonly declaredAt?: string;
@@ -293,6 +305,7 @@ export abstract class Resource<
   ) => Promise<T["created"]>;
   find?: (params: T["params"]) => Promise<T["primaryKey"] & {}>;
   rotate?: RotateOperations<T>;
+  rotateManually?: { [K in keyof T["credentials"]]?: string };
   abstract read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -972,10 +985,19 @@ export type ResourceOperationsOptions<
   /**
    * Deploy calls the function of a credential when a resource that takes
    * the credential needs its value and deploy holds none, for example when
-   * the resource is added in a later deploy. Without a function, deploy
-   * replaces this resource to get a new value.
+   * the resource is added in a later deploy. Without a function, plan and
+   * deploy fail in that case, unless `notation deploy --replace` or
+   * `--credential` names the credential.
    */
   rotate?: RotateOperations<T>;
+  /**
+   * For a credential without `rotate`, one sentence that tells the user how
+   * to issue a new value at the provider, such as "Generate a new private
+   * key in the GitHub App's settings, under Private keys." The error that
+   * plan and deploy print for the credential shows it above the
+   * `--credential` command.
+   */
+  rotateManually?: { [K in keyof T["credentials"]]?: string };
   /**
    * Finds the resource that a create with `params` makes, and returns what
    * that create would have returned. A class defines it when the provider
@@ -1005,10 +1027,10 @@ export type ResourceOperationsOptions<
     params?: T["params"],
   ) => Promise<T["result"]>;
   /**
-   * A param that takes a credential of another resource holds the value in
-   * `params` only when `patch` holds it. Otherwise it is `undefined` in
-   * `params`, so an update that sends every param to the provider has to
-   * leave it out of the request.
+   * A credential of another resource is passed in `patch` and `params` only
+   * when its version differs from the version in this resource's record.
+   * Every other credential is `undefined` in its place, so an update that
+   * sends every param to the provider has to leave it out of the request.
    */
   update?: (
     key: T["compoundKey"],
@@ -1146,6 +1168,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             create = opts.create;
             find = opts.find;
             rotate = opts.rotate;
+            rotateManually = opts.rotateManually;
             read = opts.read ? opts.read : undefined;
             update = opts.update ? opts.update : undefined;
             delete = opts.delete;

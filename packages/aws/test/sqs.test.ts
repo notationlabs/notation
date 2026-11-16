@@ -624,6 +624,8 @@ test("a plan creates the queue and the policy before the mapping", async () => {
   });
 
   const plan = await createPlan({
+    app: "app",
+    stage: "test",
     resources: graph.resources,
     state: new MemoryStateBackend({}),
   });

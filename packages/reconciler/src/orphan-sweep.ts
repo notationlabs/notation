@@ -1,10 +1,7 @@
-import type { ResourceClass, ResourceType } from "@notation/resource";
+import type { ResourceClass } from "@notation/resource";
 import type { StateNode } from "@notation/state";
 import { buildDepthLevels } from "./dependency-graph";
-import {
-  resolveResourceClass,
-  type ResourceRegistry,
-} from "./resource-registry";
+import { resolveRecordClass, type ResourceRegistry } from "./resource-registry";
 
 /**
  * A record that the sweep reaches. For an orphan, the sweep deletes its
@@ -22,7 +19,8 @@ export type SweepStep = SweptRecord &
 /**
  * The steps of the sweep, in delete order: each record that it deletes or
  * deletes retired instances of, with its class, and each orphan whose class
- * isn't registered, with the resources that it keeps in place. A record that
+ * isn't registered, with the resources that it keeps in place. A source's
+ * record always has a class; see `resolveRecordClass`. A record that
  * `kept` holds, or that an orphan with no class depends on, is left out.
  * `kept` gains each resource that the sweep keeps.
  */
@@ -35,7 +33,7 @@ export function sweepSteps(
   const steps: SweepStep[] = [];
   for (const record of orderSweep(swept, edgesById)) {
     const { node } = record;
-    const Resource = resolveResourceClass(registry, node.type as ResourceType);
+    const Resource = resolveRecordClass(registry, node);
     // An unregistered orphan is listed even when another orphan already
     // keeps it, so that the warnings name every type the sweep could not
     // delete. A record in code with no class is destroy's to warn about.

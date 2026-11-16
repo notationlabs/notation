@@ -40,12 +40,6 @@ export function containsUnknownAfterApply(value: unknown): boolean {
 export type ParamReplaceField = {
   name: string;
   known: boolean;
-  /**
-   * Set when the field is a credential that did not change. A resource that
-   * takes it needs a new value, and the credential has no `rotate`
-   * operation, so the resource is replaced.
-   */
-  credential?: true;
   requested?: never;
 };
 
@@ -54,8 +48,7 @@ export type ParamReplaceField = {
  * `--replace`, which names no field.
  */
 export type ReplaceField =
-  | ParamReplaceField
-  | { requested: true; known: true; name?: never; credential?: never };
+  ParamReplaceField | { requested: true; known: true; name?: never };
 
 export type ParamsDiffDisplay = {
   added: Record<string, unknown>;

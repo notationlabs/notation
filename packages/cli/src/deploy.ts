@@ -1,18 +1,17 @@
 import {
   deployApp,
-  formatRequest,
+  formatOverrides,
+  parseCredentialTarget,
   parseReplaceTarget,
   resolveDeploymentId,
   type Deployment,
-  type ReplaceRequest,
-  type SecretPrompt,
+  type Overrides,
 } from "@notation/core";
 import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
 import { createEventRenderer, type OutputMode } from "./output";
-import { targetFlags } from "./plan";
-import { canPrompt, terminalSecretPrompt } from "./prompt";
+import { targetFlags, withDeployCommands } from "./plan";
 
 export type DeployCommandOptions = {
   output?: OutputMode;
@@ -24,17 +23,11 @@ export type DeployCommandOptions = {
   driftDetection?: boolean;
   logger?: Logger;
   /**
-   * Asks on the terminal for secret values even in JSON output. `watch` sets
-   * it for the deploys it runs, whose stdout carries events to `watch`. The
-   * CLI also sets it when the output is JSON only because stdout is not a
-   * terminal.
+   * The overrides from `--replace`, `--override-loss-protection` and
+   * `--credential`.
    */
-  promptSecrets?: boolean;
-  /** Defaults to the prompt that `secretPrompt` picks. */
-  promptSecret?: SecretPrompt;
-  /** The replaces from `--replace` and `--override-loss-protection`. */
-  requested?: ReplaceRequest;
-  /** The `--config` path, for the plan command that a missing hash prints. */
+  overrides?: Overrides;
+  /** The `--config` path, for the commands that the errors of deploy print. */
   config?: string;
 };
 
@@ -59,68 +52,72 @@ export async function deploy(
     );
   }
 
-  await deployApp({
-    deployment,
-    emit,
-    executionId,
-    driftDetection: opts.driftDetection,
-    requested: opts.requested,
-    promptSecret:
-      opts.promptSecret ??
-      secretPrompt({
-        json: output === "json",
-        promptSecrets: opts.promptSecrets,
-      }),
-  });
+  await withDeployCommands(deployment, opts.config, () =>
+    deployApp({
+      deployment,
+      emit,
+      executionId,
+      driftDetection: opts.driftDetection,
+      overrides: opts.overrides,
+    }),
+  );
 }
 
 /**
- * How deploy asks for the value of a secret without a source: on the
- * terminal, with the question on stderr. There is no prompt without a
- * terminal, or with `--json` unless `promptSecrets` is set, so deploy fails
- * with the command that sets the secret.
- */
-export function secretPrompt(opts: {
-  json?: boolean;
-  promptSecrets?: boolean;
-}): SecretPrompt | undefined {
-  if (opts.json && !opts.promptSecrets) return undefined;
-  if (!canPrompt()) return undefined;
-  return terminalSecretPrompt();
-}
-
-/**
- * Throws if a `--replace` has no instance hash, with the plan command that
- * prints the deploy command with the hash. Skipped on a resume, so that
- * `assertSameRequest` reports a request that differs from the saved one.
+ * Throws if a `--replace` or a `--credential` has no instance hash, with the
+ * plan command that prints the deploy command with them.
+ * Skipped on a resume, so that `assertSameOverrides` reports overrides that
+ * differ from the saved one.
  */
 function assertHashesGiven(
   deployment: Deployment,
   opts: DeployCommandOptions,
 ): void {
   if (opts.executionId !== undefined) return;
-  const missing = opts.requested?.replace.find(
+  const plan = `Run notation plan ${targetFlags(deployment, opts.config)} ${formatOverrides(opts.overrides)}`;
+  const missing = opts.overrides?.replace.find(
     (target) => target.instanceHash === undefined,
   );
-  if (!missing) return;
-  throw new Error(
-    `--replace ${missing.id} needs the instance hash, as --replace ${missing.id}@<instance hash>. Run notation plan ${targetFlags(deployment, opts.config)} ${formatRequest(opts.requested)} to print the deploy command with the hash.`,
+  if (missing) {
+    throw new Error(
+      `--replace ${missing.id} needs the instance hash, as --replace ${missing.id}@<instance hash>. ${plan} to print the deploy command with the hash.`,
+    );
+  }
+  const unhashed = opts.overrides?.credential?.find(
+    (target) => target.instanceHash === undefined,
   );
+  if (unhashed) {
+    const { id, name, variable } = unhashed;
+    throw new Error(
+      `--credential ${id}.${name} needs the instance hash, as --credential ${id}.${name}@<instance hash>=${variable}. ${plan} to print the deploy command with the hash.`,
+    );
+  }
 }
 
 /**
- * Reads `--replace` and `--override-loss-protection`. Undefined when neither
- * is given, so that a resume uses the request that the execution saved.
+ * Reads `--replace`, `--override-loss-protection` and `--credential`.
+ * Undefined when none is given, so that a resume uses the overrides that the
+ * execution saved.
  */
-export function replaceRequest(options: {
+export function parseOverrides(options: {
   replace?: string[];
   overrideLossProtection?: string[];
-}): ReplaceRequest | undefined {
-  if (!options.replace && !options.overrideLossProtection) return undefined;
+  credential?: string[];
+}): Overrides | undefined {
+  if (
+    !options.replace &&
+    !options.overrideLossProtection &&
+    !options.credential
+  ) {
+    return undefined;
+  }
   return {
     replace: (options.replace ?? []).map(parseReplaceTarget),
     ...(options.overrideLossProtection
       ? { overrideLossProtection: options.overrideLossProtection }
+      : {}),
+    ...(options.credential
+      ? { credential: options.credential.map(parseCredentialTarget) }
       : {}),
   };
 }

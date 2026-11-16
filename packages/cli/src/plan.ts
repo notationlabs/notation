@@ -1,13 +1,14 @@
 import {
-  formatRequest,
+  formatOverrides,
   planApp,
-  PROMPT_SOURCE,
+  findCredentialOverride,
   resolveDeploymentId,
   shellQuote,
+  UnobtainableCredentialError,
   type Deployment,
   type Plan,
   type PlanNode,
-  type ReplaceRequest,
+  type Overrides,
 } from "@notation/core";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
@@ -17,8 +18,8 @@ import { redirectStdoutToStderr } from "./stdio";
 export type PlanCommandOptions = {
   output?: OutputMode;
   logger?: Logger;
-  /** The replaces to plan, from `--replace`. */
-  requested?: ReplaceRequest;
+  /** The replaces and credentials to plan, from `--replace` and `--credential`. */
+  overrides?: Overrides;
   /** The `--config` path, for the deploy command that the plan prints. */
   config?: string;
 };
@@ -56,7 +57,9 @@ export async function plan(
     const { restore } = redirectStdoutToStderr();
     try {
       await compile(deployment, { logger });
-      result = await planApp({ deployment, emit, requested: opts.requested });
+      result = await withDeployCommands(deployment, opts.config, () =>
+        planApp({ deployment, emit, overrides: opts.overrides }),
+      );
     } finally {
       restore();
     }
@@ -66,15 +69,35 @@ export async function plan(
 
   await compile(deployment, { logger });
   logger.info(`Planning ${resolveDeploymentId(deployment)}\n`);
-  const result = await planApp({
-    deployment,
-    emit,
-    requested: opts.requested,
-  });
-  printPlanSummary(result, logger);
-  if (opts.requested) {
+  const result = await withDeployCommands(deployment, opts.config, () =>
+    planApp({ deployment, emit, overrides: opts.overrides }),
+  );
+  printPlanSummary(result, logger, opts.overrides);
+  if (opts.overrides) {
     logger.info(
-      `\nTo deploy this plan:\n  notation deploy ${targetFlags(deployment, opts.config)} ${requestFlags(result, opts.requested)}`,
+      `\nTo deploy this plan:\n  notation deploy ${targetFlags(deployment, opts.config)} ${overrideFlags(result, opts.overrides)}`,
+    );
+  }
+}
+
+/**
+ * Runs `run`, and throws an UnobtainableCredentialError from it again as a
+ * new error whose deploy commands have `--config` and `--stage`.
+ */
+export async function withDeployCommands<T>(
+  deployment: Deployment,
+  config: string | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (!UnobtainableCredentialError.is(error)) throw error;
+    throw new UnobtainableCredentialError(
+      error.credentials,
+      error.overrides,
+      `notation deploy ${targetFlags(deployment, config)}`,
+      { cause: error },
     );
   }
 }
@@ -87,13 +110,17 @@ export function targetFlags(deployment: Deployment, config?: string): string {
     : `--config ${shellQuote(config)} ${stage}`;
 }
 
-function requestFlags(result: Plan, requested: ReplaceRequest): string {
-  return formatRequest({
-    ...requested,
-    replace: requested.replace.map(({ id }) => ({
-      id,
-      instanceHash: findRecordNode(result, id)?.instanceHash,
-    })),
+function overrideFlags(result: Plan, overrides: Overrides): string {
+  const withHash = <T extends { id: string }>(target: T) => ({
+    ...target,
+    instanceHash: findRecordNode(result, target.id)?.instanceHash,
+  });
+  return formatOverrides({
+    ...overrides,
+    replace: overrides.replace.map(withHash),
+    ...(overrides.credential
+      ? { credential: overrides.credential.map(withHash) }
+      : {}),
   });
 }
 
@@ -121,30 +148,44 @@ function retiredDeleteTime(result: Plan, id: string): string {
     : "deleted before the resource is replaced, or at the end of the deploy if it is not replaced";
 }
 
-function printPlanSummary(result: Plan, logger: Logger) {
-  // A resource that only rotates a credential is planned as a noop.
+function printPlanSummary(
+  result: Plan,
+  logger: Logger,
+  overrides: Overrides | undefined,
+) {
+  // A resource that only gets a new value of a credential is planned as a noop.
   const changedNodes = result.nodes.filter(
     (node) => node.decision !== "noop" || node.rotates,
   );
 
   for (const node of changedNodes) {
     const order = node.replaceOrder && replaceOrders[node.replaceOrder];
-    const rotateOnly = node.decision === "noop";
-    const symbol = rotateOnly
+    const credentialOnly = node.decision === "noop";
+    const passed = (node.rotates ?? []).filter((name) =>
+      findCredentialOverride(overrides, node.id, name),
+    );
+    const rotated = (node.rotates ?? []).filter(
+      (name) => !passed.includes(name),
+    );
+    const symbol = credentialOnly
       ? "~"
       : (order?.symbol ?? decisionSymbols[node.decision]);
-    const label = rotateOnly ? "rotate" : node.decision;
+    const label = !credentialOnly
+      ? node.decision
+      : rotated.length > 0
+        ? "rotate"
+        : "pass";
     logger.info(
       `${symbol} ${label} ${node.type} ${node.id}${order?.label ?? ""}`,
     );
-    if (node.rotates) {
+    if (rotated.length > 0) {
       logger.info(
-        `    ${node.rotates.join(", ")} gets a new value, as a resource that takes it needs one`,
+        `    ${rotated.join(", ")} gets a new value, as a resource that takes it needs one`,
       );
     }
-    for (const { resource, name } of node.unheldCredentials ?? []) {
+    if (passed.length > 0) {
       logger.info(
-        `    deploy fails here, as it holds no value for ${name} of ${resource}. The deploy after it replaces ${resource}`,
+        `    ${passed.join(", ")} gets the value that --credential passes`,
       );
     }
     if (node.retiredAt) {
@@ -155,12 +196,6 @@ function printPlanSummary(result: Plan, logger: Logger) {
     for (const field of node.replaceFields ?? []) {
       if (field.requested) {
         logger.info("    replaced by --replace");
-        continue;
-      }
-      if (field.credential) {
-        logger.info(
-          `    ${field.name} needs a new value, as a resource that takes it needs one, and it has no rotate operation`,
-        );
         continue;
       }
       logger.info(
@@ -190,11 +225,6 @@ function printPlanSummary(result: Plan, logger: Logger) {
           : `    deleted if ${node.replacedDependency} is replaced`,
       );
     }
-    if (promptsForValue(node)) {
-      logger.info(
-        "    value not set: deploy asks for it if the secret doesn't exist, and fails without a terminal",
-      );
-    }
     if (node.placeholder) {
       logger.info(
         `    created first without the contributions that refer to ${(node.cycle ?? []).join(", ")}, the other members of its cycle`,
@@ -215,43 +245,4 @@ function printPlanSummary(result: Plan, logger: Logger) {
   ].join(", ");
 
   logger.info(`${changedNodes.length > 0 ? "\n" : ""}Plan: ${summary}.`);
-}
-
-const creatingDecisions = new Set<PlanNode["decision"]>([
-  "create",
-  "replace",
-  "drift-replace",
-  "drift-recreate",
-]);
-
-type ValueFrom = { Source?: unknown } | undefined;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === "object";
-
-// A secret without a source has `ValueFrom: { Source: PROMPT_SOURCE }`. Plan
-// never asks for the value, so it says that deploy will. For a Worker's
-// `Secrets`, an update flags only an entry that is new or whose `Source`
-// changed. The read leaves out a secret deleted from the Worker, so drift
-// shows it as new.
-function promptsForValue(node: PlanNode): boolean {
-  const secrets = node.params.Secrets as Record<string, ValueFrom> | undefined;
-  const prompted = Object.entries(secrets ?? {})
-    .filter(([, valueFrom]) => valueFrom?.Source === PROMPT_SOURCE)
-    .map(([name]) => name);
-  if (creatingDecisions.has(node.decision)) {
-    return (
-      (node.params.ValueFrom as ValueFrom)?.Source === PROMPT_SOURCE ||
-      prompted.length > 0
-    );
-  }
-  const added = node.diff?.added.Secrets;
-  const updated = node.diff?.updated.Secrets;
-  return prompted.some(
-    (name) =>
-      (isRecord(added) && name in added) ||
-      (isRecord(updated) &&
-        isRecord(updated[name]) &&
-        "Source" in updated[name]),
-  );
 }

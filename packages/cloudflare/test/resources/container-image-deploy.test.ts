@@ -144,14 +144,20 @@ async function deploy(executionId: string) {
         executionId: id,
         resources,
         state: runtime.state,
-        nameScope: { app: "shop", stage: "dev" },
+        app: "shop",
+        stage: "dev",
       }),
   );
 }
 
 async function plan() {
   const { resources } = await collect();
-  const planned = await createPlan({ resources, state: runtime.state });
+  const planned = await createPlan({
+    app: "app",
+    stage: "test",
+    resources,
+    state: runtime.state,
+  });
   return Object.fromEntries(
     planned.nodes.map((node) => [node.id, node.decision]),
   );

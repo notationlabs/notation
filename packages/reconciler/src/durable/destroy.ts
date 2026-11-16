@@ -1,8 +1,7 @@
-import type { ResourceType } from "@notation/resource";
 import { orderDeployUnits } from "../cycles";
 import { keep, sweepSteps, sweptRecords } from "../orphan-sweep";
 import { getDependencyIds } from "../plan";
-import { resolveResourceClass, workflowRegistry } from "../resource-registry";
+import { resolveRecordClass, workflowRegistry } from "../resource-registry";
 import { withDeploymentHold } from "./deployment-hold";
 import {
   deleteResource,
@@ -20,7 +19,7 @@ import type { DurableStep } from "./sdk";
  * 1. Collect the edges of each record: the edges in code, the edges in its
  *    record, and the edges of its retired instances.
  * 2. Keep each record whose type has no class, with a warning, and every
- *    record that it depends on.
+ *    record that it depends on. A source's record needs no class.
  * 3. Make the base order: the orphans in the order of deploy's sweep, then
  *    the resources in code in the reverse of their deploy order.
  * 4. Visit each record in the base order. Visit each record that has an edge
@@ -66,7 +65,7 @@ export async function* destroy(
     for (const node of persisted) {
       const resource = resourceById.get(node.id);
       if (!resource || resource.type === node.type) continue;
-      if (resolveResourceClass(registry, node.type as ResourceType)) continue;
+      if (resolveRecordClass(registry, node)) continue;
       const keptDependencies = keep(node, edgesById, kept);
       yield* warnUnregistered(scope, opts, node, keptDependencies, "destroy");
     }
@@ -130,10 +129,7 @@ export async function* destroy(
       const node = recordById.get(id)!;
       yield* deleteResource(
         scope.scope(encodeURIComponent(id)),
-        await instantiateRecord(
-          resolveResourceClass(registry, node.type as ResourceType)!,
-          node,
-        ),
+        await instantiateRecord(resolveRecordClass(registry, node)!, node),
         opts,
         "destroy",
       );

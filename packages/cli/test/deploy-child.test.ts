@@ -127,43 +127,20 @@ describe("deployInChild", () => {
   });
 });
 
-describe("secret prompts", () => {
-  it("shares stdin with the child and lets it prompt despite --json", async () => {
-    const { spawn, calls } = fakeSpawn([], 0);
-    const options: unknown[] = [];
-    const recordingSpawn = ((cmd: string, args: string[], opts: unknown) => {
-      options.push(opts);
-      return spawn(cmd, args, opts);
-    }) as any;
+it("gives the child no stdin", async () => {
+  const { spawn } = fakeSpawn([], 0);
+  const options: unknown[] = [];
+  const recordingSpawn = ((cmd: string, args: string[], opts: unknown) => {
+    options.push(opts);
+    return spawn(cmd, args, opts);
+  }) as any;
 
-    await deployInChild({
-      deployment: { app: "orders-app", stage: "prod" },
-      executionId: "exec-1",
-      logger: logger(),
-      promptSecrets: true,
-      spawn: recordingSpawn,
-    });
-
-    expect(calls[0]).toContain("--prompt-secrets");
-    expect(options[0]).toEqual({ stdio: ["inherit", "pipe", "inherit"] });
+  await deployInChild({
+    deployment: { app: "orders-app", stage: "prod" },
+    executionId: "exec-1",
+    logger: logger(),
+    spawn: recordingSpawn,
   });
 
-  it("gives the child no stdin and no prompt by default", async () => {
-    const { spawn, calls } = fakeSpawn([], 0);
-    const options: unknown[] = [];
-    const recordingSpawn = ((cmd: string, args: string[], opts: unknown) => {
-      options.push(opts);
-      return spawn(cmd, args, opts);
-    }) as any;
-
-    await deployInChild({
-      deployment: { app: "orders-app", stage: "prod" },
-      executionId: "exec-1",
-      logger: logger(),
-      spawn: recordingSpawn,
-    });
-
-    expect(calls[0]).not.toContain("--prompt-secrets");
-    expect(options[0]).toEqual({ stdio: ["ignore", "pipe", "inherit"] });
-  });
+  expect(options[0]).toEqual({ stdio: ["ignore", "pipe", "inherit"] });
 });

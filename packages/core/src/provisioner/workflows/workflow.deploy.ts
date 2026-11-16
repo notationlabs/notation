@@ -1,14 +1,13 @@
 import * as durable from "@notation/reconciler/durable";
 import {
   createLoggerReconcilerSubscriber,
-  formatRequest,
+  formatOverrides,
   type ReconcilerEventEmitter,
-  type ReplaceRequest,
+  type Overrides,
   type ResourceRegistry,
 } from "@notation/reconciler";
 import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
-import { runWithSecretContext, type SecretPrompt } from "src/secrets/context";
 import {
   loadStateProviderRegistry,
   mergeResourceRegistries,
@@ -31,31 +30,14 @@ export type DeployAppOptions = {
   databasePath?: string;
   emit?: ReconcilerEventEmitter;
   /**
-   * Asks for the value of a secret that has no source. Without it, deploy
-   * fails when it has to write such a secret.
+   * The replaces and credentials that the user asked for. Saved with a new
+   * execution, without the values of the credentials. A resume uses the
+   * saved overrides, and fails if this one differs from it.
    */
-  promptSecret?: SecretPrompt;
-  /**
-   * The replaces that the user asked for. Saved with a new execution. A
-   * resume uses the saved request, and fails if this one differs from it.
-   */
-  requested?: ReplaceRequest;
+  overrides?: Overrides;
 };
 
-export function deployApp(opts: DeployAppOptions): Promise<void> {
-  // A resumed execution has the same run ID, so a source without versions
-  // gives the version that the execution recorded.
-  return runWithSecretContext(
-    {
-      stage: opts.deployment.stage,
-      runId: opts.executionId,
-      prompt: opts.promptSecret,
-    },
-    () => deploy(opts),
-  );
-}
-
-async function deploy({
+export async function deployApp({
   deployment,
   // Defaulted in one place: the reconciler's drift gate treats absent as on.
   driftDetection,
@@ -66,7 +48,7 @@ async function deploy({
   executionId,
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
-  requested,
+  overrides,
 }: DeployAppOptions): Promise<void> {
   // Code that runs while infra is evaluated, such as `workerNames` in
   // @notation/cloudflare, reads the collection's scope, which must be the
@@ -80,12 +62,12 @@ async function deploy({
       runtime,
       databasePath,
       executionId,
-      params: requested ? { requested } : {},
+      params: overrides ? { overrides } : {},
       assertResumable: (saved) =>
-        assertSameRequest(
+        assertSameOverrides(
           executionId,
-          saved.requested as ReplaceRequest | undefined,
-          requested,
+          saved.overrides as Overrides | undefined,
+          overrides,
         ),
     },
     async function* (step, executionId, runtime, params) {
@@ -104,28 +86,29 @@ async function deploy({
         dryRun,
         driftDetection,
         maxOperationAttempts,
-        nameScope,
-        requested: params.requested as ReplaceRequest | undefined,
+        app: deployment.app,
+        stage: deployment.stage,
+        overrides: params.overrides as Overrides | undefined,
       });
     },
   );
 }
 
 /**
- * Throws if a resume passes a request that differs from the one that the
- * execution started with. A resume that passes none uses the saved one.
+ * Throws if a resume passes overrides that differ from the ones that the
+ * execution started with. A resume that passes none uses the saved ones.
  */
-export function assertSameRequest(
+export function assertSameOverrides(
   executionId: string,
-  saved: ReplaceRequest | undefined,
-  given: ReplaceRequest | undefined,
+  saved: Overrides | undefined,
+  given: Overrides | undefined,
 ): void {
   if (given === undefined) return;
-  const started = formatRequest(saved);
-  if (formatRequest(given) === started) return;
+  const started = formatOverrides(saved);
+  if (formatOverrides(given) === started) return;
   throw new Error(
     started
-      ? `Execution ${executionId} was started with ${started}. Leave out --replace, or pass the same flags.`
-      : `Execution ${executionId} was started without --replace. Leave out --replace and --override-loss-protection.`,
+      ? `Execution ${executionId} was started with ${started}. Leave out --replace and --credential, or pass the same flags.`
+      : `Execution ${executionId} was started without --replace or --credential. Leave out --replace, --override-loss-protection and --credential.`,
   );
 }

@@ -9,6 +9,7 @@ export * from "./standard-schema";
 export * from "./declared-in";
 export * from "./value-validation";
 export * from "./credential";
+export * from "./credential-source";
 export {
   collectResourceGraph,
   getActiveResourceCollection,
@@ -25,7 +26,6 @@ export {
   isOwnPhysicalName,
   ownPhysicalName,
   physicalName,
-  scopedPhysicalName,
   type NameScope,
   type OwnPhysicalName,
   type PhysicalNameRule,
@@ -44,6 +44,7 @@ export {
   containsOutputRef,
   forEachOutputRef,
   isOutputRef,
+  isPlainObject,
   resolveOutputRefs,
   deployLookup,
   planLookup,

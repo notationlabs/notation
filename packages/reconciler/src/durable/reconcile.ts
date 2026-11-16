@@ -9,8 +9,10 @@ import {
   collectResourceGraph,
   fillPhysicalNames,
   findCredentialMarkers,
+  isCredentialSource,
   validateParams,
   type BaseResource,
+  type CredentialMarker,
   type DurableObject,
   type ResourceClass,
   type ResourceGroupRef,
@@ -28,7 +30,11 @@ import { collectDependents } from "../dependency-graph";
 import { createBlocksDelete } from "../delete-cascade";
 import type { EmitStep, OperationLifecycleEvent } from "../events";
 import { sweepSteps, sweptRecords } from "../orphan-sweep";
-import { resolveResourceClass, workflowRegistry } from "../resource-registry";
+import {
+  resolveRecordClass,
+  resolveResourceClass,
+  workflowRegistry,
+} from "../resource-registry";
 import { assertSameType } from "../resource-type";
 import {
   applyDriftDetection,
@@ -67,13 +73,15 @@ import {
   unknownNames,
 } from "../physical-names";
 import {
-  currentCredentialMarkers,
+  getChangedCredentials,
+  refreshCredentialMarkers,
   setRecordedOutput,
-  staleCredentialMarkers,
-  wasGivenCredentials,
+  markCredentialsStale,
+  findCredentialsNotReceived,
 } from "../credentials";
-import { requestedReplace } from "../replace-request";
+import { assertNoPassedCredential, findReplaceOverride } from "../overrides";
 import { mintNeededCredentials, obtainCredentials } from "./credentials";
+import { reconcileSource } from "./source";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
   resourceStateStore,
@@ -104,6 +112,8 @@ type SharedParams = Omit<CreateResourceParams, "persist"> & {
    * fill in its new names, also where a param refers to one.
    */
   unnamedParams: Record<string, unknown>;
+  /** See `UpdateResourceParams.recordedParams`. */
+  recordedParams?: Record<string, unknown>;
 };
 
 export type ReconcileOptions = {
@@ -132,10 +142,11 @@ export type ReconcileOptions = {
    */
   driftRead?: DriftRead;
   /**
-   * Decides as if the resource's record held no version of the credentials
-   * that it takes, so that deploy gives it their values again.
+   * Credential versions that the resource's record holds and the resource
+   * has not received. Deploy decides as if the record held no version where
+   * it holds one of these, so that it gives the resource those values again.
    */
-  staleCredentials?: boolean;
+  staleCredentials?: readonly string[];
 };
 
 /**
@@ -149,6 +160,10 @@ export async function* reconcileResource(
   opts: DeployContext,
   options: ReconcileOptions = {},
 ): AsyncGenerator<any, void, any> {
+  if (isCredentialSource(resource)) {
+    yield* reconcileSource(step, resource, opts);
+    return;
+  }
   const emit = durableEmitter(step, opts.emit);
   let session = yield* openStateSession(step, opts, resource);
   // Repeats the notation:validate check, because validate ran before the
@@ -194,22 +209,25 @@ export async function* reconcileResource(
       : undefined,
   );
 
-  // A cycle reconciles a resource more than once, and each request replaces
+  // A cycle reconciles a resource more than once, and each `--replace` replaces
   // it once.
-  const requested = opts.reconciled.has(resource)
+  const replaceOverride = opts.reconciled.has(resource)
     ? undefined
-    : requestedReplace(opts.requested, resource.id);
+    : findReplaceOverride(opts.overrides, resource.id);
+  // The params that an update compares credentials with: it receives the
+  // value of each credential whose version they do not hold.
+  const recordedParams =
+    options.staleCredentials && session.node
+      ? markCredentialsStale(session.node.params, options.staleCredentials)
+      : session.node?.params;
   let action = decideAction({
     resource,
     stateNode:
-      options.staleCredentials && session.node
-        ? {
-            ...session.node,
-            params: staleCredentialMarkers(session.node.params),
-          }
+      session.node && recordedParams
+        ? { ...session.node, params: recordedParams }
         : session.node,
     params,
-    requested,
+    replaceOverride,
   });
 
   // Its own scope: when the gate fires, the operation that follows the drift
@@ -222,7 +240,7 @@ export async function* reconcileResource(
     if (action.decision === "noop") {
       action = decideDriftAction({ resource, params, driftRead });
     }
-  } else if (!requested) {
+  } else if (!replaceOverride) {
     action = yield* applyDriftDetection(driftStep, {
       action,
       driftDetection: opts.driftDetection,
@@ -249,41 +267,49 @@ export async function* reconcileResource(
     });
   }
 
+  if (!opts.reconciled.has(resource) && !keepsResource(action.decision)) {
+    assertNoPassedCredential(opts.overrides, resource);
+  }
   if (session.node && !creating && keepsResource(action.decision)) {
-    const minted = yield* mintNeededCredentials(
+    session = yield* mintNeededCredentials(
       step,
       opts,
       session,
       resource,
       dependsOn,
     );
-    session = minted.session;
-    if (minted.replace) action = minted.replace;
   }
 
-  // An update receives the credentials in its patch. Every other operation
-  // receives all of them.
+  // An update receives the credentials whose version changed. Every other
+  // operation receives all of them. A drift update compares with the read,
+  // so that it receives the value of a credential that the remote lost, such
+  // as a Worker secret deleted outside notation.
   let unnamedParams = configParams;
   const updates =
     action.decision === "update" || action.decision === "drift-update";
+  const comparedParams =
+    action.decision === "drift-update"
+      ? { ...recordedParams, ...action.remote }
+      : recordedParams;
+  const receivedCredentials = (): CredentialMarker[] =>
+    "patch" in action && updates
+      ? getChangedCredentials(action.patch, comparedParams)
+      : findCredentialMarkers(params);
+  let received = receivedCredentials();
   if (
     !opts.dryRun &&
     action.decision !== "noop" &&
-    (yield* obtainCredentials(
-      step,
-      opts,
-      resource,
-      "patch" in action && updates ? action.patch : params,
-    ))
+    (yield* obtainCredentials(step, opts, resource, received))
   ) {
-    params = currentCredentialMarkers(params, opts.resources);
-    unnamedParams = currentCredentialMarkers(unnamedParams, opts.resources);
+    params = refreshCredentialMarkers(params, opts.resources);
+    unnamedParams = refreshCredentialMarkers(unnamedParams, opts.resources);
     if ("patch" in action) {
       action = {
         ...action,
-        patch: currentCredentialMarkers(action.patch, opts.resources),
+        patch: refreshCredentialMarkers(action.patch, opts.resources),
       };
     }
+    received = receivedCredentials();
   }
 
   options.onDecision?.(action.decision);
@@ -318,6 +344,7 @@ export async function* reconcileResource(
       emit,
       maxOperationAttempts: opts.maxOperationAttempts,
       prior: session.node,
+      recordedParams: comparedParams,
     },
     // The params of a placeholder already leave out the contributions that
     // depend on a member of the cycle.
@@ -329,21 +356,19 @@ export async function* reconcileResource(
   // so the resource holds the value that the operation received then, and a
   // rotation since has revoked that value. The resource is reconciled again
   // as one that has not taken the credentials, which updates it.
-  const taken = "patch" in action && updates ? action.patch : params;
-  if (
-    !opts.dryRun &&
-    !options.staleCredentials &&
-    action.decision !== "noop" &&
-    !wasGivenCredentials(resource, taken)
-  ) {
-    const versions = findCredentialMarkers(taken)
-      .map(({ $credential }) => $credential.version)
-      .join(",");
+  const ungiven =
+    !opts.dryRun && !options.staleCredentials && action.decision !== "noop"
+      ? findCredentialsNotReceived(resource, received, opts.resources).map(
+          ({ $credential }) => $credential.version ?? "",
+        )
+      : [];
+  if (ungiven.length > 0) {
+    const versions = ungiven.join(",");
     yield* reconcileResource(
       step.scope(`credentials:refresh:${versions}`, `credentials:${versions}`),
       resource,
       { ...opts, driftDetection: false },
-      { quietNoop: true, staleCredentials: true },
+      { quietNoop: true, staleCredentials: ungiven },
     );
   }
 }
@@ -399,6 +424,7 @@ async function* applyAction(
       yield* updateResourceOperation(step, {
         ...shared,
         patch: action.patch,
+        recordedParams: shared.recordedParams ?? session.node?.params ?? {},
         persist: session.persist,
       });
       return;
@@ -447,7 +473,12 @@ async function* generateNamesStep(
 ): AsyncGenerator<any, Record<string, string>, any> {
   if (fields.length === 0) return {};
   return yield* step.run("physical-names", async () =>
-    generateNames(resource, fields, opts.nameScope, params),
+    generateNames(
+      resource,
+      fields,
+      { app: opts.app, stage: opts.stage },
+      params,
+    ),
   );
 }
 
@@ -495,6 +526,7 @@ async function* reconcileTakenOver(
       emit,
       persistedOutput: takenOver.node?.output,
       prior: takenOver.node,
+      recordedParams: takenOver.node?.params,
     },
     replaceWithout,
   );
@@ -829,7 +861,7 @@ async function* deleteBlockingDependents(
     // As in the planner. `validateKnownParams` already ran a requested
     // dependent's `rejectChange` through `decideAction`, which skips it with
     // --override-loss-protection.
-    if (requestedReplace(opts.requested, id)) continue;
+    if (findReplaceOverride(opts.overrides, id)) continue;
     // A step, as deriveParams is user code and need not be deterministic.
     const params = yield* step.run(
       `params:${encodeURIComponent(id)}`,
@@ -857,10 +889,7 @@ async function* deleteBlockingDependents(
         encodeURIComponent(id),
         `replace:${encodeURIComponent(resource.id)}`,
       ),
-      await instantiateRecord(
-        registry.get(record.type as ResourceType)!,
-        record,
-      ),
+      await instantiateRecord(resolveRecordClass(registry, record)!, record),
       opts,
       "deploy",
       { reason: "dependency-replaced", replacedDependency: resource.id },
@@ -890,10 +919,7 @@ export async function* deleteResource(
   if (!session.node) return;
   // The classes in code win in the registry, so a record of the declared
   // type resolves to the declared class.
-  const Resource = resolveResourceClass(
-    workflowRegistry(opts),
-    session.node.type as ResourceType,
-  );
+  const Resource = resolveRecordClass(workflowRegistry(opts), session.node);
   if (!Resource) {
     throw new Error(
       `No class is registered for type ${session.node.type}, the type of ` +
@@ -1100,7 +1126,8 @@ function retiredDeleteError(
  * A state node whose type has no registry entry is left in place and surfaced
  * as a warning, because deleting it would need a resource class we cannot
  * resolve. Every orphan or retired instance it depends on is left in place
- * too, and the warning names them.
+ * too, and the warning names them. A source's record needs no class, and is
+ * always deleted.
  */
 export async function* sweepOrphans(
   step: DurableStep,

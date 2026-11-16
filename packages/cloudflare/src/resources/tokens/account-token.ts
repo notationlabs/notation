@@ -21,7 +21,7 @@ import {
   type TokenResources,
 } from "src/api/tokens";
 
-export const TOKEN_NAME_MAX_LENGTH = 120;
+const TOKEN_NAME_MAX_LENGTH = 120;
 
 const policySchema = v.strictObject({
   effect: v.picklist(["allow", "deny"]),
@@ -120,6 +120,7 @@ const accountTokenSchema = accountToken.defineSchema({
       v.minLength(1),
       v.maxLength(TOKEN_NAME_MAX_LENGTH),
     ),
+    physicalName: { maxLength: TOKEN_NAME_MAX_LENGTH },
   },
   Policies: {
     propertyType: "param",
@@ -161,7 +162,8 @@ const accountTokenSchema = accountToken.defineSchema({
 } as const);
 
 /**
- * An account-owned API token. Its value is the credential `Value`, which
+ * An account-owned API token, which deploy names
+ * `<app>--<stage>--<id>-<instance>`. Its value is the credential `Value`, which
  * another resource takes with `token.credentials.Value`. State never holds
  * the value.
  *
@@ -195,9 +197,9 @@ export const AccountToken = accountTokenSchema.defineOperations({
 
   // Runs when a create may have made a token and its outcome is unknown.
   // A token made then can't be used, as its value is lost, so every token
-  // with the name is deleted and the create runs again. Replace deletes
-  // the old token before it creates the new one, so no tracked token has
-  // the name.
+  // with the name is deleted and the create runs again. A replacement has a
+  // different name, because `physicalName` generates a new one on replace,
+  // so the name is not the name of a tracked token in its account.
   find: async (params) => {
     const ids = await findTokensByName(params.AccountId, params.Name);
     await Promise.all(ids.map((id) => deleteToken(params.AccountId, id)));

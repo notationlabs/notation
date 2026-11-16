@@ -97,6 +97,8 @@ describe("LambdaFunctionConcurrency", () => {
 
     const params = await resource.getParams();
     const plan = await createPlan({
+      app: "app",
+      stage: "test",
       resources: [resource],
       state: new MemoryStateBackend({
         [resource.id]: {
@@ -173,6 +175,8 @@ describe("LambdaFunctionConcurrency", () => {
       });
 
       const plan = await createPlan({
+        app: "app",
+        stage: "test",
         resources: [lambda, resource],
         state: new MemoryStateBackend({
           "lambda:orders": record(

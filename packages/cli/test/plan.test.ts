@@ -13,13 +13,21 @@ const { planApp } = vi.hoisted(() => ({
 }));
 
 vi.mock("@notation/core", async (importOriginal) => ({
-  formatRequest: (await importOriginal<typeof import("@notation/core")>())
-    .formatRequest,
+  formatOverrides: (await importOriginal<typeof import("@notation/core")>())
+    .formatOverrides,
   shellQuote: (await importOriginal<typeof import("@notation/core")>())
     .shellQuote,
+  findCredentialOverride: (
+    await importOriginal<typeof import("@notation/core")>()
+  ).findCredentialOverride,
+  UnobtainableCredentialError: (
+    await importOriginal<typeof import("@notation/core")>()
+  ).UnobtainableCredentialError,
+  unobtainableCredentialMessage: (
+    await importOriginal<typeof import("@notation/core")>()
+  ).unobtainableCredentialMessage,
   createLoggerReconcilerSubscriber: () => () => undefined,
   planApp,
-  PROMPT_SOURCE: "prompt",
   resolveDeploymentId: (d: Deployment) => `${d.app}:${d.stage}`,
 }));
 vi.mock("../src/compile", () => ({ compile: vi.fn(async () => undefined) }));
@@ -360,117 +368,6 @@ it("writes the order of a replace in the JSON plan", async () => {
   expect(JSON.parse(output).nodes).toEqual([node]);
 });
 
-it("prints that deploy asks for the value of a new secret without a source", async () => {
-  planApp.mockResolvedValueOnce({
-    createdAt: "",
-    nodes: [
-      {
-        id: "secret:admin",
-        type: "cloudflare/secrets-store/SecretsStoreSecret",
-        decision: "create",
-        params: { ValueFrom: { Secret: "admin", Source: "prompt" } },
-        dependsOn: [],
-      },
-      {
-        id: "secret:stripe-key",
-        type: "cloudflare/secrets-store/SecretsStoreSecret",
-        decision: "create",
-        params: { ValueFrom: { Secret: "stripe-key", Source: "env" } },
-        dependsOn: [],
-      },
-    ],
-  });
-  const lines: string[] = [];
-  const logger = { ...console, info: (line: string) => lines.push(line) };
-
-  await plan(deployment, { logger });
-
-  expect(lines.slice(1, 4)).toEqual([
-    "+ create cloudflare/secrets-store/SecretsStoreSecret secret:admin",
-    "    value not set: deploy asks for it if the secret doesn't exist, and fails without a terminal",
-    "+ create cloudflare/secrets-store/SecretsStoreSecret secret:stripe-key",
-  ]);
-});
-
-it("prints that deploy asks for the value of a Worker's secret without a source when it creates the Worker, or adds the secret or moves it to the prompt", async () => {
-  const Secrets = {
-    ADMIN: { Secret: "admin", Source: "prompt" },
-    API_KEY: { Secret: "api-key", Source: "env", Key: "API_KEY" },
-  };
-  const type = "cloudflare/workers/WorkerScript";
-  planApp.mockResolvedValueOnce({
-    createdAt: "",
-    nodes: [
-      {
-        id: "worker:api",
-        type,
-        decision: "create",
-        params: { Secrets },
-        dependsOn: [],
-      },
-      {
-        id: "worker:jobs",
-        type,
-        decision: "update",
-        diff: {
-          added: { Secrets: { ADMIN: Secrets.ADMIN } },
-          deleted: {},
-          updated: {},
-        },
-        params: { Secrets },
-        dependsOn: [],
-      },
-      {
-        id: "worker:queue",
-        type,
-        decision: "update",
-        diff: {
-          added: {},
-          deleted: { Secrets: { ADMIN: { Key: null } } },
-          updated: { Secrets: { ADMIN: { Source: "prompt" } } },
-        },
-        params: { Secrets },
-        dependsOn: [],
-      },
-      {
-        id: "worker:cron",
-        type,
-        decision: "update",
-        diff: {
-          added: {},
-          deleted: {},
-          updated: { Secrets: { API_KEY: { Key: "API_KEY_V2" } } },
-        },
-        params: { Secrets },
-        dependsOn: [],
-      },
-      {
-        id: "worker:web",
-        type,
-        decision: "update",
-        diff: { added: {}, deleted: {}, updated: { CodeSha256: "b" } },
-        params: { Secrets },
-        dependsOn: [],
-      },
-    ],
-  });
-  const lines: string[] = [];
-  const logger = { ...console, info: (line: string) => lines.push(line) };
-
-  await plan(deployment, { logger });
-
-  const notSet =
-    "    value not set: deploy asks for it if the secret doesn't exist, and fails without a terminal";
-  const before = lines.flatMap((line, index) =>
-    line === notSet ? [lines[index - 1]] : [],
-  );
-  expect(before).toEqual([
-    `+ create ${type} worker:api`,
-    `~ update ${type} worker:jobs`,
-    `~ update ${type} worker:queue`,
-  ]);
-});
-
 it("prints a resource that only rotates a credential", async () => {
   planApp.mockResolvedValueOnce({
     createdAt: "",
@@ -504,16 +401,93 @@ it("prints a resource that only rotates a credential", async () => {
   ]);
 });
 
-it("prints why a resource is replaced to get a new credential", async () => {
+it("prints a credential that --credential passes apart from one that rotates", async () => {
+  const nodes = (rotates: string[]) => ({
+    createdAt: "",
+    nodes: [
+      {
+        id: "app",
+        type: "test/plan/app",
+        decision: "noop" as const,
+        rotates,
+        params: {},
+        dependsOn: [],
+      },
+    ],
+  });
+  const overrides = {
+    replace: [],
+    credential: [{ id: "app", name: "privateKey", variable: "APP_KEY" }],
+  };
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  planApp.mockResolvedValueOnce(nodes(["privateKey"]));
+  await plan(deployment, { logger, overrides });
+  planApp.mockResolvedValueOnce(nodes(["privateKey", "secret"]));
+  await plan(deployment, { logger, overrides });
+
+  expect(lines).toContain("~ pass test/plan/app app");
+  expect(lines).toContain(
+    "    privateKey gets the value that --credential passes",
+  );
+  expect(lines).toContain("~ rotate test/plan/app app");
+  expect(lines).toContain(
+    "    secret gets a new value, as a resource that takes it needs one",
+  );
+});
+
+it("fails for a credential that deploy cannot get, with deploy commands for the same config, stage and request", async () => {
+  const core =
+    await vi.importActual<typeof import("@notation/core")>("@notation/core");
+  planApp.mockRejectedValueOnce(
+    new core.UnobtainableCredentialError(
+      [
+        {
+          consumer: "app-key-secret",
+          producer: "app",
+          producerType: "github/App",
+          name: "privateKey",
+          reason: "consumer-added",
+          rotateManually:
+            "Generate a new private key in the GitHub App's settings, under Private keys.",
+          instanceHash: "5d2e8b17",
+        },
+      ],
+      { replace: [{ id: "queue", instanceHash: "0c4d9e21" }] },
+    ),
+  );
+  const logger = { ...console, info: () => undefined };
+
+  const error = await plan(deployment, {
+    logger,
+    config: "jobs.config.ts",
+    overrides: { replace: [{ id: "queue" }] },
+  }).catch((e: Error) => e);
+
+  expect((error as Error).message).toBe(
+    [
+      "`app-key-secret` is new, and takes `app.privateKey`. Notation does not store the value, and `github/App` has no operation that issues another.",
+      "",
+      "  Generate a new private key in the GitHub App's settings, under Private keys. Then set the environment variable `APP_PRIVATE_KEY` to the value, and pass it:",
+      "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --credential app.privateKey@5d2e8b17=APP_PRIVATE_KEY",
+      "",
+      "  Or replace `app`. Deploy deletes `app` and creates it again with a new value, so whatever exists only in the old `app` is lost:",
+      "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --replace app@5d2e8b17",
+    ].join("\n"),
+  );
+});
+
+it("prints the deploy command of a --credential with the instance hash", async () => {
   planApp.mockResolvedValueOnce({
     createdAt: "",
     nodes: [
       {
-        id: "token",
-        type: "test/plan/token",
-        decision: "replace",
-        replaceFields: [{ name: "Value", known: true, credential: true }],
-        replaceOrder: "delete-first",
+        id: "app",
+        type: "github/App",
+        decision: "noop",
+        rotates: ["privateKey"],
+        instanceHash: "7b1e52c0",
         params: {},
         dependsOn: [],
       },
@@ -522,37 +496,16 @@ it("prints why a resource is replaced to get a new credential", async () => {
   const lines: string[] = [];
   const logger = { ...console, info: (line: string) => lines.push(line) };
 
-  await plan(deployment, { logger });
-
-  expect(lines).toContain(
-    "    Value needs a new value, as a resource that takes it needs one, and it has no rotate operation",
-  );
-  expect(lines.join("\n")).not.toContain("forces replacement");
-});
-
-it("prints a resource at which deploy fails for want of a credential", async () => {
-  planApp.mockResolvedValueOnce({
-    createdAt: "",
-    nodes: [
-      {
-        id: "secret",
-        type: "test/plan/secret",
-        decision: "replace",
-        replaceFields: [{ name: "name", known: true }],
-        replaceOrder: "delete-first",
-        unheldCredentials: [{ resource: "token", name: "Value" }],
-        params: {},
-        dependsOn: ["token"],
-      },
-    ],
+  await plan(deployment, {
+    logger,
+    overrides: {
+      replace: [],
+      credential: [{ id: "app", name: "privateKey", variable: "APP_KEY" }],
+    },
   });
-  const lines: string[] = [];
-  const logger = { ...console, info: (line: string) => lines.push(line) };
 
-  await plan(deployment, { logger });
-
-  expect(lines).toContain(
-    "    deploy fails here, as it holds no value for Value of token. The deploy after it replaces token",
+  expect(lines.at(-1)).toBe(
+    "\nTo deploy this plan:\n  notation deploy --stage prod --credential app.privateKey@7b1e52c0=APP_KEY",
   );
 });
 
@@ -582,19 +535,19 @@ it("prints a requested replace, and the deploy command with the instance hash", 
   });
   const lines: string[] = [];
   const logger = { ...console, info: (line: string) => lines.push(line) };
-  const requested = {
+  const overrides = {
     replace: [{ id: "lambda:orders:role" }],
     overrideLossProtection: ["lambda:orders:role"],
   };
 
   await plan(deployment, {
     logger,
-    requested,
+    overrides,
     config: "jobs.config.ts",
   });
 
   expect(planApp).toHaveBeenLastCalledWith(
-    expect.objectContaining({ requested }),
+    expect.objectContaining({ overrides }),
   );
   expect(lines.slice(1, 3)).toEqual([
     "+/- replace aws/lambda/LambdaIamRole lambda:orders:role (create, then delete)",
@@ -627,7 +580,7 @@ it("quotes a value in the deploy command that the shell would split or expand", 
     { ...deployment, stage: "pr 12" },
     {
       logger,
-      requested: { replace: [{ id: "queue:it's" }] },
+      overrides: { replace: [{ id: "queue:it's" }] },
       config: "my app/notation.config.ts",
     },
   );

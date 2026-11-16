@@ -1,115 +1,231 @@
 # Secrets
 
-A secret is a reference to a value that lives in a secret store, such as Cloudflare's Secrets Store. Notation writes the value to the store when it creates or updates the secret. It never records the value, or anything derived from it, in state, the journal, plan output or events.
+A secret value, such as a Stripe API key, reaches a deployed resource as a **credential**. Deploy holds the value of a credential in memory only. It puts the value in the params of the resource that takes it for the call to the provider, and nowhere else. State, the journal, plan output and events hold a marker in place of the value.
 
-A provider package declares secrets. See [Cloudflare secrets](../providers/cloudflare/secrets.md), and [`workerSecret`](../providers/cloudflare/workers.md#workersecretconfig) for a secret that a Worker binds as secret text.
+## Credentials
+
+A credential is an output of a resource. Two kinds of resource have credentials:
+
+| Kind     | Example                                   | Where the value comes from                                               |
+| -------- | ----------------------------------------- | ------------------------------------------------------------------------ |
+| Resource | `tokens.AccountToken`, credential `Value` | The provider returns it when it creates the token, and when it rolls it. |
+| Source   | `sources.Env`, credential `value`         | A place outside Notation, such as an environment variable.               |
+
+Another resource takes the value with `resource.credentials.<name>`. In this example, the key is read from the environment variable `STRIPE_KEY`, written to the Cloudflare Secrets Store, and bound to a Worker:
+
+```ts [infra/secrets.ts]
+import { secretsStore } from "@notation/cloudflare/resources";
+import { sources } from "@notation/std/resources";
+
+const store = new secretsStore.SecretsStore("store");
+
+const stripeKey = new sources.Env("stripe-key", {
+  config: { key: "STRIPE_KEY" },
+});
+
+export const stripeKeySecret = new secretsStore.SecretsStoreSecret(
+  "stripe-key-secret",
+  {
+    config: { Value: stripeKey.credentials.value }, // ← the credential
+    dependencies: { store },
+  },
+);
+```
+
+`stripeKey.credentials.value` is an [output ref](../reference/resource.md#output-refs). It makes `stripe-key-secret` depend on `stripe-key`, and deploy puts the value in its place when it creates or updates the secret. Each value follows a param, so the graph shows where it goes:
+
+```text
+store                SecretsStore
+stripe-key           Env                  credentials: { value }
+stripe-key-secret    SecretsStoreSecret   Value ← stripe-key.value
+```
+
+One credential can go to several resources. A Worker can also take the same value as a Worker secret. See [Cloudflare secrets](../providers/cloudflare/secrets.md) and [Worker secrets](../providers/cloudflare/workers.md#worker-secrets).
 
 ## Sources
 
-A secret takes its value from a source and a key, or from a prompt when it has no source. `@notation/std/sources` exports two sources:
+A source is a resource that supplies a value that exists outside Notation. Deploy creates nothing at a provider for a source, and never replaces one. Each source has one credential, `value`.
 
-| Source         | Reads                                                                                    |
-| -------------- | ---------------------------------------------------------------------------------------- |
-| `env`          | `process.env`.                                                                           |
-| `dotenv(path)` | One `.env` file. `path` is relative to the project root. A missing file counts as empty. |
+| Class             | Package                         | Config                                    | Reads                                                                                            |
+| ----------------- | ------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `sources.Env`     | `@notation/std/resources`       | `key`                                     | The environment variable `key`.                                                                  |
+| `sources.Dotenv`  | `@notation/std/resources`       | `path`, `key`                             | The key in one `.env` file. `path` is relative to the project root. A missing file holds no key. |
+| `InfisicalSecret` | `@notation/infisical/resources` | `projectId`, `environment`, `path`, `key` | One secret in Infisical. See [Infisical](../providers/infisical/sources.md).                     |
 
-Other sources are in their own packages, such as [`infisical()`](../providers/infisical/sources.md) from `@notation/infisical/sources`.
+Each of the three also takes `track`. See [Tracking a value](#tracking-a-value).
 
 ```ts [infra/secrets.ts]
-import { secret } from "@notation/cloudflare/secrets-store";
-import { dotenv, env } from "@notation/std/sources";
+import { InfisicalSecret } from "@notation/infisical/resources";
+import { sources } from "@notation/std/resources";
 
-export const sentryDsn = secret({
-  id: "sentry-dsn",
-  source: env,
-  key: "SENTRY_DSN",
+new sources.Env("sentry-dsn", {
+  config: { key: "SENTRY_DSN" },
 });
 
-export const webhookSecret = secret({
-  id: "webhook-secret",
-  source: dotenv(".env.local"),
-  key: "WEBHOOK_SECRET",
+new sources.Dotenv("webhook-secret", {
+  config: { path: ".env.local", key: "WEBHOOK_SECRET" },
 });
 
-// No source: deploy asks for the value, or `notation secret set` sets it.
-export const adminPassword = secret({ id: "admin-password" });
+new InfisicalSecret("stripe-key", {
+  config: {
+    projectId: "4f2a…",
+    environment: "prod",
+    path: "/orders",
+    key: "STRIPE_KEY",
+  },
+});
 ```
 
-Each secret with a source has a `SourceValue` resource, with the ID `value:<id>`. It records the secret's id, the source's name, the key, and a version, and never the value. Plan and deploy fail when the source doesn't have the key:
+The config keys of the sources are in camel case. The Cloudflare resources keep their Pascal case keys, so one line can hold both: `{ Value: stripeKey.credentials.value }`.
 
-```text
-`SENTRY_DSN` isn't in the env source of `sentry-dsn`.
+The state record of a source holds its params, its `revision` and a marker for the credential. It never holds the value:
+
+```json
+{
+  "id": "stripe-key",
+  "type": "std/sources/Env",
+  "params": { "key": "STRIPE_KEY" },
+  "output": {
+    "key": "STRIPE_KEY",
+    "revision": "0195f0c2-7d1e-7b4a-9c3e-2f6a8b1d4e70",
+    "value": {
+      "$credential": {
+        "resource": "stripe-key",
+        "name": "value",
+        "version": "7b1e52c0…"
+      }
+    }
+  }
+}
 ```
+
+When a source is removed from code, deploy deletes its record and calls nothing else. Deploy does not load the source's provider package to do this, so the package can be removed in the same change.
 
 ## When a value is written
 
-A secret is written when its version changes:
+Plan and deploy call the `read` operation of every source. `read` returns the source's `revision`, and never the value. The credential's version is a hash of the source's ID, its params and its `revision`, so a change to either gives the credential a new version. Deploy then updates every resource that takes the credential.
 
-| Source                                 | Version                   | The secret is written                                |
-| -------------------------------------- | ------------------------- | ---------------------------------------------------- |
-| A versioned one, such as `infisical()` | the source's version      | when the version changes                             |
-| `env`, `dotenv`                        | the deploy's execution ID | on every deploy                                      |
-| none (prompt)                          | none                      | when the secret is created, or recreated after drift |
+The `revision` of each source:
 
-`env` and `dotenv` have no versions, so plan shows an update of their `SourceValue` on every run. The same applies to a key that a versioned source gives no version, such as an `infisical()` secret that references another secret. A move from one source to another writes the secret from the new source.
+| Source                                          | `revision`                  | A resource that takes the value is written |
+| ----------------------------------------------- | --------------------------- | ------------------------------------------ |
+| `InfisicalSecret`                               | the secret's ID and version | when the version changes                   |
+| `InfisicalSecret` that refers to another secret | the deploy's execution ID   | on every deploy                            |
+| `Env`, `Dotenv`                                 | the deploy's execution ID   | on every deploy                            |
+| any source with `track`                         | a hash of the value         | when the value changes                     |
 
-A value changed in the store by hand stays until the next write.
+So without `track`, an `Env` shows a change in every plan:
 
-## The prompt
+```text
+~ update std/sources/Env stripe-key
+~ update cloudflare/secrets-store/SecretsStoreSecret stripe-key-secret
+```
 
-A secret without a source takes its value from a prompt:
+Deploy gets the value with the source's `loadCredential` operation. It calls `loadCredential` only when a resource that takes the value is created or updated, and only once in a deploy. `loadCredential` fails for an empty value.
 
-- On a terminal, deploy asks for the value with a hidden prompt, in the secret's own step.
-- With no terminal, or with `--json`, deploy fails:
+- **A source that no resource takes is never loaded.** Its variable need not be set.
+- **Without `track`, `Env` and `Dotenv` are loaded on every deploy,** because each deploy has a new revision and updates every resource that takes the value. The variable must be set on every machine that deploys, including CI.
+- **Loading a value again changes no other resource.** For example, when drift detection finds that the store secret `stripe-key-secret` was deleted, deploy creates it again, and loads the value for the source's current revision. If the revision did not change, the credential keeps its version, so no other resource that takes it is written.
 
-  ```text
-  Secret `admin-password` isn't set for stage dev. Run `notation secret set admin-password --stage dev`.
-  ```
+A value changed at the provider by hand, such as in the Cloudflare dashboard, stays until the next write.
 
-- `notation watch` asks at each deploy that needs the value. It doesn't keep the answer between deploys.
-- Plan never asks. It notes that deploy will ask, or fail without a terminal.
+## Tracking a value
 
-The prompt only fills a missing secret. When the secret already exists, such as after `notation secret set`, deploy records it without asking. See [notation secret](../cli/secret.md).
+`Env` and `Dotenv` have no version of their own. `track` makes the `revision` a hash of the value, so plan shows a change only when the value changed. It takes one of two algorithms:
+
+```ts [infra/secrets.ts]
+// For a generated value, such as an API key. Needs no setup.
+new sources.Env("stripe-key", {
+  config: { key: "STRIPE_KEY", track: "scrypt" },
+});
+
+// For any value, including a password that a person chose. Needs a key.
+new sources.Env("admin-password", {
+  config: { key: "ADMIN_PASSWORD", track: "hmac" },
+});
+```
+
+|                         | `"scrypt"`                                                    | `"hmac"`                                                     |
+| ----------------------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
+| `revision`              | `scrypt:<hex>`                                                | `hmac:<hex>`                                                 |
+| Setup                   | none                                                          | `NOTATION_TRACK_KEY` on every machine                        |
+| Cost at plan            | about 0.25 seconds and 128 MiB for each source, one at a time | none                                                         |
+| Someone who reads state | can test guesses, slowly                                      | can test nothing without the key                             |
+| The key is missing      |                                                               | plan and deploy fail, and name the variable                  |
+| The key changes         |                                                               | every tracked value gets a new revision, and is written once |
+
+**`"scrypt"` is for generated values only.** A person who reads state can test a guess against a scrypt hash. At about 15 guesses a second on a laptop, a 4-digit PIN takes minutes and a common password takes about a day. A generated API key cannot be guessed. Use `"hmac"` for a value that a person chose.
+
+Make the key for `"hmac"` once, and keep it where the team keeps its other deploy credentials. Every plan and deploy must use the same key:
+
+```sh
+# Once, by one person. Store the output, for example as a CI secret.
+openssl rand -hex 32
+
+# On every machine that plans or deploys, with the stored key.
+export NOTATION_TRACK_KEY="4c1f…"
+```
+
+The hash is salted with the app, the stage and the source's ID, so state does not show that two sources have the same value. `track` is off by default. Without it, state holds nothing that is derived from the value.
+
+With `track`, deploy checks the value again when it loads it. If the hash is not the `revision` that `read` returned, the value changed after `read`, and deploy fails:
+
+```text
+The value of stripe-key changed after deploy read it. Run deploy again.
+```
+
+### When the value is not set
+
+With `track`, `read` reads the value, so plan needs the variable. When the variable is not set, `read` returns the `revision` in state, and plan warns:
+
+```text
+! stripe-key std/sources/Env STRIPE_KEY is not set. Its value was not checked for a change.
+```
+
+| The variable is not set, and                        | Plan and deploy                                                      |
+| --------------------------------------------------- | -------------------------------------------------------------------- |
+| state has a `revision`, no resource needs the value | warn, and show no change for the source                              |
+| state has a `revision`, a resource needs the value  | plan warns; deploy fails at `loadCredential`, and names the variable |
+| state has no `revision`                             | fail, and name the variable                                          |
+
+So a machine without the variable can plan and deploy other changes, but it cannot detect a change of the value.
+
+With `track: "hmac"`, plan and deploy need `NOTATION_TRACK_KEY` even when the variable is not set. Without it, they fail and name `NOTATION_TRACK_KEY`.
+
+## A value that depends on the stage
+
+A resource's config becomes its params, which state records and plan compares, so config cannot hold a function of the stage. To pick a value by stage, call `deployment()` from `@notation/core`. It returns the app and the stage that the infra code is being evaluated for:
+
+```ts [infra/secrets.ts]
+import { deployment } from "@notation/core";
+import { InfisicalSecret } from "@notation/infisical/resources";
+
+const { stage } = deployment();
+
+new InfisicalSecret("stripe-key", {
+  config: {
+    projectId: "4f2a…",
+    environment: stage === "prod" ? "prod" : "dev",
+    path: "/orders",
+    key: "STRIPE_KEY",
+  },
+});
+```
+
+- `deployment()` works in the config of any resource.
+- The value is a plain string by the time it is a param, so plan shows it and state records it.
+- Plan, deploy, destroy, watch and `notation viz` evaluate the infra code for a stage. Outside that evaluation, `deployment()` throws.
+
+## A credential that you rotate by hand
+
+Some providers have no API that issues another value of a credential. The resource declares such a credential without a `rotate` operation. Notation does not store the value, so when a resource needs it and deploy holds none, plan and deploy fail. The error gives the reason, and prints two commands: one that passes a value that you issue at the provider, and one that replaces the resource. See [notation deploy](../cli/deploy.md#a-credential-that-you-rotate-by-hand).
+
+A source never needs this. Deploy can always load its value again.
+
+## Values in errors
+
+A provider can echo a value back in an error. The reconciler removes the value of every credential, and every value that a source read, from the errors of operations before it records them, in its raw, base64 and JSON-escaped forms. The CLI removes them from the error that it prints when a command fails.
 
 ## Writing a source
 
-A source is a plain object that implements `Source`, from `@notation/std/sources`:
-
-```ts
-type Source = {
-  /** Shown in plan, and stored in the value resource's params. */
-  name: string;
-  /** True if the source has a value for the key. */
-  has(key: string, context: { stage: string }): Promise<boolean>;
-  /** The key's version. Left out by sources that have no versions. */
-  version?(
-    key: string,
-    context: { stage: string },
-  ): Promise<string | undefined>;
-  get(key: string, context: { stage: string }): Promise<Redacted<string>>;
-};
-```
-
-- `version` returns a number or ID that the source assigns, such as a secrets manager's version of the key. It must never be a hash of the value. It returns `undefined` for a key that has no stable version. The deploy's execution ID is then used, so the secret is written on every deploy.
-- `get` returns the value in a `Redacted`, from `@notation/std/sources`.
-- A source may cache within one process. For example, it can fetch a folder once and answer every call from that response.
-- A source reads its own credentials from `process.env`.
-
-A package that has sources exports them from a `/sources` subpath, as `@notation/std/sources` does.
-
-## `Redacted`
-
-`Redacted` holds a secret value, so that it isn't sent or printed by accident:
-
-| Use                                                      | Result               |
-| -------------------------------------------------------- | -------------------- |
-| `` `Bearer ${value}` ``, `String(value)`, `value + ""`   | throws               |
-| `JSON.stringify({ value })`                              | throws               |
-| `console.log(value)`, and a value inside a printed error | `Redacted(<hidden>)` |
-| `value.unwrap()`                                         | the string           |
-
-## Writing the value in a resource
-
-A resource that writes a secret's value calls `getValue(id)` from `@notation/std/sources` in its `create` and `update`, with the id of the secret's declaration. It calls the secret's source, or the prompt. This is the pattern of a Lambda function, which reads its code from a `File` resource when it uploads.
-
-The reconciler removes every value that `getValue` returned from the errors of operations before it records them, in its raw, base64 and JSON-escaped forms, as a provider can echo a value back in an error. The CLI removes them from the error that it prints when a command fails.
+A source class is built with `credentialSourceResource()` from `@notation/resource`. See [Credential sources](../reference/resource.md#credential-sources).

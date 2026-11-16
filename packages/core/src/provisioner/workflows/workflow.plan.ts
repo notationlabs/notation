@@ -3,13 +3,11 @@ import {
   createPlan,
   type Plan,
   type ReconcilerEventEmitter,
-  type ReplaceRequest,
+  type Overrides,
   type ResourceRegistry,
 } from "@notation/reconciler";
-import { randomUUID } from "node:crypto";
 import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
-import { runWithSecretContext } from "src/secrets/context";
 import {
   loadPlanProviderRegistry,
   mergeResourceRegistries,
@@ -26,19 +24,11 @@ export type PlanAppOptions = {
   runtime?: NodeDurableRuntime;
   databasePath?: string;
   emit?: ReconcilerEventEmitter;
-  /** The replaces to plan, as deploy would make them. */
-  requested?: ReplaceRequest;
+  /** The replaces and credentials to plan, as deploy would make them. */
+  overrides?: Overrides;
 };
 
-export function planApp(opts: PlanAppOptions): Promise<Plan> {
-  // Plan never asks for a secret's value, so it has no prompt.
-  return runWithSecretContext(
-    { stage: opts.deployment.stage, runId: randomUUID() },
-    () => plan(opts),
-  );
-}
-
-async function plan({
+export async function planApp({
   deployment,
   // Defaulted in one place: the reconciler's drift gate treats absent as on.
   driftDetection,
@@ -47,12 +37,10 @@ async function plan({
   runtime: suppliedRuntime,
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
-  requested,
+  overrides,
 }: PlanAppOptions): Promise<Plan> {
-  const graph = await getResourceGraph(deployment.entryPoint, {
-    app: deployment.app,
-    stage: deployment.stage,
-  });
+  const nameScope = { app: deployment.app, stage: deployment.stage };
+  const graph = await getResourceGraph(deployment.entryPoint, nameScope);
   return withRuntime(
     { deployment, runtime: suppliedRuntime, databasePath },
     async (runtime) => {
@@ -68,8 +56,10 @@ async function plan({
         emit,
         maxOperationAttempts,
         registry: mergeResourceRegistries(providerRegistry, registry),
-        requested,
+        overrides,
         deploymentId: runtime.deploymentId,
+        app: deployment.app,
+        stage: deployment.stage,
       });
     },
   );

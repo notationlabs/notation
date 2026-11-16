@@ -1,19 +1,19 @@
 import * as v from "valibot";
-import {
-  REDELIVERY_DELAY_BASE,
-  WorkflowRunner,
-  type HeapClient,
-  type Runtime,
-} from "@notation/durable/runtime";
-import { SqliteRuntime, createSqliteDb } from "@notation/durable/sqlite/node";
-import { createWorkflowRouter, workflow } from "@notation/durable";
 import { resource, type BaseResource } from "@notation/resource";
+import { isCreatingRecord } from "@notation/state";
 import { clearSecretValues } from "@notation/utils";
-import pino from "pino";
 import { beforeEach, describe, expect, it } from "vitest";
 import { clearHeldCredentials } from "../src/credentials";
-import * as durable from "../src/durable";
 import { createPlan } from "../src/planner";
+import { instanceHash } from "../src/overrides";
+import {
+  UnobtainableCredentialError,
+  credentialVariable,
+  unobtainableCredentialMessage,
+} from "../src/unobtainable-credential";
+import { createRuntime } from "./credentials-runtime";
+
+type Runtime = ReturnType<typeof createRuntime>;
 
 type TokenSchema = {
   Key: { id: string };
@@ -45,7 +45,10 @@ function createProvider(): Provider {
   return { tokens: new Map(), secrets: new Map(), calls: [] };
 }
 
-function defineResources(provider: Provider, { rotate }: { rotate: boolean }) {
+function defineResources(
+  provider: Provider,
+  { rotate, rotateManually }: { rotate: boolean; rotateManually?: string },
+) {
   let issued = 0;
   const issue = (id: string) => {
     issued += 1;
@@ -90,6 +93,7 @@ function defineResources(provider: Provider, { rotate }: { rotate: boolean }) {
             },
           }
         : {}),
+      ...(rotateManually ? { rotateManually: { Value: rotateManually } } : {}),
       delete: async (key) => {
         provider.calls.push(`delete ${key.id}`);
         provider.tokens.delete(key.id);
@@ -264,57 +268,218 @@ describe("a resource that takes a credential in a later deploy", () => {
     runtime.close();
   });
 
-  it("replaces the credential's resource when it has no rotate", async () => {
+  it("fails without rotate, and names the flags that can give a value", async () => {
     const provider = createProvider();
     const types = defineResources(provider, { rotate: false });
     const runtime = createRuntime();
     await runtime.deploy("first", declare(types, { secrets: ["a"] }));
     provider.calls.length = 0;
 
-    await runtime.nextProcess(
-      "second",
-      declare(types, { secrets: ["a", "b"] }),
-    );
+    const error = await runtime
+      .nextProcess("second", declare(types, { secrets: ["a", "b"] }))
+      .catch((e: Error) => e);
 
-    expect(provider.calls).toEqual([
-      "delete token-0",
-      expect.stringMatching(/^create token-/),
-      "update a",
-      "create b",
-    ]);
-    expect(provider.secrets.get("a")).toBe("token-value-2");
-    expect(provider.secrets.get("b")).toBe("token-value-2");
+    const record = await runtime.state.get("token");
+    const hash = instanceHash(
+      "credentials",
+      declare(types, { secrets: [] })[0]!,
+      record!,
+    );
+    expect((error as Error).message).toBe(
+      [
+        "`secret:b` is new, and takes `token.Value`. Notation does not store the value, and `test/credentials/Token` has no operation that issues another.",
+        "",
+        "  Issue a new value of `Value` at the provider of `test/credentials/Token`. Then set the environment variable `TOKEN_VALUE` to the value, and pass it:",
+        `    notation deploy --credential token.Value@${hash}=TOKEN_VALUE`,
+        "",
+        "  Or replace `token`. Deploy deletes `token` and creates it again with a new value, so whatever exists only in the old `token` is lost:",
+        `    notation deploy --replace token@${hash}`,
+      ].join("\n"),
+    );
+    expect(provider.calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("does not say that the value is stored nowhere when state has no record of one", () => {
+    const [first] = unobtainableCredentialMessage(
+      [
+        {
+          consumer: "secret:b",
+          producer: "token",
+          producerType: "test/credentials/Token",
+          name: "Value",
+          reason: "no-version",
+        },
+      ],
+      "notation deploy",
+    ).split("\n");
+
+    expect(first).toBe(
+      "`secret:b` takes `token.Value`, and state has no record of a value for it. `test/credentials/Token` has no operation that issues one.",
+    );
+  });
+
+  it("prints the class's rotateManually sentence above the --credential command", async () => {
+    const types = defineResources(createProvider(), {
+      rotate: false,
+      rotateManually: "Generate a new value in the token's settings.",
+    });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a"] }));
+
+    const error = await runtime
+      .nextProcess("second", declare(types, { secrets: ["a", "b"] }))
+      .catch((e: Error) => e);
+
+    expect((error as Error).message).toMatch(
+      /\n  Generate a new value in the token's settings\. Then set the environment variable `TOKEN_VALUE` to the value, and pass it:\n    notation deploy --credential token\.Value@/,
+    );
     runtime.close();
   });
 
   it("is planned as deploy does it", async () => {
     const provider = createProvider();
     const rotatable = defineResources(provider, { rotate: true });
-    const fixed = defineResources(provider, { rotate: false });
-    for (const [types, expected] of [
-      [rotatable, { decision: "noop", rotates: ["Value"] }],
-      [
-        fixed,
-        {
-          decision: "replace",
-          replaceFields: [{ name: "Value", known: true, credential: true }],
-        },
-      ],
-    ] as const) {
-      const runtime = createRuntime();
-      await runtime.deploy("first", declare(types, { secrets: ["a"] }));
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(rotatable, { secrets: ["a"] }));
 
-      const plan = await createPlan({
+    const plan = await createPlan({
+      app: "app",
+      stage: "test",
+      resources: declare(rotatable, { secrets: ["a", "b"] }),
+      state: runtime.state,
+    });
+
+    const [token, a, b] = plan.nodes;
+    expect(token).toMatchObject({ decision: "noop", rotates: ["Value"] });
+    expect(a).toMatchObject({ decision: "update" });
+    expect(b).toMatchObject({ decision: "create" });
+    runtime.close();
+  });
+
+  it("fails the plan without rotate", async () => {
+    const types = defineResources(createProvider(), { rotate: false });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a"] }));
+
+    await expect(
+      createPlan({
+        app: "app",
+        stage: "test",
         resources: declare(types, { secrets: ["a", "b"] }),
         state: runtime.state,
+        deploymentId: "credentials",
+      }),
+    ).rejects.toThrow(
+      /`secret:b` is new, and takes `token\.Value`\.[\s\S]*--credential token\.Value@[0-9a-f]{8}=TOKEN_VALUE[\s\S]*--replace token@[0-9a-f]{8}/,
+    );
+    runtime.close();
+  });
+
+  describe("when deploy cannot get several", () => {
+    // Two tokens, each with a secret that takes its credential, and with
+    // `added` secrets that take it as well.
+    const declareTwo = (
+      types: ReturnType<typeof defineResources>,
+      added: string[],
+    ): BaseResource[] =>
+      ["token", "key"].flatMap((id) => {
+        const token = new types.Token(id, { config: { scope: "read" } });
+        return [
+          token,
+          ...[id, ...added].map(
+            (name) =>
+              new types.Secret(`secret:${id}:${name}`, {
+                config: {
+                  name: `${id}:${name}`,
+                  Value: token.credentials.Value,
+                },
+              }),
+          ),
+        ];
       });
 
-      const [token, a, b] = plan.nodes;
-      expect(token).toMatchObject(expected);
-      expect(a).toMatchObject({ decision: "update" });
-      expect(b).toMatchObject({ decision: "create" });
+    it("fails the plan with each of them once", async () => {
+      const types = defineResources(createProvider(), { rotate: false });
+      const runtime = createRuntime();
+      await runtime.deploy("first", declareTwo(types, []));
+
+      const error = await createPlan({
+        app: "app",
+        stage: "test",
+        resources: declareTwo(types, ["b", "c"]),
+        state: runtime.state,
+        deploymentId: "credentials",
+      }).catch((e: Error) => e);
+
+      expect(UnobtainableCredentialError.is(error)).toBe(true);
+      expect(
+        (error as UnobtainableCredentialError).credentials.map(
+          ({ consumer, producer }) => `${consumer} ${producer}`,
+        ),
+      ).toEqual(["secret:token:b token", "secret:key:b key"]);
+      const message = (error as Error).message;
+      expect(message).toMatch(
+        /^2 credentials need a new value before deploy can run\. Each is listed below with two flags\. Choose one flag for each\.\n\n`secret:token:b` is new/,
+      );
+      expect(message).toMatch(
+        /\n    --credential token\.Value@[0-9a-f]{8}=TOKEN_VALUE\n/,
+      );
+      expect(message).toMatch(
+        /\n    --replace key@[0-9a-f]{8}\n\nThen run deploy with the flags that you chose:\n  notation deploy <flags>$/,
+      );
       runtime.close();
-    }
+    });
+
+    it("fails the deploy with each of them before it changes anything", async () => {
+      const provider = createProvider();
+      const types = defineResources(provider, { rotate: false });
+      const runtime = createRuntime();
+      await runtime.deploy("first", declareTwo(types, []));
+      provider.calls.length = 0;
+
+      const error = await runtime
+        .nextProcess("second", declareTwo(types, ["b"]))
+        .catch((e: Error) => e);
+
+      expect(
+        (error as UnobtainableCredentialError).credentials.map(
+          ({ producer }) => producer,
+        ),
+      ).toEqual(["token", "key"]);
+      expect(provider.calls).toEqual([]);
+      runtime.close();
+    });
+  });
+
+  it("fails the plan with the request's hashes in the deploy commands", async () => {
+    const types = defineResources(createProvider(), { rotate: false });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a"] }));
+    const resources = declare(types, { secrets: ["a", "b"] });
+    const hash = instanceHash(
+      "credentials",
+      resources[1]!,
+      (await runtime.state.get("secret:a"))!,
+    );
+
+    const error = await createPlan({
+      app: "app",
+      stage: "test",
+      resources,
+      state: runtime.state,
+      deploymentId: "credentials",
+      overrides: { replace: [{ id: "secret:a" }] },
+    }).catch((e: Error) => e);
+
+    expect(UnobtainableCredentialError.is(error)).toBe(true);
+    expect((error as UnobtainableCredentialError).overrides).toEqual({
+      replace: [{ id: "secret:a", instanceHash: hash }],
+    });
+    expect((error as Error).message).toContain(
+      `notation deploy --replace secret:a@${hash} --credential token.Value@`,
+    );
+    runtime.close();
   });
 });
 
@@ -373,7 +538,7 @@ describe("a resource that is replaced and takes a credential", () => {
     runtime.close();
   });
 
-  it("fails without rotate, and the next deploy replaces the credential's resource", async () => {
+  it("fails without rotate, and takes a value that --credential passes", async () => {
     const provider = createProvider();
     const types = defineResources(provider, { rotate: false });
     const runtime = createRuntime();
@@ -390,14 +555,58 @@ describe("a resource that is replaced and takes a credential", () => {
     };
 
     await expect(runtime.nextProcess("second", renamed())).rejects.toThrow(
-      "Deploy again, and deploy replaces token to get a new one.",
+      "Deploy replaces `secret:b`, which takes `token.Value`.",
     );
     expect(provider.secrets.get("b")).toBe("token-value-1");
 
-    await runtime.nextProcess("third", renamed());
-    expect(provider.secrets.get("a")).toBe("token-value-2");
-    expect(provider.secrets.get("b2")).toBe("token-value-2");
-    expect(provider.secrets.has("b")).toBe(false);
+    const record = await runtime.state.get("token");
+    const version = (record!.output.Value as any).$credential.version;
+    const hash = instanceHash("credentials", renamed()[0]!, record!);
+    process.env.TEST_TOKEN_VALUE = "passed-value";
+    try {
+      provider.calls.length = 0;
+      await runtime.nextProcess("third", renamed(), {
+        replace: [],
+        credential: [
+          {
+            id: "token",
+            name: "Value",
+            instanceHash: hash,
+            variable: "TEST_TOKEN_VALUE",
+          },
+        ],
+      });
+    } finally {
+      delete process.env.TEST_TOKEN_VALUE;
+    }
+    expect(provider.calls).toEqual(["update a", "delete b", "create b2"]);
+    expect(provider.secrets.get("a")).toBe("passed-value");
+    expect(provider.secrets.get("b2")).toBe("passed-value");
+    const after = await runtime.state.get("token");
+    expect((after!.output.Value as any).$credential.version).not.toBe(version);
+    expect(runtime.dump()).not.toContain("passed-value");
+    runtime.close();
+  });
+});
+
+describe("a deploy that cannot get a credential for a resource that it replaces", () => {
+  it("fails before it changes a resource that comes first", async () => {
+    const provider = createProvider();
+    const types = defineResources(provider, { rotate: false });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a", "b"] }));
+    provider.calls.length = 0;
+    const [token, a] = declare(types, {
+      secrets: [{ name: "a", label: "changed" }],
+    });
+    const b = new types.Secret("secret:b", {
+      config: { name: "b2", Value: (token as any).credentials.Value },
+    });
+
+    await expect(
+      runtime.nextProcess("second", [token!, a!, b]),
+    ).rejects.toThrow("Deploy replaces `secret:b`, which takes `token.Value`.");
+    expect(provider.calls).toEqual([]);
     runtime.close();
   });
 });
@@ -420,6 +629,8 @@ describe("a plan with a resource that is replaced and takes a credential", () =>
     await runtime.deploy("first", declare(types, { secrets: ["a", "b"] }));
 
     const plan = await createPlan({
+      app: "app",
+      stage: "test",
       resources: renamed(types),
       state: runtime.state,
     });
@@ -428,34 +639,73 @@ describe("a plan with a resource that is replaced and takes a credential", () =>
     expect(token).toMatchObject({ decision: "noop", rotates: ["Value"] });
     expect(a).toMatchObject({ decision: "update" });
     expect(b).toMatchObject({ decision: "replace" });
-    expect(b!.unheldCredentials).toBeUndefined();
     runtime.close();
   });
 
-  it("shows that deploy fails at the resource without rotate", async () => {
+  it("fails at the resource without rotate", async () => {
+    const types = defineResources(createProvider(), { rotate: false });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a", "b"] }));
+
+    await expect(
+      createPlan({
+        app: "app",
+        stage: "test",
+        resources: renamed(types),
+        state: runtime.state,
+      }),
+    ).rejects.toThrow("Deploy replaces `secret:b`, which takes `token.Value`.");
+    runtime.close();
+  });
+
+  it("shows a value that --credential passes as a new value", async () => {
     const types = defineResources(createProvider(), { rotate: false });
     const runtime = createRuntime();
     await runtime.deploy("first", declare(types, { secrets: ["a", "b"] }));
 
     const plan = await createPlan({
+      app: "app",
+      stage: "test",
       resources: renamed(types),
       state: runtime.state,
+      deploymentId: "credentials",
+      overrides: {
+        replace: [],
+        credential: [{ id: "token", name: "Value", variable: "VALUE" }],
+      },
     });
 
     const [token, a, b] = plan.nodes;
-    expect(token).toMatchObject({ decision: "noop" });
-    expect(token!.rotates).toBeUndefined();
-    expect(a).toMatchObject({ decision: "noop" });
-    expect(b).toMatchObject({
-      decision: "replace",
-      unheldCredentials: [{ resource: "token", name: "Value" }],
+    expect(token).toMatchObject({ decision: "noop", rotates: ["Value"] });
+    expect(a).toMatchObject({ decision: "update" });
+    expect(b).toMatchObject({ decision: "replace" });
+    runtime.close();
+  });
+
+  it("passes with --replace of the credential's resource", async () => {
+    const types = defineResources(createProvider(), { rotate: false });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a", "b"] }));
+
+    const plan = await createPlan({
+      app: "app",
+      stage: "test",
+      resources: renamed(types),
+      state: runtime.state,
+      deploymentId: "credentials",
+      overrides: { replace: [{ id: "token" }] },
     });
+
+    const [token, a, b] = plan.nodes;
+    expect(token).toMatchObject({ decision: "replace" });
+    expect(a).toMatchObject({ decision: "update" });
+    expect(b).toMatchObject({ decision: "replace" });
     runtime.close();
   });
 });
 
 describe("a create that returns a credential its validator rejects", () => {
-  it("fails with the credential's name, and records the resource", async () => {
+  it("fails with the credential's name, records the resource, and refuses --credential for it", async () => {
     const Token = resource<{
       Key: { id: string };
       CreateParams: {};
@@ -489,6 +739,22 @@ describe("a create that returns a credential its validator rejects", () => {
     );
     expect((error as Error).message).not.toContain("short-value");
     expect((await runtime.state.get("token"))?.output.id).toBe("token-0");
+
+    await expect(
+      createPlan({
+        app: "app",
+        stage: "test",
+        resources: [new Token("token", { config: {} })],
+        state: runtime.state,
+        deploymentId: "credentials",
+        overrides: {
+          replace: [],
+          credential: [{ id: "token", name: "Value", variable: "VALUE" }],
+        },
+      }),
+    ).resolves.toMatchObject({
+      nodes: [{ id: "token", decision: "noop", rotates: ["Value"] }],
+    });
     runtime.close();
   });
 });
@@ -521,7 +787,7 @@ describe("a deploy that is resumed after it created a credential", () => {
     runtime.close();
   });
 
-  it("fails without rotate, and the next deploy replaces the credential's resource", async () => {
+  it("fails without rotate, and the next deploy can replace the credential's resource", async () => {
     const provider = createProvider();
     const types = defineResources(provider, { rotate: false });
     const runtime = createRuntime({ crashAfterStep });
@@ -531,9 +797,19 @@ describe("a deploy that is resumed after it created a credential", () => {
 
     await expect(
       runtime.nextProcess("first", declare(types, { secrets: ["a"] })),
-    ).rejects.toThrow("Deploy again");
+    ).rejects.toThrow(
+      "`secret:a` takes `token.Value`, and the deploy run that received its value has ended.",
+    );
 
-    await runtime.nextProcess("second", declare(types, { secrets: ["a"] }));
+    const resources = declare(types, { secrets: ["a"] });
+    const hash = instanceHash(
+      "credentials",
+      resources[0]!,
+      (await runtime.state.get("token"))!,
+    );
+    await runtime.nextProcess("second", resources, {
+      replace: [{ id: "token", instanceHash: hash }],
+    });
     expect(provider.secrets.get("a")).toBe("token-value-2");
     runtime.close();
   });
@@ -574,6 +850,74 @@ describe("a deploy that is resumed after a resource took a credential", () => {
   });
 });
 
+describe("a deploy that is resumed after a resource took a credential without rotate", () => {
+  it("completes, as the replayed create does not need the value", async () => {
+    const provider = createProvider();
+    const types = defineResources(provider, { rotate: false });
+    const runtime = createRuntime({
+      crashAfterStep: "notation:deploy:secret%3Aa:create:remote:effect:0",
+    });
+    await expect(
+      runtime.deploy("first", declare(types, { secrets: ["a"] })),
+    ).rejects.toThrow("simulated process crash");
+
+    await runtime.nextProcess("first", declare(types, { secrets: ["a"] }));
+
+    expect(provider.calls).toEqual(["create token-0", "create a"]);
+    expect(provider.secrets.get("a")).toBe("token-value-1");
+    const record = await runtime.state.get("secret:a");
+    expect(record).toBeDefined();
+    expect(isCreatingRecord(record!)).toBe(false);
+    runtime.close();
+  });
+});
+
+describe("a deploy that is resumed after an update of a resource that takes two credentials", () => {
+  it("gives the resource again only the credential that it did not receive", async () => {
+    const provider = createProvider();
+    const rotatable = defineResources(provider, { rotate: true });
+    const fixed = defineResources(provider, { rotate: false });
+    const declareBoth = (secrets: string[]) => {
+      const rotating = new rotatable.Token("rotating", {
+        config: { scope: "read" },
+      });
+      const unrotatable = new fixed.Token("fixed", {
+        config: { scope: "read" },
+      });
+      return [
+        rotating,
+        unrotatable,
+        ...secrets.map(
+          (name) =>
+            new rotatable.Secret(`secret:${name}`, {
+              config: {
+                name,
+                Value: rotating.credentials.Value,
+                ...(name === "a"
+                  ? { label: unrotatable.credentials.Value }
+                  : {}),
+              },
+            }),
+        ),
+      ];
+    };
+    const runtime = createRuntime({
+      crashAfterStep: "notation:deploy:secret%3Aa:update:remote:attempt:0",
+    });
+    await runtime.deploy("first", declareBoth(["a"]));
+
+    await expect(
+      runtime.nextProcess("second", declareBoth(["a", "b"])),
+    ).rejects.toThrow("simulated process crash");
+    await runtime.nextProcess("second", declareBoth(["a", "b"]));
+
+    const rotated = provider.tokens.get("token-0");
+    expect(provider.secrets.get("a")).toBe(rotated);
+    expect(provider.secrets.get("b")).toBe(rotated);
+    runtime.close();
+  });
+});
+
 describe("the state that an operation receives", () => {
   it("has no marker for a credential that the resource takes", async () => {
     const provider = createProvider();
@@ -600,7 +944,12 @@ describe("a hidden param that takes a credential", () => {
     };
     const runtime = createRuntime();
     await expect(
-      createPlan({ resources, state: runtime.state }),
+      createPlan({
+        app: "app",
+        stage: "test",
+        resources,
+        state: runtime.state,
+      }),
     ).rejects.toThrow("Value is a hidden param");
     runtime.close();
   });
@@ -625,137 +974,283 @@ describe("an update that does not change a credential", () => {
   });
 });
 
-class CrashAfterWriteHeap implements HeapClient {
-  #crashed = false;
-
-  constructor(
-    private readonly inner: HeapClient,
-    private readonly crashAfterStep: string,
-  ) {}
-
-  readStep(params: { executionId: string; stepKey: string }) {
-    return this.inner.readStep(params);
-  }
-
-  recordCancellation(params: Parameters<HeapClient["recordCancellation"]>[0]) {
-    return this.inner.recordCancellation(params);
-  }
-
-  async writeStep(params: Parameters<HeapClient["writeStep"]>[0]) {
-    const result = await this.inner.writeStep(params);
-    if (
-      !this.#crashed &&
-      params.stepKey === this.crashAfterStep &&
-      params.done
-    ) {
-      this.#crashed = true;
-      throw new Error("simulated process crash");
-    }
-    return result;
-  }
-}
-
-function createRuntime(options: { crashAfterStep?: string } = {}) {
-  const database = createSqliteDb({ path: ":memory:" });
-  let skew = 0;
-  const sqliteRuntime = new SqliteRuntime(database, {
-    clock: () => Date.now() + skew,
-  });
-  const runtime: Runtime = {
-    clock: sqliteRuntime.clock,
-    executions: sqliteRuntime.executions,
-    effects: sqliteRuntime.effects,
-    heap: options.crashAfterStep
-      ? new CrashAfterWriteHeap(sqliteRuntime.heap, options.crashAfterStep)
-      : sqliteRuntime.heap,
-    stores: sqliteRuntime.stores,
-    joins: sqliteRuntime.joins,
+describe("an update that moves a credential to another binding", () => {
+  type WorkerSchema = {
+    Key: { name: string };
+    CreateParams: { name: string; Secrets: Record<string, string> };
+    UpdateParams: { Secrets: Record<string, string> };
+    ReadResult: {};
   };
-  const state = new durable.DurableStateBackend(
-    sqliteRuntime.stores,
-    "credentials",
-  );
-  let resources: BaseResource[] = [];
-  const router = createWorkflowRouter({
-    deploy: workflow(async function* (step, event) {
-      yield* durable.deploy(step, {
-        executionId: event.executionId,
-        resources,
-        state,
-        driftDetection: false,
-        nameScope: { app: "shop", stage: "prod" },
-      });
-    }),
-  });
-  const runner = new WorkflowRunner(runtime, {
-    router,
-    logger: pino({ level: "silent" }),
-  });
 
-  async function deploy(executionId: string, declared: BaseResource[]) {
-    resources = declared;
-    if (!(await runtime.executions.get(executionId))) {
-      const admission = await runtime.executions.admit({
-        executionId,
-        workflowId: "deploy",
-        params: {},
-        context: new Map(),
+  // As a Worker does: a binding whose value is undefined keeps the value
+  // that the Worker holds, and a binding that is not in Secrets is deleted.
+  const defineWorker = (workers: Map<string, Record<string, string>>) =>
+    resource<WorkerSchema>({
+      type: "test/credentials/Worker",
+      provider: "test",
+    })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          immutable: true,
+          primaryKey: true,
+          value: v.string(),
+        },
+        Secrets: {
+          propertyType: "param",
+          presence: "required",
+          sensitive: true,
+          value: v.record(v.string(), v.string()),
+        },
+      } as const)
+      .defineOperations({
+        create: async (params) => {
+          workers.set(params.name, { ...params.Secrets });
+        },
+        update: async (key, _patch, params) => {
+          const stored = workers.get(key.name) ?? {};
+          const next: Record<string, string> = {};
+          for (const [binding, value] of Object.entries(params.Secrets)) {
+            if (value !== undefined) next[binding] = value;
+            else if (binding in stored) next[binding] = stored[binding]!;
+          }
+          workers.set(key.name, next);
+        },
+        delete: async (key) => {
+          workers.delete(key.name);
+        },
       });
-      if (admission.status === "rejected") throw new Error(admission.message);
-    }
-    const [lease] = await runtime.executions.claimDue({
-      limit: 1,
-      duration: 60_000,
-      filter: { executionIds: [executionId] },
-    });
-    if (!lease) throw new Error(`Execution ${executionId} is not due`);
-    let outcome;
-    try {
-      outcome = await runner.run(
-        { workflowId: "deploy", executionId, params: {}, context: new Map() },
-        { lease, signal: new AbortController().signal },
-      );
-    } catch (error) {
-      await runtime.executions.release({ lease });
-      skew += REDELIVERY_DELAY_BASE;
-      throw error;
-    }
-    await runtime.executions.acknowledge({ lease, outcome });
-    if (outcome.status === "failed") throw outcome.error;
-    return outcome;
-  }
 
-  return {
-    state,
-    deploy,
-    /** Deploys as a new process does, which holds no credential. */
-    nextProcess(executionId: string, declared: BaseResource[]) {
-      clearHeldCredentials();
-      return deploy(executionId, declared);
-    },
-    /** Every row of every table, as text. */
-    dump(): string {
-      const tables = database
-        .query<{ name: string }>(
-          "select name from sqlite_master where type = 'table'",
-        )
-        .all();
-      return tables
-        .map(({ name }) =>
-          JSON.stringify(
-            database.query(`select * from "${name}"`).all(),
-            (_key, value) =>
-              value instanceof Uint8Array
-                ? Buffer.from(value).toString("utf8")
-                : typeof value === "bigint"
-                  ? String(value)
-                  : value,
+  const declareWorker = (
+    types: ReturnType<typeof defineResources>,
+    Worker: ReturnType<typeof defineWorker>,
+    bindings: string[],
+  ): BaseResource[] => {
+    const token = new types.Token("token", { config: { scope: "read" } });
+    return [
+      token,
+      new Worker("worker", {
+        config: {
+          name: "worker",
+          Secrets: Object.fromEntries(
+            bindings.map((binding) => [binding, token.credentials.Value]),
           ),
-        )
-        .join("\n");
-    },
-    close() {
-      database.close();
-    },
+        },
+      }),
+    ];
   };
-}
+
+  const plan = (resources: BaseResource[], runtime: Runtime) =>
+    createPlan({
+      app: "app",
+      stage: "test",
+      resources,
+      state: runtime.state,
+    });
+
+  it("fails at plan and deploy, without rotate, when a binding is renamed", async () => {
+    const workers = new Map<string, Record<string, string>>();
+    const types = defineResources(createProvider(), { rotate: false });
+    const Worker = defineWorker(workers);
+    const runtime = createRuntime();
+    await runtime.deploy("first", declareWorker(types, Worker, ["A"]));
+    clearHeldCredentials();
+
+    const renamed = () => declareWorker(types, Worker, ["B"]);
+    const planned = await plan(renamed(), runtime).catch((e: Error) => e);
+    const deployed = await runtime
+      .deploy("second", renamed())
+      .catch((e: Error) => e);
+
+    expect(UnobtainableCredentialError.is(planned)).toBe(true);
+    expect(UnobtainableCredentialError.is(deployed)).toBe(true);
+    expect(workers.get("worker")).toEqual({ A: "token-value-1" });
+    runtime.close();
+  });
+
+  it("rotates, with rotate, when a binding is renamed, and plans the rotate", async () => {
+    const workers = new Map<string, Record<string, string>>();
+    const types = defineResources(createProvider(), { rotate: true });
+    const Worker = defineWorker(workers);
+    const runtime = createRuntime();
+    await runtime.deploy("first", declareWorker(types, Worker, ["A"]));
+    clearHeldCredentials();
+
+    const planned = await plan(declareWorker(types, Worker, ["B"]), runtime);
+    await runtime.deploy("second", declareWorker(types, Worker, ["B"]));
+
+    expect(planned.nodes[0]).toMatchObject({
+      decision: "noop",
+      rotates: ["Value"],
+    });
+    expect(workers.get("worker")).toEqual({ B: "token-value-2" });
+    runtime.close();
+  });
+
+  it("rotates, with rotate, for a second binding of the same credential", async () => {
+    const workers = new Map<string, Record<string, string>>();
+    const types = defineResources(createProvider(), { rotate: true });
+    const Worker = defineWorker(workers);
+    const runtime = createRuntime();
+    await runtime.deploy("first", declareWorker(types, Worker, ["A"]));
+    clearHeldCredentials();
+
+    const planned = await plan(
+      declareWorker(types, Worker, ["A", "B"]),
+      runtime,
+    );
+    await runtime.deploy("second", declareWorker(types, Worker, ["A", "B"]));
+
+    expect(planned.nodes[0]).toMatchObject({
+      decision: "noop",
+      rotates: ["Value"],
+    });
+    expect(workers.get("worker")).toEqual({
+      A: "token-value-2",
+      B: "token-value-2",
+    });
+    runtime.close();
+  });
+});
+
+describe("--credential", () => {
+  const passed = async (
+    types: ReturnType<typeof defineResources>,
+    runtime: ReturnType<typeof createRuntime>,
+    hash?: string,
+  ) => {
+    const resources = declare(types, { secrets: ["a"] });
+    return runtime.nextProcess("second", resources, {
+      replace: [],
+      credential: [
+        {
+          id: "token",
+          name: "Value",
+          instanceHash: hash ?? (await tokenHash(runtime, resources[0]!)),
+          variable: "TEST_TOKEN_VALUE",
+        },
+      ],
+    });
+  };
+  const tokenHash = async (
+    runtime: ReturnType<typeof createRuntime>,
+    token: Parameters<typeof instanceHash>[1],
+  ) => instanceHash("credentials", token, (await runtime.state.get("token"))!);
+
+  beforeEach(() => {
+    process.env.TEST_TOKEN_VALUE = "passed-value";
+    return () => {
+      delete process.env.TEST_TOKEN_VALUE;
+    };
+  });
+
+  it("gives every resource that takes the credential the value, and keeps the resource", async () => {
+    const provider = createProvider();
+    const types = defineResources(provider, { rotate: false });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a"] }));
+    provider.calls.length = 0;
+
+    await passed(types, runtime);
+
+    expect(provider.calls).toEqual(["update a"]);
+    expect(provider.secrets.get("a")).toBe("passed-value");
+    runtime.close();
+  });
+
+  it("fails when the instance hash is not the one of the resource", async () => {
+    const provider = createProvider();
+    const types = defineResources(provider, { rotate: false });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a"] }));
+    provider.calls.length = 0;
+
+    const error = await passed(types, runtime, "0badbeef").catch(
+      (e: Error) => e,
+    );
+
+    const hash = await tokenHash(runtime, declare(types, { secrets: [] })[0]!);
+    expect((error as Error).message).toBe(
+      `--credential token.Value: token has the instance hash ${hash} in this stage, not 0badbeef.`,
+    );
+    expect(provider.calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("fails for a credential with rotate", async () => {
+    const types = defineResources(createProvider(), { rotate: true });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a"] }));
+
+    await expect(passed(types, runtime)).rejects.toThrow(
+      "--credential is accepted only for a credential without rotate",
+    );
+    runtime.close();
+  });
+
+  it("fails when deploy replaces the credential's resource", async () => {
+    const provider = createProvider();
+    const types = defineResources(provider, { rotate: false });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a"] }));
+    const overrides = {
+      replace: [],
+      credential: [
+        {
+          id: "token",
+          name: "Value",
+          instanceHash: await tokenHash(
+            runtime,
+            declare(types, { secrets: [] })[0]!,
+          ),
+          variable: "TEST_TOKEN_VALUE",
+        },
+      ],
+    };
+    const replaced = () => declare(types, { scope: "write", secrets: ["a"] });
+    const message =
+      "--credential token.Value cannot be given when deploy replaces token";
+    provider.calls.length = 0;
+
+    await expect(
+      createPlan({
+        app: "app",
+        stage: "test",
+        resources: replaced(),
+        state: runtime.state,
+        deploymentId: "credentials",
+        overrides,
+      }),
+    ).rejects.toThrow(message);
+    await expect(
+      runtime.nextProcess("second", replaced(), overrides),
+    ).rejects.toThrow(message);
+    expect(provider.calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("fails when its variable is not set", async () => {
+    const types = defineResources(createProvider(), { rotate: false });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a"] }));
+    delete process.env.TEST_TOKEN_VALUE;
+
+    await expect(passed(types, runtime)).rejects.toThrow(
+      "--credential token.Value reads TEST_TOKEN_VALUE, which is not set.",
+    );
+    runtime.close();
+  });
+});
+
+describe("credentialVariable", () => {
+  it("names a variable from the resource ID and credential name", () => {
+    expect(credentialVariable("api-token", "Value")).toBe("API_TOKEN_VALUE");
+  });
+
+  it("starts with an underscore when the name would start with a digit", () => {
+    expect(credentialVariable("1password:token", "Value")).toBe(
+      "_1PASSWORD_TOKEN_VALUE",
+    );
+  });
+});

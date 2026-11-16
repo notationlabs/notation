@@ -1,17 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  generatedPhysicalName,
   ResourceCreationUnknownError,
   ResourceNotFoundError,
 } from "@notation/resource";
-import {
-  declareSecret,
-  Redacted,
-  runWithSecretContext,
-  type SecretContextOptions,
-  type Source,
-} from "@notation/core";
-import { collectResourceGraph } from "@notation/resource";
-import { decideAction } from "@notation/reconciler";
 import { SecretsStore, SecretsStoreSecret } from "src/resources/secrets-store";
 
 type Call = { method: string; url: URL; body: unknown };
@@ -130,30 +122,16 @@ describe("SecretsStore", () => {
 });
 
 describe("SecretsStoreSecret", () => {
-  const resource = new SecretsStoreSecret("secret:stripe-key", {
-    config: {
-      Name: "shop--dev--stripe-key",
-      StageScoped: true,
-      ValueFrom: { Secret: "stripe-key", Source: "prompt" },
-    },
+  const resource = new SecretsStoreSecret("stripe-key-secret", {
+    config: { Value: "sk_live" },
     dependencies: {} as any,
   });
 
-  const sourced = {
+  const params = {
     AccountId: "acc",
     StoreId: "store",
-    Name: "shop--dev--stripe-key",
-    StageScoped: true,
-    ValueFrom: {
-      Secret: "stripe-key",
-      Source: "vault",
-      Key: "STRIPE_KEY",
-      Version: "14",
-    },
-  };
-  const params = {
-    ...sourced,
-    ValueFrom: { Secret: "stripe-key", Source: "prompt" },
+    Name: "shop--dev--stripe-key-secret-3fa91c02",
+    Value: "sk_live",
   };
   const key = { AccountId: "acc", StoreId: "store", Name: params.Name };
 
@@ -164,42 +142,38 @@ describe("SecretsStoreSecret", () => {
     ...fields,
   });
 
-  const vault: Source = {
-    name: "vault",
-    has: async () => true,
-    get: async () => new Redacted("sk_from_vault"),
-  };
-
-  // Runs `fn` as deploy does: with the secret declared, with a source or
-  // without one.
-  function deploying<T>(
-    fn: () => Promise<T>,
-    options: Partial<SecretContextOptions> & { source?: Source } = {},
-  ): Promise<T> {
-    const { source, ...context } = options;
-    return runWithSecretContext(
-      { stage: "dev", runId: "run", ...context },
-      async () => {
-        await collectResourceGraph(() =>
-          declareSecret({
-            id: "stripe-key",
-            ...(source ? { source, key: "STRIPE_KEY" } : {}),
-          }),
-        );
-        return fn();
-      },
-    );
-  }
-
   const writes = () =>
     calls
       .filter((call) => call.method !== "GET")
       .map(({ method, url, body }) => ({ method, path: url.pathname, body }));
 
-  it("creates a missing secret with its source's value, scoped to Workers", async () => {
+  it("generates a name of <app>--<stage>--<id>-<instance>, cut to 255 characters", () => {
+    const scope = { app: "shop", stage: "dev" };
+    expect(
+      generatedPhysicalName(
+        scope,
+        "stripe-key-secret",
+        "3fa91c02",
+        { maxLength: 255 },
+        {},
+      ),
+    ).toBe("shop--dev--stripe-key-secret-3fa91c02");
+
+    const long = generatedPhysicalName(
+      scope,
+      "s".repeat(300),
+      "3fa91c02",
+      { maxLength: 255 },
+      {},
+    );
+    expect(long).toHaveLength(255);
+    expect(long).toMatch(/^shop--dev--s+-3fa91c02$/);
+  });
+
+  it("creates the secret with its value, scoped to Workers", async () => {
     mockFetch((call) => (call.method === "GET" ? ok([]) : ok([listed()])));
 
-    await deploying(() => resource.create(sourced), { source: vault });
+    await resource.create(params);
 
     expect(calls[0]!.url.pathname).toBe(`${STORES}/store/secrets`);
     expect(Object.fromEntries(calls[0]!.url.searchParams)).toMatchObject({
@@ -210,89 +184,60 @@ describe("SecretsStoreSecret", () => {
       {
         method: "POST",
         path: `${STORES}/store/secrets`,
-        body: [
-          { name: params.Name, value: "sk_from_vault", scopes: ["workers"] },
-        ],
+        body: [{ name: params.Name, value: "sk_live", scopes: ["workers"] }],
       },
     ]);
   });
 
-  it("overwrites the value of a secret that exists, from its source", async () => {
+  it("overwrites the value of a secret that a create with an unknown outcome made", async () => {
     mockFetch((call) =>
       call.method === "GET"
         ? ok([listed({ id: "other", name: `${params.Name}-old` }), listed()])
         : ok(listed()),
     );
 
-    await deploying(() => resource.update!(key, sourced, sourced, {} as any), {
-      source: vault,
-    });
+    await resource.create(params);
 
-    expect(calls.filter((call) => call.method === "GET")).toHaveLength(1);
     expect(writes()).toEqual([
       {
         method: "PATCH",
         path: `${STORES}/store/secrets/s1`,
-        body: { value: "sk_from_vault" },
+        body: { value: "sk_live" },
       },
     ]);
   });
 
-  it("updates a change to StageScoped alone, without writing the value", async () => {
-    mockFetch(() => ok([listed()]));
-    const desired = { ...sourced, StageScoped: false };
+  it("writes the value on an update that receives it", async () => {
+    mockFetch((call) => (call.method === "GET" ? ok([listed()]) : ok()));
+    const next = { ...params, Value: "sk_rotated" };
 
-    const action = decideAction({
-      resource,
-      stateNode: { params: sourced } as any,
-      params: desired,
-    });
-    await deploying(
-      () => resource.update!(key, (action as any).patch, desired, {} as any),
-      { source: vault },
+    await resource.update!(
+      key,
+      { Value: "sk_rotated" } as any,
+      next,
+      {} as any,
     );
 
-    expect(action).toMatchObject({
-      decision: "update",
-      patch: { StageScoped: false },
-    });
-    expect(calls).toEqual([]);
-  });
-
-  it("asks for the value of a missing secret without a source", async () => {
-    mockFetch((call) =>
-      call.method === "GET" ? ok([listed({ status: "deleted" })]) : ok([]),
-    );
-    const prompt = vi.fn(async () => "hunter2");
-
-    await deploying(() => resource.create(params), { prompt });
-
-    expect(prompt).toHaveBeenCalledWith({ id: "stripe-key", stage: "dev" });
-    expect(writes()).toMatchObject([
-      { method: "POST", body: [{ name: params.Name, value: "hunter2" }] },
+    expect(writes()).toEqual([
+      {
+        method: "PATCH",
+        path: `${STORES}/store/secrets/s1`,
+        body: { value: "sk_rotated" },
+      },
     ]);
   });
 
-  it("records a secret without a source that exists, without asking", async () => {
+  it("writes nothing on an update without the value, as the credential's version is unchanged", async () => {
     mockFetch(() => ok([listed()]));
-    const prompt = vi.fn(async () => "hunter2");
 
-    await deploying(() => resource.create(params), { prompt });
-    await deploying(() => resource.update!(key, params, params, {} as any), {
-      prompt,
-    });
-
-    expect(prompt).not.toHaveBeenCalled();
-    expect(writes()).toEqual([]);
-  });
-
-  it("fails with the command to run for a missing secret when no one can be asked", async () => {
-    mockFetch(() => ok([]));
-
-    await expect(deploying(() => resource.create(params))).rejects.toThrow(
-      "Secret `stripe-key` isn't set for stage dev. Run `notation secret set stripe-key --stage dev`.",
+    await resource.update!(
+      key,
+      { Value: undefined } as any,
+      { ...params, Value: undefined } as any,
+      {} as any,
     );
-    expect(writes()).toEqual([]);
+
+    expect(calls).toEqual([]);
   });
 
   it("reads the secret's ID by its name", async () => {
@@ -334,7 +279,7 @@ describe("SecretsStoreSecret", () => {
     );
   });
 
-  it("deletes a stage-scoped secret by the ID that its name has now, not the ID in its record", async () => {
+  it("deletes the secret by the ID that its name has now, not the ID in its record", async () => {
     mockFetch((call) =>
       call.method === "GET" ? ok([listed({ id: "s2" })]) : ok(),
     );
@@ -345,18 +290,6 @@ describe("SecretsStoreSecret", () => {
       `GET ${STORES}/store/secrets`,
       `DELETE ${STORES}/store/secrets/s2`,
     ]);
-  });
-
-  it("leaves a secret with an explicit name on delete", async () => {
-    mockFetch(() => ok([listed()]));
-
-    await resource.delete(key, {
-      ...params,
-      StageScoped: false,
-      SecretId: "s1",
-    });
-
-    expect(calls).toHaveLength(0);
   });
 
   it("does nothing on delete when no secret has the name", async () => {

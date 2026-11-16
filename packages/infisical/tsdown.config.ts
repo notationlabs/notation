@@ -2,7 +2,7 @@ import { defineConfig } from "tsdown";
 
 export default defineConfig({
   entry: {
-    "sources/index": "src/sources/index.ts",
+    "resources/index": "src/resources/index.ts",
   },
   format: "esm",
   platform: "node",
