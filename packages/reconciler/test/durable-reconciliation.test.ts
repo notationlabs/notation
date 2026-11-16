@@ -8550,7 +8550,7 @@ describe("requested replace", () => {
       });
     const orders = new Queue("orders", { config: {} as any });
     const mirror = new Queue("mirror", { config: {} as any });
-    mirror.config.target = orders.outputRef("name");
+    (mirror.config as any).target = orders.outputRef("name");
     return { calls, resources: [orders, mirror], orders, Queue };
   }
 
@@ -8690,7 +8690,7 @@ describe("requested replace", () => {
       (await runtime.state.get("orders"))!,
     );
     options.requested = { replace: [{ id: "orders", instanceHash: hash }] };
-    early.config.target = "elsewhere";
+    (early.config as any).target = "elsewhere";
 
     block = true;
     const first = runtime.run(`${deploymentId}-a`);
