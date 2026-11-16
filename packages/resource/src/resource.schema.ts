@@ -84,9 +84,11 @@ export type SchemaItem<T = any> = {
        * its operations receive the value in their params.
        *
        * Deploy gets a new value when a resource that takes the credential
-       * needs one and deploy holds none: it calls `rotate`, or replaces the
-       * resource when it has no `rotate`. It then updates every resource
-       * that takes the credential.
+       * needs one and deploy holds none: it calls `rotate`, and then updates
+       * every resource that takes the credential. Without `rotate`, plan
+       * fails, unless `notation deploy --replace` or `--credential` names
+       * it. A source's credential is loaded with `loadCredential` instead,
+       * and no other resource is updated.
        */
       propertyType: "credential";
     }

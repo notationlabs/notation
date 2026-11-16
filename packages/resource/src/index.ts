@@ -9,6 +9,7 @@ export * from "./standard-schema";
 export * from "./declared-in";
 export * from "./value-validation";
 export * from "./credential";
+export * from "./credential-source";
 export {
   collectResourceGraph,
   getActiveResourceCollection,

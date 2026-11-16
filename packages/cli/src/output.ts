@@ -48,6 +48,7 @@ const lifecycleReasons: Record<string, string> = {
   "taken-over": "took over a resource that already existed",
   "dependency-replaced": "deleted before its dependency is replaced",
   retired: "the instance that a replace retired",
+  passed: "passed with --credential",
 };
 
 const replaceOrderLabels = {
@@ -105,7 +106,6 @@ export function formatPrettyEvent(
           event.replaceFields
             .map((field) => {
               if (field.requested) return "replaced by --replace";
-              if (field.credential) return `${field.name} needs a new value`;
               return field.known ? field.name : `${field.name}?`;
             })
             .join(", "),
@@ -149,6 +149,11 @@ export function formatPrettyEvent(
       return (
         style("yellow", "!") +
         ` could not load provider ${event.provider}: ${event.errorMessage}`
+      );
+    case "reconciler.source.warning":
+      return (
+        style("yellow", "!") +
+        ` ${target(event.resourceId, event.resourceType)} ${event.message}`
       );
   }
 }

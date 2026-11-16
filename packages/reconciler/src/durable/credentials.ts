@@ -1,6 +1,6 @@
 import {
   credentialMarker,
-  isCredentialMarker,
+  isCredentialSource,
   validateValues,
   type BaseResource,
 } from "@notation/resource";
@@ -9,10 +9,11 @@ import { scrubError } from "@notation/utils";
 import {
   credentialConsumers,
   credentialsToMint,
+  credentialVersion,
   holdCredential,
   holdsCredential,
-  mintAction,
   operationState,
+  recordSecretStrings,
   takesCredential,
   unheldCredentials,
 } from "../credentials";
@@ -21,7 +22,13 @@ import {
   getErrorDetails,
   toPersistedState,
 } from "../operations";
-import { getDependencyIds, type ResourceAction } from "../plan";
+import { getDependencyIds } from "../plan";
+import { requestedCredential, type CredentialTarget } from "../replace-request";
+import {
+  UnobtainableCredentialError,
+  unobtainableCredential,
+} from "../unobtainable-credential";
+import { loadSourceCredential } from "./source";
 import {
   openStateSession,
   reconcileResource,
@@ -34,15 +41,19 @@ type RecordedSession = Extract<ResourceStateSession, { node: StateNode }>;
 
 /**
  * Gets a new value for each credential of `resource` that needs one, before
- * deploy reaches the resources that take it. See `credentialsToMint` for
- * when a credential needs one.
+ * deploy reaches the resources that take it:
  *
- * A credential with a `rotate` operation is rotated, and its new version is
- * recorded at once, as the provider has revoked the value before it. For a
- * credential without one, the action that replaces `resource` is returned,
- * and nothing is changed. A dry run rotates nothing.
+ * 1. Each credential that `--credential` names takes the value of its
+ *    variable. Deploy treats the value as new, so every resource that takes
+ *    the credential is updated.
+ * 2. Each other credential that needs a value is rotated. See
+ *    `credentialsToMint` for when a credential needs one. A credential
+ *    without `rotate` fails the deploy.
  *
- * Returns the session with the record that the rotations left.
+ * The new version is recorded at once, as a rotation revokes the value
+ * before it. A dry run changes nothing.
+ *
+ * Returns the session with the record that these writes left.
  */
 export async function* mintNeededCredentials(
   step: DurableStepRunner,
@@ -50,35 +61,62 @@ export async function* mintNeededCredentials(
   session: RecordedSession,
   resource: BaseResource,
   dependsOn: string[],
-): AsyncGenerator<
-  any,
-  {
-    session: RecordedSession;
-    replace?: Extract<ResourceAction, { decision: "replace" }>;
-  },
-  any
-> {
-  const consumers = credentialConsumers(resource, opts.resources);
-  if (consumers.length === 0) return { session };
+): AsyncGenerator<any, RecordedSession, any> {
+  let current = session;
+  const passed = (opts.requested?.credential ?? []).filter(
+    (target) => target.id === resource.id,
+  );
+  // A cycle reconciles a resource more than once, and each flag sets the
+  // value once.
+  if (!opts.dryRun && !opts.reconciled.has(resource)) {
+    for (const target of passed) {
+      const scope = step.scope(`credential-passed:${target.name}`);
+      const version = yield* passedCredentialStep(
+        scope,
+        opts,
+        resource,
+        target,
+      );
+      current = yield* recordCredential(
+        current,
+        resource,
+        target.name,
+        version,
+        dependsOn,
+      );
+    }
+  }
 
+  const consumers = credentialConsumers(resource, opts.resources);
+  if (consumers.length === 0) return current;
+  const output = current.node.output;
   const needed = yield* step.run("credentials:needed", async () =>
     credentialsToMint(
       resource,
-      session.node.output,
+      output,
       await Promise.all(
         consumers.map(async (consumer) => ({
           resource: consumer,
           record: await opts.state.get(consumer.id),
         })),
       ),
-    ),
+    ).map(({ name, consumer }) => ({ name, consumer: consumer.id })),
   );
-  const { rotates, replace } = mintAction(resource, needed);
-  if (replace) return { session, replace };
-  if (opts.dryRun) return { session };
-
-  let current = session;
-  for (const name of rotates) {
+  for (const { name, consumer } of needed) {
+    if (passed.some((target) => target.name === name)) continue;
+    if (!resource.rotate?.[name]) {
+      throw new UnobtainableCredentialError(
+        unobtainableCredential({
+          consumer: consumers.find((candidate) => candidate.id === consumer)!,
+          producer: resource,
+          name,
+          record: current.node,
+          version: credentialVersion(resource, name),
+          deploymentId: opts.state.deploymentId,
+        }),
+      );
+    }
+    if (opts.dryRun) continue;
     const scope = step.scope(`credential:${name}`);
     const version = yield* rotateStep(scope, opts, resource, name);
     current = yield* recordCredential(
@@ -89,23 +127,25 @@ export async function* mintNeededCredentials(
       dependsOn,
     );
   }
-  return { session: current };
+  return current;
 }
 
 /**
  * Makes sure that deploy holds the value of every credential in `value`,
- * which is the params or the patch that an operation of `consumer` is about
- * to receive. Deploy holds none for a credential that was made in an earlier
+ * which holds the credentials that an operation of `consumer` is about to
+ * receive. Deploy holds none for a credential that was made in an earlier
  * deploy, or before this deploy was resumed.
  *
- * 1. A credential with a `rotate` operation is rotated, and the new version
- *    is written to the record of its resource.
- * 2. Every resource that takes the credential and that deploy has already
- *    reconciled is reconciled again, so that it is updated with the new
- *    value.
+ * 1. A source's credential is loaded with `loadCredential`. Its version
+ *    stays the same, so no other resource is updated.
+ * 2. A credential that `--credential` names takes the value of its variable
+ *    again, under the version that deploy recorded for it.
+ * 3. A credential with a `rotate` operation is rotated, and the new version
+ *    is written to the record of its resource. Every resource that takes
+ *    the credential and that deploy has already reconciled is reconciled
+ *    again, so that it is updated with the new value.
  *
- * A credential without `rotate` fails the deploy. Its record loses its
- * version first, so that the next deploy replaces its resource.
+ * Any other credential fails the deploy.
  *
  * Returns true when a credential was rotated, so the markers in `value` name
  * a version that is no longer the current one.
@@ -116,8 +156,8 @@ export async function* obtainCredentials(
   consumer: BaseResource,
   value: unknown,
 ): AsyncGenerator<any, boolean, any> {
-  const missing = unheldCredentials(value);
-  for (const { $credential } of missing) {
+  let rotated = false;
+  for (const { $credential } of unheldCredentials(value)) {
     const { resource: id, name } = $credential;
     const producer = opts.resources.find((candidate) => candidate.id === id);
     if (!producer) {
@@ -126,13 +166,31 @@ export async function* obtainCredentials(
       );
     }
     const base = step.scope(`credential:${encodeURIComponent(id)}:${name}`);
+    if (isCredentialSource(producer)) {
+      yield* loadSourceCredential(base, opts, producer, name);
+      continue;
+    }
+    const passed = requestedCredential(opts.requested, id, name);
+    const version = credentialVersion(producer, name);
+    if (passed && version !== null) {
+      holdPassedCredential(producer, passed, version);
+      continue;
+    }
     if (!producer.rotate?.[name]) {
-      yield* forgetCredential(base, opts, producer, name);
-      throw new Error(
-        `Cannot give ${consumer.id} the credential ${name} of ${id}: ${producer.type} returns it only when the resource is created, and deploy no longer holds the value. Deploy again, and deploy replaces ${id} to get a new one.`,
+      const session = yield* openStateSession(base, opts, producer);
+      throw new UnobtainableCredentialError(
+        unobtainableCredential({
+          consumer,
+          producer,
+          name,
+          record: session.node,
+          version,
+          deploymentId: opts.state.deploymentId,
+        }),
       );
     }
 
+    rotated = true;
     // A resumed deploy finds the version of an earlier attempt in the
     // journal, without its value, so it rotates again.
     for (let attempt = 0; ; attempt += 1) {
@@ -167,7 +225,74 @@ export async function* obtainCredentials(
       break;
     }
   }
-  return missing.length > 0;
+  return rotated;
+}
+
+/**
+ * Reads the value of a `--credential` from its variable, checks it, and
+ * holds it under `version`.
+ */
+function holdPassedCredential(
+  resource: BaseResource,
+  target: CredentialTarget,
+  version?: string,
+): string {
+  const value = process.env[target.variable];
+  if (!value) {
+    throw new Error(
+      `--credential ${target.id}.${target.name} reads ${target.variable}, which is not set.`,
+    );
+  }
+  recordSecretStrings(value);
+  const result = validateValues(resource, { [target.name]: value }, "deploy");
+  if (result instanceof Promise) {
+    throw new Error(
+      `${resource.type} checks ${target.name} with an async validator, which --credential does not support`,
+    );
+  }
+  return holdCredential(value, version);
+}
+
+/**
+ * Holds the value of a `--credential` under a new version, and sets the
+ * version in the resource's output. The step records the version only.
+ */
+async function* passedCredentialStep(
+  step: DurableStepRunner,
+  opts: DeployContext,
+  resource: BaseResource,
+  target: CredentialTarget,
+): AsyncGenerator<any, string, any> {
+  const { name } = target;
+  const event = { resource, emit: durableEmitter(step, opts.emit) };
+  yield* emitLifecycleEvent(event, "rotate", "start", {
+    credential: name,
+    reason: "passed",
+  });
+  let version: string;
+  try {
+    version = yield* step.run("passed", async () =>
+      holdPassedCredential(resource, target),
+    );
+  } catch (error) {
+    yield* emitLifecycleEvent(event, "rotate", "error", {
+      credential: name,
+      reason: "passed",
+      ...getErrorDetails(error),
+    });
+    throw error;
+  }
+  if (!holdsCredential(version))
+    holdPassedCredential(resource, target, version);
+  resource.setOutput({
+    ...resource.output,
+    [name]: credentialMarker(resource.id, name, version),
+  });
+  yield* emitLifecycleEvent(event, "rotate", "success", {
+    credential: name,
+    reason: "passed",
+  });
+  return version;
 }
 
 /**
@@ -217,7 +342,7 @@ async function* recordCredential(
   session: RecordedSession,
   resource: BaseResource,
   name: string,
-  version: string | null,
+  version: string,
   dependsOn: string[],
 ): AsyncGenerator<any, RecordedSession, any> {
   const output = {
@@ -226,36 +351,7 @@ async function* recordCredential(
   };
   yield* session.persist(
     { ...toPersistedState(session.node, dependsOn), output },
-    `credential:${version ?? `lost:${name}`}`,
+    `credential:${version}`,
   );
   return { ...session, node: { ...session.node, output, dependsOn } };
-}
-
-/**
- * Removes the credential's version from the output and the record of its
- * resource, so that the next deploy gets a new value.
- */
-async function* forgetCredential(
-  step: DurableStepRunner,
-  opts: DeployContext,
-  producer: BaseResource,
-  name: string,
-): AsyncGenerator<any, void, any> {
-  const session = yield* openStateSession(step, opts, producer);
-  producer.setOutput({
-    ...producer.output,
-    [name]: credentialMarker(producer.id, name, null),
-  });
-  if (!session.node || isCreatingRecord(session.node)) return;
-  const recorded = session.node.output[name];
-  if (isCredentialMarker(recorded) && recorded.$credential.version === null) {
-    return;
-  }
-  yield* recordCredential(
-    session,
-    producer,
-    name,
-    null,
-    session.node.dependsOn ?? getDependencyIds(producer),
-  );
 }

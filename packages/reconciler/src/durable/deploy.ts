@@ -1,3 +1,4 @@
+import { isCredentialSource } from "@notation/resource";
 import type { StateNode } from "@notation/state";
 import { isCycle, orderDeployUnits } from "../cycles";
 import { assertDependenciesPresent } from "../dependency-graph";
@@ -102,7 +103,8 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
         "deploy",
         recordedOutputs,
       );
-      if (stateNode) {
+      // A source is never replaced, so no change to it is checked.
+      if (stateNode && !isCredentialSource(resource)) {
         decideAction({
           resource,
           stateNode,

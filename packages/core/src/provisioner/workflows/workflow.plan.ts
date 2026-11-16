@@ -26,7 +26,7 @@ export type PlanAppOptions = {
   runtime?: NodeDurableRuntime;
   databasePath?: string;
   emit?: ReconcilerEventEmitter;
-  /** The replaces to plan, as deploy would make them. */
+  /** The replaces and credentials to plan, as deploy would make them. */
   requested?: ReplaceRequest;
 };
 
@@ -49,10 +49,8 @@ async function plan({
   emit = createLoggerReconcilerSubscriber(),
   requested,
 }: PlanAppOptions): Promise<Plan> {
-  const graph = await getResourceGraph(deployment.entryPoint, {
-    app: deployment.app,
-    stage: deployment.stage,
-  });
+  const nameScope = { app: deployment.app, stage: deployment.stage };
+  const graph = await getResourceGraph(deployment.entryPoint, nameScope);
   return withRuntime(
     { deployment, runtime: suppliedRuntime, databasePath },
     async (runtime) => {
@@ -70,6 +68,7 @@ async function plan({
         registry: mergeResourceRegistries(providerRegistry, registry),
         requested,
         deploymentId: runtime.deploymentId,
+        nameScope,
       });
     },
   );

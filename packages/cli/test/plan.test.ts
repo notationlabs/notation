@@ -17,6 +17,12 @@ vi.mock("@notation/core", async (importOriginal) => ({
     .formatRequest,
   shellQuote: (await importOriginal<typeof import("@notation/core")>())
     .shellQuote,
+  UnobtainableCredentialError: (
+    await importOriginal<typeof import("@notation/core")>()
+  ).UnobtainableCredentialError,
+  unobtainableCredentialMessage: (
+    await importOriginal<typeof import("@notation/core")>()
+  ).unobtainableCredentialMessage,
   createLoggerReconcilerSubscriber: () => () => undefined,
   planApp,
   PROMPT_SOURCE: "prompt",
@@ -499,21 +505,55 @@ it("prints a resource that only rotates a credential", async () => {
 
   expect(lines.slice(1, 4)).toEqual([
     "~ rotate test/plan/token token",
-    "    Value gets a new value, as a resource that takes it needs one",
+    "    Value gets a new value, as a resource that takes it needs one or --credential passes one",
     "+ create test/plan/secret secret",
   ]);
 });
 
-it("prints why a resource is replaced to get a new credential", async () => {
+it("fails for a credential that deploy cannot get, with deploy commands for the same config, stage and request", async () => {
+  const core =
+    await vi.importActual<typeof import("@notation/core")>("@notation/core");
+  planApp.mockRejectedValueOnce(
+    new core.UnobtainableCredentialError({
+      consumer: "app-key-secret",
+      producer: "app",
+      producerType: "github/App",
+      name: "privateKey",
+      instanceHash: "5d2e8b17",
+      version: "7b1e52c0",
+    }),
+  );
+  const logger = { ...console, info: () => undefined };
+
+  const error = await plan(deployment, {
+    logger,
+    config: "jobs.config.ts",
+    requested: { replace: [{ id: "queue" }] },
+  }).catch((e: Error) => e);
+
+  expect((error as Error).message).toBe(
+    [
+      "app-key-secret needs app.privateKey, and deploy cannot get it. github/App issues privateKey once, at create.",
+      "",
+      "  Replace app, to issue a new value:",
+      "    notation deploy --config jobs.config.ts --stage prod --replace queue --replace app@5d2e8b17",
+      "",
+      "  Or pass a value that you hold:",
+      "    notation deploy --config jobs.config.ts --stage prod --replace queue --credential app.privateKey@7b1e52c0=APP_PRIVATE_KEY",
+    ].join("\n"),
+  );
+});
+
+it("prints the deploy command of a --credential with the version in state", async () => {
   planApp.mockResolvedValueOnce({
     createdAt: "",
     nodes: [
       {
-        id: "token",
-        type: "test/plan/token",
-        decision: "replace",
-        replaceFields: [{ name: "Value", known: true, credential: true }],
-        replaceOrder: "delete-first",
+        id: "app",
+        type: "github/App",
+        decision: "noop",
+        rotates: ["privateKey"],
+        credentialVersions: { privateKey: "7b1e52c0" },
         params: {},
         dependsOn: [],
       },
@@ -522,37 +562,16 @@ it("prints why a resource is replaced to get a new credential", async () => {
   const lines: string[] = [];
   const logger = { ...console, info: (line: string) => lines.push(line) };
 
-  await plan(deployment, { logger });
-
-  expect(lines).toContain(
-    "    Value needs a new value, as a resource that takes it needs one, and it has no rotate operation",
-  );
-  expect(lines.join("\n")).not.toContain("forces replacement");
-});
-
-it("prints a resource at which deploy fails for want of a credential", async () => {
-  planApp.mockResolvedValueOnce({
-    createdAt: "",
-    nodes: [
-      {
-        id: "secret",
-        type: "test/plan/secret",
-        decision: "replace",
-        replaceFields: [{ name: "name", known: true }],
-        replaceOrder: "delete-first",
-        unheldCredentials: [{ resource: "token", name: "Value" }],
-        params: {},
-        dependsOn: ["token"],
-      },
-    ],
+  await plan(deployment, {
+    logger,
+    requested: {
+      replace: [],
+      credential: [{ id: "app", name: "privateKey", variable: "APP_KEY" }],
+    },
   });
-  const lines: string[] = [];
-  const logger = { ...console, info: (line: string) => lines.push(line) };
 
-  await plan(deployment, { logger });
-
-  expect(lines).toContain(
-    "    deploy fails here, as it holds no value for Value of token. The deploy after it replaces token",
+  expect(lines.at(-1)).toBe(
+    "\nTo deploy this plan:\n  notation deploy --stage prod --credential app.privateKey@7b1e52c0=APP_KEY",
   );
 });
 

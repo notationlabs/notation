@@ -1,18 +1,19 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   credentialMarker,
   credentialNames,
   findCredentialMarkers,
   forEachOutputRef,
   isCredentialMarker,
+  isCredentialSource,
   mapCredentialMarkers,
+  toComparableParams,
   validateValues,
   type BaseResource,
   type CredentialMarker,
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
 import { recordSecretValue } from "@notation/utils";
-import type { ResourceAction } from "./plan";
 
 // The values of credentials, by version. They are kept here only, for the
 // life of the process, so a resumed deploy starts with none. A process runs
@@ -27,16 +28,54 @@ const given = new WeakMap<BaseResource, Set<string>>();
 
 /**
  * Keeps a credential's value in memory, and returns the version that names
- * it. Every string in the value is removed from error messages from then on.
+ * it: `version`, or a new one. Every string in the value is removed from
+ * error messages from then on.
  */
-export function holdCredential(value: unknown): string {
+export function holdCredential(
+  value: unknown,
+  version: string = randomUUID(),
+): string {
   recordSecretStrings(value);
-  const version = randomUUID();
   held.set(version, value);
   return version;
 }
 
-function recordSecretStrings(value: unknown): void {
+/**
+ * The version of a source's credential: a SHA-256 of the source's ID, the
+ * credential's name, its comparable params and its revision. A source with
+ * the same params and revision gives the same version in every deploy, so
+ * loading the value again changes no resource that takes it.
+ */
+export function sourceCredentialVersion(
+  source: BaseResource,
+  name: string,
+  params: Record<string, unknown>,
+  revision: unknown,
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        source.id,
+        name,
+        sortedEntries(toComparableParams(source.schema, params)),
+        revision,
+      ]),
+    )
+    .digest("hex");
+}
+
+function sortedEntries(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortedEntries);
+  if (value && typeof value === "object") {
+    return Object.keys(value)
+      .sort()
+      .map((key) => [key, sortedEntries((value as any)[key])]);
+  }
+  return value;
+}
+
+/** Removes every string in `value` from error messages from now on. */
+export function recordSecretStrings(value: unknown): void {
   if (typeof value === "string") recordSecretValue(value);
   else if (value && typeof value === "object") {
     Object.values(value).forEach(recordSecretStrings);
@@ -154,9 +193,19 @@ export async function holdCreated(
  * Copies a value, with the held value in place of each credential marker.
  * Throws for a marker whose value is not held. `taker` is the resource whose
  * operation receives the copy.
+ *
+ * With `recorded`, a marker that `recorded` also holds is `undefined` in the
+ * copy: the record of `taker` shows that it already has that version.
  */
-export function revealCredentials<T>(value: T, taker: BaseResource): T {
+export function revealCredentials<T>(
+  value: T,
+  taker: BaseResource,
+  recorded?: unknown,
+): T {
+  const unchanged =
+    recorded === undefined ? [] : findCredentialMarkers(recorded);
   return mapCredentialMarkers(value, (marker) => {
+    if (unchanged.some((other) => sameMarker(other, marker))) return undefined;
     const { resource, name, version } = marker.$credential;
     if (!holdsCredential(version)) {
       throw new Error(
@@ -169,18 +218,41 @@ export function revealCredentials<T>(value: T, taker: BaseResource): T {
   }) as T;
 }
 
+/** The credential markers in `value` that `recorded` does not hold. */
+export function changedCredentials(
+  value: unknown,
+  recorded: unknown,
+): CredentialMarker[] {
+  const unchanged = findCredentialMarkers(recorded);
+  return findCredentialMarkers(value).filter(
+    (marker) => !unchanged.some((other) => sameMarker(other, marker)),
+  );
+}
+
+function sameMarker(a: CredentialMarker, b: CredentialMarker): boolean {
+  return (
+    a.$credential.resource === b.$credential.resource &&
+    a.$credential.name === b.$credential.name &&
+    a.$credential.version === b.$credential.version
+  );
+}
+
 /**
  * Whether an operation of `taker` has received, in this process, the value
- * of every credential marker in `value`.
+ * of every credential marker in `value`. The credentials of the sources
+ * among `resources` are skipped: a source gives the same value for the same
+ * version, so an operation replayed from the journal received that value.
  */
 export function wasGivenCredentials(
   taker: BaseResource,
   value: unknown,
+  resources: readonly BaseResource[],
 ): boolean {
-  return findCredentialMarkers(value).every(
-    ({ $credential }) =>
-      given.get(taker)?.has($credential.version ?? "") ?? false,
-  );
+  return findCredentialMarkers(value).every(({ $credential }) => {
+    const producer = resources.find(({ id }) => id === $credential.resource);
+    if (producer && isCredentialSource(producer)) return true;
+    return given.get(taker)?.has($credential.version ?? "") ?? false;
+  });
 }
 
 /**
@@ -210,22 +282,6 @@ export function assertNoHiddenCredential(resource: BaseResource): void {
       );
     });
   }
-}
-
-/**
- * `revealCredentials` for the params of an update. A param that holds a
- * credential whose value is not held is left out.
- */
-export function revealHeldCredentials(
-  params: Record<string, unknown>,
-  taker: BaseResource,
-): Record<string, unknown> {
-  const revealed: Record<string, unknown> = {};
-  for (const [field, value] of Object.entries(params)) {
-    if (unheldCredentials(value).length > 0) continue;
-    revealed[field] = revealCredentials(value, taker);
-  }
-  return revealed;
 }
 
 /** The credential markers in a value whose values are not held. */
@@ -274,31 +330,34 @@ export function takesCredential(
 }
 
 /**
- * The credentials of `producer` that need a new value: a resource takes the
- * credential, and one of these holds:
+ * The credentials of `producer` that need a new value, each with the first
+ * resource that needs it. A resource takes the credential, and one of these
+ * holds:
  *
  * 1. The output in the producer's record has no version for it.
  * 2. A resource that takes it has no record, or a "creating" record.
  * 3. The record of a resource that takes it holds another version, because
  *    an earlier deploy failed before it updated the resource.
+ *
+ * A source's credential is never in the list: deploy loads its value again.
  */
 export function credentialsToMint(
   producer: BaseResource,
   output: Record<string, unknown>,
   consumers: readonly { resource: BaseResource; record?: StateNode }[],
-): string[] {
-  return credentialNames(producer.schema).filter((name) => {
+): { name: string; consumer: BaseResource }[] {
+  if (isCredentialSource(producer)) return [];
+  return credentialNames(producer.schema).flatMap((name) => {
     const taking = consumers.filter(({ resource }) =>
       takesCredential(resource, producer, name),
     );
-    if (taking.length === 0) return false;
     const marker = output[name];
     const version = isCredentialMarker(marker)
       ? marker.$credential.version
       : null;
-    if (version === null) return true;
-    return taking.some(
+    const needing = taking.find(
       ({ record }) =>
+        version === null ||
         !record ||
         isCreatingRecord(record) ||
         !findCredentialMarkers(record.params).some(
@@ -308,7 +367,17 @@ export function credentialsToMint(
             held.version === version,
         ),
     );
+    return needing ? [{ name, consumer: needing.resource }] : [];
   });
+}
+
+/** The version that the producer's output holds for the credential. */
+export function credentialVersion(
+  producer: BaseResource,
+  name: string,
+): string | null {
+  const marker = (producer.output as Record<string, unknown> | null)?.[name];
+  return isCredentialMarker(marker) ? marker.$credential.version : null;
 }
 
 /** The resources that take a credential of `producer`. */
@@ -321,33 +390,4 @@ export function credentialConsumers(
     (candidate) =>
       candidate !== producer && takesCredential(candidate, producer),
   );
-}
-
-/**
- * How deploy gets a new value for each of the credentials `names` of
- * `producer`. It rotates them when each has a `rotate` operation. Otherwise
- * it replaces the producer, and `replace` is the action for that.
- */
-export function mintAction(
-  producer: BaseResource,
-  names: string[],
-): {
-  rotates: string[];
-  replace?: Extract<ResourceAction, { decision: "replace" }>;
-} {
-  const unrotatable = names.filter((name) => !producer.rotate?.[name]);
-  if (unrotatable.length === 0) return { rotates: names };
-  return {
-    rotates: [],
-    replace: {
-      decision: "replace",
-      patch: {},
-      diff: { added: {}, deleted: {}, updated: {} },
-      replaceFields: unrotatable.map((name) => ({
-        name,
-        known: true,
-        credential: true,
-      })),
-    },
-  };
 }

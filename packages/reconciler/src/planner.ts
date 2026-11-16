@@ -1,9 +1,17 @@
+import { randomUUID } from "node:crypto";
 import {
   assertRequiredOutputs,
+  containsUnknownAfterApply,
+  credentialNames,
+  diffParams,
   fillPhysicalNames,
   findCredentialMarkers,
+  isCredentialMarker,
+  isCredentialSource,
   validateParams,
+  type BaseCredentialSource,
   type BaseResource,
+  type NameScope,
   type RecordedOutputs,
 } from "@notation/resource";
 import {
@@ -21,12 +29,16 @@ import {
   assertNoHiddenCredential,
   credentialConsumers,
   credentialsToMint,
-  mintAction,
+  credentialVersion,
   setRecordedOutput,
   takesCredential,
 } from "./credentials";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
-import { applyDriftDetection } from "./operations";
+import {
+  applyDriftDetection,
+  emitLifecycleEvent,
+  getErrorDetails,
+} from "./operations";
 import { sweepSteps, sweptRecords } from "./orphan-sweep";
 import {
   assertChangeAllowed,
@@ -53,9 +65,16 @@ import { readRecordedOutputs } from "./recorded-outputs";
 import {
   assertReplaceRequest,
   instanceHash,
+  requestedCredential,
   requestedReplace,
+  shortVersion,
   type ReplaceRequest,
 } from "./replace-request";
+import { decideSource, readSource } from "./sources";
+import {
+  UnobtainableCredentialError,
+  unobtainableCredential,
+} from "./unobtainable-credential";
 import { assertSameType } from "./resource-type";
 import { createStepRunner, runOperation } from "./step-runner";
 
@@ -84,7 +103,7 @@ export type CreatePlanOptions = {
   maxOperationAttempts?: number;
   /** As for deploy: the classes of the types that only orphans have. */
   registry?: ResourceRegistry;
-  /** The replaces that the user asked for. */
+  /** The replaces and the credentials that the user asked for. */
   requested?: ReplaceRequest;
   /**
    * The key of the deployment's state. With it, each node of a resource in
@@ -92,6 +111,10 @@ export type CreatePlanOptions = {
    * `requested`.
    */
   deploymentId?: string;
+  /** The app and stage, for the `read` of each source. Required with a source. */
+  nameScope?: NameScope;
+  /** The execution ID that each source's `read` receives. Defaults to a new one. */
+  executionId?: string;
 };
 
 export async function createPlan({
@@ -103,6 +126,8 @@ export async function createPlan({
   registry,
   requested,
   deploymentId,
+  nameScope,
+  executionId = randomUUID(),
 }: CreatePlanOptions): Promise<Plan> {
   const resourceById = new Map(
     resources.map((resource) => [resource.id, resource]),
@@ -143,11 +168,100 @@ export async function createPlan({
   // the ID of the replaced resource.
   const cascaded = new Map<string, string>();
 
+  // As deploy does in `reconcileSource`: plan reads every source.
+  const planSource = async (
+    source: BaseCredentialSource,
+  ): Promise<PlanNode> => {
+    const { stateNode, params } = await planKnownParams(
+      source,
+      state,
+      "plan",
+      recordedOutputs,
+    );
+    const record =
+      stateNode && !isCreatingRecord(stateNode) ? stateNode : undefined;
+    const node = {
+      id: source.id,
+      type: source.type,
+      params,
+      dependsOn: getDependencyIds(source),
+    };
+    if (containsUnknownAfterApply(params)) {
+      // The read needs every param, so the revision is unknown, and so is
+      // the version of the credential.
+      source.setOutput(null as any);
+      if (!record) return { ...node, decision: "create" };
+      const { diff } = diffParams(source.schema, record.params, params, {
+        canUpdate: true,
+      });
+      return { ...node, decision: "update", diff };
+    }
+    if (!nameScope) {
+      throw new Error(
+        `createPlan needs nameScope to read the source ${source.id}.`,
+      );
+    }
+    const event = { resource: source, emit: emitStep };
+    await runOperation(emitLifecycleEvent(event, "read", "start"));
+    let read: Awaited<ReturnType<typeof readSource>>;
+    try {
+      read = await readSource(
+        source,
+        params,
+        { id: source.id, executionId, ...nameScope },
+        record,
+      );
+    } catch (error) {
+      await runOperation(
+        emitLifecycleEvent(event, "read", "error", getErrorDetails(error)),
+      );
+      throw error;
+    }
+    await runOperation(emitLifecycleEvent(event, "read", "success"));
+    for (const message of read.warnings) {
+      await runOperation(
+        emitStep({
+          level: "warn",
+          event: "reconciler.source.warning",
+          resourceId: source.id,
+          resourceType: source.type,
+          message,
+        }),
+      );
+    }
+    const { decision, output, diff } = decideSource(
+      source,
+      record,
+      params,
+      read.result,
+    );
+    source.setOutput(output);
+    return { ...node, decision, ...(diff ? { diff } : {}) };
+  };
+
+  // Throws for a credential that `consumer` needs, which deploy cannot get.
+  const unobtainable = (
+    consumer: BaseResource,
+    producer: BaseResource,
+    name: string,
+  ) =>
+    new UnobtainableCredentialError(
+      unobtainableCredential({
+        consumer,
+        producer,
+        name,
+        record: stateById.get(producer.id),
+        version: credentialVersion(producer, name),
+        deploymentId,
+      }),
+    );
+
   const planResource = async (
     resource: BaseResource,
     cycle: DeployUnit | undefined,
     detectDrift = driftDetection,
   ): Promise<PlanNode> => {
+    if (isCredentialSource(resource)) return planSource(resource);
     const known = await planKnownParams(
       resource,
       state,
@@ -157,7 +271,7 @@ export async function createPlan({
     const { stateNode } = known;
     let { params } = known;
     const requestedFor = requestedReplace(requested, resource.id);
-    let action: ResourceAction = await runOperation(
+    const action: ResourceAction = await runOperation(
       applyDriftDetection(createStepRunner(), {
         action: decideAction({
           resource,
@@ -178,22 +292,31 @@ export async function createPlan({
 
     // As deploy does before it reaches the resources that take a credential
     // of this one. See `mintNeededCredentials`.
-    const { rotates, replace } = mintAction(
-      resource,
+    const rotates: string[] = [];
+    if (
       stateNode &&
-        !isCreatingRecord(stateNode) &&
-        keepsResource(action.decision)
-        ? credentialsToMint(
-            resource,
-            stateNode.output,
-            credentialConsumers(resource, resources).map((consumer) => ({
-              resource: consumer,
-              record: stateById.get(consumer.id),
-            })),
-          )
-        : [],
-    );
-    if (replace) action = replace;
+      !isCreatingRecord(stateNode) &&
+      keepsResource(action.decision)
+    ) {
+      for (const target of requested?.credential ?? []) {
+        if (target.id === resource.id) rotates.push(target.name);
+      }
+      const needed = credentialsToMint(
+        resource,
+        stateNode.output,
+        credentialConsumers(resource, resources).map((consumer) => ({
+          resource: consumer,
+          record: stateById.get(consumer.id),
+        })),
+      );
+      for (const { name, consumer } of needed) {
+        if (rotates.includes(name)) continue;
+        if (!resource.rotate?.[name]) {
+          throw unobtainable(consumer, resource, name);
+        }
+        rotates.push(name);
+      }
+    }
 
     const dependsOn = getDependencyIds(resource);
     const replaceFields =
@@ -319,6 +442,7 @@ export async function createPlan({
       ...(deploymentId && stateNode && !isCreatingRecord(stateNode)
         ? { instanceHash: instanceHash(deploymentId, resource, stateNode) }
         : {}),
+      ...recordedCredentialVersions(resource, stateNode),
       params,
       dependsOn,
     };
@@ -354,13 +478,11 @@ export async function createPlan({
       const at = find(id);
       if (!producer || !at) continue;
       const producerNode = at.list[at.index]!;
+      if (isCredentialSource(producer)) continue;
       if (producerNode.rotates?.includes(name)) continue;
       if (!producer.rotate?.[name]) {
-        const unheld = (node.unheldCredentials ??= []);
-        if (!unheld.some((c) => c.resource === id && c.name === name)) {
-          unheld.push({ resource: id, name });
-        }
-        continue;
+        if (requestedCredential(requested, id, name)) continue;
+        throw unobtainable(resourceById.get(node.id)!, producer, name);
       }
       producerNode.rotates = [...(producerNode.rotates ?? []), name];
       producer.setOutput({ ...producer.output, [name]: UNKNOWN_AFTER_APPLY });
@@ -463,6 +585,23 @@ export async function createPlan({
   }
 
   return { createdAt: new Date().toISOString(), nodes };
+}
+
+function recordedCredentialVersions(
+  resource: BaseResource,
+  stateNode: StateNode | undefined,
+): { credentialVersions?: Record<string, string> } {
+  if (!stateNode || isCreatingRecord(stateNode)) return {};
+  const versions: Record<string, string> = {};
+  for (const name of credentialNames(resource.schema)) {
+    const marker = stateNode.output[name];
+    if (isCredentialMarker(marker)) {
+      versions[name] = shortVersion(marker.$credential.version);
+    }
+  }
+  return Object.keys(versions).length > 0
+    ? { credentialVersions: versions }
+    : {};
 }
 
 /** A `delete-retired` node for each retired instance that `node` lists. */

@@ -13,9 +13,10 @@ import { isCredentialMarker } from "./credential";
  * - `create`: the result of the resource's `create`.
  * - `rotate`: the result of one of the resource's `rotate` operations.
  * - `read`: the result of the resource's `read`.
+ * - `load`: the result of a source's `loadCredential`.
  */
 export type ValidationPoint =
-  "declaration" | "plan" | "deploy" | "create" | "rotate" | "read";
+  "declaration" | "plan" | "deploy" | "create" | "rotate" | "read" | "load";
 
 /** The parts of a resource that validation reads. */
 export type ValidationSubject = {
@@ -54,7 +55,8 @@ export class ValueValidationError extends Error {
     const subject =
       opts.point === "read" ||
       opts.point === "create" ||
-      opts.point === "rotate"
+      opts.point === "rotate" ||
+      opts.point === "load"
         ? `The ${opts.point} of ${resource} returned an invalid ${opts.field}${site}`
         : opts.point === "declaration"
           ? `Invalid ${opts.field} for ${resource} when declared${opts.declaredAt ? ` at ${opts.declaredAt}` : ""}`

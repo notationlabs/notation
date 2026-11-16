@@ -9,6 +9,7 @@ import {
   collectResourceGraph,
   fillPhysicalNames,
   findCredentialMarkers,
+  isCredentialSource,
   validateParams,
   type BaseResource,
   type DurableObject,
@@ -67,6 +68,7 @@ import {
   unknownNames,
 } from "../physical-names";
 import {
+  changedCredentials,
   currentCredentialMarkers,
   setRecordedOutput,
   staleCredentialMarkers,
@@ -74,6 +76,7 @@ import {
 } from "../credentials";
 import { requestedReplace } from "../replace-request";
 import { mintNeededCredentials, obtainCredentials } from "./credentials";
+import { reconcileSource } from "./source";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
   resourceStateStore,
@@ -104,6 +107,8 @@ type SharedParams = Omit<CreateResourceParams, "persist"> & {
    * fill in its new names, also where a param refers to one.
    */
   unnamedParams: Record<string, unknown>;
+  /** See `UpdateResourceParams.recordedParams`. */
+  recordedParams?: Record<string, unknown>;
 };
 
 export type ReconcileOptions = {
@@ -149,6 +154,10 @@ export async function* reconcileResource(
   opts: DeployContext,
   options: ReconcileOptions = {},
 ): AsyncGenerator<any, void, any> {
+  if (isCredentialSource(resource)) {
+    yield* reconcileSource(step, resource, opts);
+    return;
+  }
   const emit = durableEmitter(step, opts.emit);
   let session = yield* openStateSession(step, opts, resource);
   // Repeats the notation:validate check, because validate ran before the
@@ -199,14 +208,17 @@ export async function* reconcileResource(
   const requested = opts.reconciled.has(resource)
     ? undefined
     : requestedReplace(opts.requested, resource.id);
+  // The params that an update compares credentials with: it receives the
+  // value of each credential whose version they do not hold.
+  const recordedParams =
+    options.staleCredentials && session.node
+      ? staleCredentialMarkers(session.node.params)
+      : session.node?.params;
   let action = decideAction({
     resource,
     stateNode:
-      options.staleCredentials && session.node
-        ? {
-            ...session.node,
-            params: staleCredentialMarkers(session.node.params),
-          }
+      session.node && recordedParams
+        ? { ...session.node, params: recordedParams }
         : session.node,
     params,
     requested,
@@ -250,31 +262,28 @@ export async function* reconcileResource(
   }
 
   if (session.node && !creating && keepsResource(action.decision)) {
-    const minted = yield* mintNeededCredentials(
+    session = yield* mintNeededCredentials(
       step,
       opts,
       session,
       resource,
       dependsOn,
     );
-    session = minted.session;
-    if (minted.replace) action = minted.replace;
   }
 
-  // An update receives the credentials in its patch. Every other operation
-  // receives all of them.
+  // An update receives the credentials whose version changed. Every other
+  // operation receives all of them.
   let unnamedParams = configParams;
   const updates =
     action.decision === "update" || action.decision === "drift-update";
+  const received = (): unknown =>
+    "patch" in action && updates
+      ? changedCredentials(action.patch, recordedParams)
+      : params;
   if (
     !opts.dryRun &&
     action.decision !== "noop" &&
-    (yield* obtainCredentials(
-      step,
-      opts,
-      resource,
-      "patch" in action && updates ? action.patch : params,
-    ))
+    (yield* obtainCredentials(step, opts, resource, received()))
   ) {
     params = currentCredentialMarkers(params, opts.resources);
     unnamedParams = currentCredentialMarkers(unnamedParams, opts.resources);
@@ -318,6 +327,7 @@ export async function* reconcileResource(
       emit,
       maxOperationAttempts: opts.maxOperationAttempts,
       prior: session.node,
+      recordedParams,
     },
     // The params of a placeholder already leave out the contributions that
     // depend on a member of the cycle.
@@ -329,12 +339,12 @@ export async function* reconcileResource(
   // so the resource holds the value that the operation received then, and a
   // rotation since has revoked that value. The resource is reconciled again
   // as one that has not taken the credentials, which updates it.
-  const taken = "patch" in action && updates ? action.patch : params;
+  const taken = received();
   if (
     !opts.dryRun &&
     !options.staleCredentials &&
     action.decision !== "noop" &&
-    !wasGivenCredentials(resource, taken)
+    !wasGivenCredentials(resource, taken, opts.resources)
   ) {
     const versions = findCredentialMarkers(taken)
       .map(({ $credential }) => $credential.version)
@@ -399,6 +409,7 @@ async function* applyAction(
       yield* updateResourceOperation(step, {
         ...shared,
         patch: action.patch,
+        recordedParams: shared.recordedParams ?? session.node?.params ?? {},
         persist: session.persist,
       });
       return;
@@ -495,6 +506,7 @@ async function* reconcileTakenOver(
       emit,
       persistedOutput: takenOver.node?.output,
       prior: takenOver.node,
+      recordedParams: takenOver.node?.params,
     },
     replaceWithout,
   );

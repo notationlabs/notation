@@ -49,6 +49,12 @@ const replaceOption = (hash: string) =>
     `replace the resource with this ID in state, as for a param that forces replacement (repeatable)`,
     collect,
   ] as const;
+const credentialOption = (version: string) =>
+  [
+    `--credential <id.credential${version}=variable>`,
+    "give deploy the value of a credential without rotate, from the environment variable (repeatable)",
+    collect,
+  ] as const;
 const overrideLossProtectionOption = [
   "--override-loss-protection <id>",
   "replace a resource that --replace names, though its class refuses the replace (repeatable)",
@@ -95,6 +101,7 @@ program
   .option("--no-drift-detection", "skip drift detection")
   .option(...replaceOption("@hash"))
   .option(...overrideLossProtectionOption)
+  .option(...credentialOption("@version"))
   .addOption(
     new Option(
       "--prompt-secrets",
@@ -147,6 +154,7 @@ program
   .addOption(prettyOption())
   .option(...replaceOption("[@hash]"))
   .option(...overrideLossProtectionOption)
+  .option(...credentialOption("[@version]"))
   .action(async (options) => {
     const project = await load(options);
     const deployment = resolveDeployment(project, { stage: options.stage });
@@ -160,10 +168,11 @@ program
 program
   .command("viz")
   .option(...configOption)
+  .option(...stageOption)
   .description("Visualise Notation App")
   .action(async (options) => {
     const project = await load(options);
-    await visualise(resolveBuild(project));
+    await visualise(resolveDeployment(project, { stage: options.stage }));
   });
 
 program

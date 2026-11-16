@@ -11,7 +11,8 @@
  *                              fails to load
  *   notation:validate          deploy's check of known params, before
  *                              any change
- *   notation:replace-request   deploy's check of the `--replace` request,
+ *   notation:replace-request   deploy's check of the `--replace` and
+ *                              `--credential` request,
  *                              inside the deployment hold, only with a
  *                              request
  *   notation:recorded-outputs  the outputs that `~state` refs read, from
@@ -70,6 +71,11 @@
  *   *:delete:find              the find of the resource of a "creating"
  *                              record, before a delete
  *   *:create:takeover:read:*   the read of a resource that create took over
+ *   *:source-read:read         the `read` of a source, with its warnings
+ *   *:credential-passed:<name>:passed   the version of a value that
+ *                              `--credential` passed
+ *   *:credential:<name>:rotate the rotate of a credential that a resource
+ *                              needs, before deploy reaches that resource
  *   *:taken-over:*             the decision and change that follow a
  *                              takeover
  *

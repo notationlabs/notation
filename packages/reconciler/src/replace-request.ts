@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import type { BaseResource, Schema } from "@notation/resource";
+import {
+  isCredentialMarker,
+  isCredentialSource,
+  type BaseResource,
+  type Schema,
+} from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
 
 /** A resource that `--replace` names, as `<id>@<instance hash>`. */
@@ -9,11 +14,28 @@ export type ReplaceTarget = {
   instanceHash?: string;
 };
 
-/** The replaces that the user asked for, with `--replace`. */
+/**
+ * A credential that `--credential` names, as
+ * `<id>.<credential>@<version>=<variable>`.
+ */
+export type CredentialTarget = {
+  id: string;
+  name: string;
+  /** Optional for plan, and required for deploy. */
+  version?: string;
+  /** The environment variable that holds the value. */
+  variable: string;
+};
+
+/**
+ * What the user asked deploy to do beyond the code: the replaces of
+ * `--replace`, and the values of `--credential`.
+ */
 export type ReplaceRequest = {
   replace: ReplaceTarget[];
   /** IDs in `replace` whose class's `rejectChange` deploy skips. */
   overrideLossProtection?: string[];
+  credential?: CredentialTarget[];
 };
 
 /** How deploy decides a resource that `--replace` names. */
@@ -49,15 +71,65 @@ function assertHashWellFormed(value: string, known: (id: string) => boolean) {
   );
 }
 
+/**
+ * Reads `<id>.<credential>@<version>=<variable>`. The variable is the part
+ * after the last `=`. The version is the part after the last `@` before it,
+ * when that part holds no dot. The rest is split at its last dot, so an ID
+ * can hold a dot.
+ */
+export function parseCredentialTarget(value: string): CredentialTarget {
+  const equals = value.lastIndexOf("=");
+  const variable = value.slice(equals + 1);
+  const left = equals < 0 ? value : value.slice(0, equals);
+  const at = left.lastIndexOf("@");
+  const hasVersion = at > left.lastIndexOf(".");
+  const target = hasVersion ? left.slice(0, at) : left;
+  const version = hasVersion ? left.slice(at + 1) : undefined;
+  const dot = target.lastIndexOf(".");
+  const id = target.slice(0, dot);
+  const name = target.slice(dot + 1);
+  if (equals < 0 || !variable || dot <= 0 || !name || version === "") {
+    throw new Error(
+      `--credential ${value} is malformed. Give it as <resource id>.<credential>@<version>=<variable>.`,
+    );
+  }
+  return {
+    id,
+    name,
+    ...(version !== undefined ? { version: version.toLowerCase() } : {}),
+    variable,
+  };
+}
+
+/** A credential's version as plan prints it: its first 8 characters. */
+export function shortVersion(version: string | null): string {
+  return version === null ? "none" : version.slice(0, 8);
+}
+
+/** The request's `--credential` for the credential, if it has one. */
+export function requestedCredential(
+  request: ReplaceRequest | undefined,
+  id: string,
+  name: string,
+): CredentialTarget | undefined {
+  return request?.credential?.find(
+    (target) => target.id === id && target.name === name,
+  );
+}
+
 function primaryKeyNames(schema: Schema): string[] {
   return Object.entries(schema)
     .filter(([, item]) => (item as { primaryKey?: true }).primaryKey)
     .map(([name]) => name);
 }
 
-// A source has no primary key, and every other class has one.
-function isSource(resource: { schema: Schema }): boolean {
-  return primaryKeyNames(resource.schema).length === 0;
+// The old `SourceValue` has no primary key, and every class that is not a
+// source has one.
+function isSource(resource: BaseResource): boolean {
+  return (
+    isCredentialSource(resource) ||
+    primaryKeyNames(resource.schema).length === 0
+  );
 }
 
 /**
@@ -75,8 +147,20 @@ export function formatRequest(request: ReplaceRequest | undefined): string {
     ...(request?.overrideLossProtection ?? [])
       .map((id) => `--override-loss-protection ${shellQuote(id)}`)
       .sort(),
+    ...(request?.credential ?? [])
+      .map((target) => `--credential ${shellQuote(formatCredential(target))}`)
+      .sort(),
   ];
   return [...new Set(flags)].join(" ");
+}
+
+export function formatCredential({
+  id,
+  name,
+  version,
+  variable,
+}: CredentialTarget): string {
+  return `${id}.${name}${version === undefined ? "" : `@${version}`}=${variable}`;
 }
 
 const SHELL_SAFE = /^[A-Za-z0-9_./:@=-]+$/;
@@ -186,6 +270,73 @@ export function assertReplaceRequest(
       throw new Error(
         `${id} has the instance hash ${actual} in this stage, not ${given}.`,
       );
+    }
+  }
+  assertCredentialRequest(request, resourceById, recordById, opts.point);
+}
+
+/**
+ * Throws if a `--credential` names a credential that it cannot set, gives a
+ * version that is not the one in state, or names a variable that is not set
+ * at deploy.
+ */
+function assertCredentialRequest(
+  request: ReplaceRequest,
+  resourceById: Map<string, BaseResource>,
+  recordById: Map<string, StateNode>,
+  point: "plan" | "deploy",
+): void {
+  const seen = new Set<string>();
+  for (const target of request.credential ?? []) {
+    const { id, name, version: given, variable } = target;
+    const flag = `--credential ${id}.${name}`;
+    if (seen.has(`${id}.${name}`)) {
+      throw new Error(`${flag} is given more than once.`);
+    }
+    seen.add(`${id}.${name}`);
+    const resource = resourceById.get(id);
+    const record = recordById.get(id);
+    if (!resource) {
+      throw new Error(`${flag}: ${id} is not in code.`);
+    }
+    if (isCredentialSource(resource)) {
+      throw new Error(
+        `${flag}: ${id} is a source. Deploy loads a source's value from the source.`,
+      );
+    }
+    if (resource.schema[name]?.propertyType !== "credential") {
+      throw new Error(`${flag}: ${name} is not a credential of ${id}.`);
+    }
+    if (resource.rotate?.[name]) {
+      throw new Error(
+        `${flag}: ${resource.type} can rotate ${name}, so deploy gets a new value itself. --credential is accepted only for a credential without rotate.`,
+      );
+    }
+    if (request.replace.some((replaced) => replaced.id === id)) {
+      throw new Error(
+        `${flag} cannot be given with --replace ${id}: the replacement is created with a new value.`,
+      );
+    }
+    if (!record || isCreatingRecord(record)) {
+      throw new Error(
+        `${flag}: ${id} is not in state, so it has no value to set. Deploy creates it, and the create returns the value.`,
+      );
+    }
+    if (given === undefined) {
+      if (point === "plan") continue;
+      throw new Error(`${flag} has no version.`);
+    }
+    const marker = record.output[name];
+    const actual = isCredentialMarker(marker)
+      ? marker.$credential.version
+      : null;
+    if (given !== shortVersion(actual) && given !== actual) {
+      throw new Error(
+        `${id}.${name} is at version ${shortVersion(actual)} in this stage, not ${given}.`,
+      );
+    }
+    if (point === "deploy" && !process.env[variable]) {
+      throw new Error(`${flag} reads ${variable}, which is not set.`);
     }
   }
 }

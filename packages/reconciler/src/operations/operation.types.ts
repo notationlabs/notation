@@ -109,7 +109,7 @@ export type PersistStage =
   | "taken-over"
   | "restored"
   | `retired:${number}`
-  // Records a credential's new version, or that its value is lost.
+  // Records a credential's new version.
   | `credential:${string}`;
 
 export type RemoveState = () => AsyncGenerator<unknown, void, unknown>;
@@ -161,6 +161,12 @@ export type CreateResourceParams = ResolvedResourceParams & {
 
 export type UpdateResourceParams = ResolvedResourceParams & {
   patch: Record<string, unknown>;
+  /**
+   * The params in the resource's record. The update receives the value of a
+   * credential only when these do not hold its marker, and `undefined` in
+   * its place otherwise.
+   */
+  recordedParams: Record<string, unknown>;
   /** The edges to record with the resource. */
   dependsOn: string[];
   persist: PersistState;

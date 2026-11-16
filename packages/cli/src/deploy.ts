@@ -1,6 +1,7 @@
 import {
   deployApp,
   formatRequest,
+  parseCredentialTarget,
   parseReplaceTarget,
   resolveDeploymentId,
   type Deployment,
@@ -32,7 +33,10 @@ export type DeployCommandOptions = {
   promptSecrets?: boolean;
   /** Defaults to the prompt that `secretPrompt` picks. */
   promptSecret?: SecretPrompt;
-  /** The replaces from `--replace` and `--override-loss-protection`. */
+  /**
+   * The request from `--replace`, `--override-loss-protection` and
+   * `--credential`.
+   */
   requested?: ReplaceRequest;
   /** The `--config` path, for the plan command that a missing hash prints. */
   config?: string;
@@ -90,37 +94,60 @@ export function secretPrompt(opts: {
 }
 
 /**
- * Throws if a `--replace` has no instance hash, with the plan command that
- * prints the deploy command with the hash. Skipped on a resume, so that
- * `assertSameRequest` reports a request that differs from the saved one.
+ * Throws if a `--replace` has no instance hash, or a `--credential` has no
+ * version, with the plan command that prints the deploy command with them.
+ * Skipped on a resume, so that `assertSameRequest` reports a request that
+ * differs from the saved one.
  */
 function assertHashesGiven(
   deployment: Deployment,
   opts: DeployCommandOptions,
 ): void {
   if (opts.executionId !== undefined) return;
+  const plan = `Run notation plan ${targetFlags(deployment, opts.config)} ${formatRequest(opts.requested)}`;
   const missing = opts.requested?.replace.find(
     (target) => target.instanceHash === undefined,
   );
-  if (!missing) return;
-  throw new Error(
-    `--replace ${missing.id} needs the instance hash, as --replace ${missing.id}@<instance hash>. Run notation plan ${targetFlags(deployment, opts.config)} ${formatRequest(opts.requested)} to print the deploy command with the hash.`,
+  if (missing) {
+    throw new Error(
+      `--replace ${missing.id} needs the instance hash, as --replace ${missing.id}@<instance hash>. ${plan} to print the deploy command with the hash.`,
+    );
+  }
+  const unversioned = opts.requested?.credential?.find(
+    (target) => target.version === undefined,
   );
+  if (unversioned) {
+    const { id, name, variable } = unversioned;
+    throw new Error(
+      `--credential ${id}.${name} needs the version, as --credential ${id}.${name}@<version>=${variable}. ${plan} to print the deploy command with the version.`,
+    );
+  }
 }
 
 /**
- * Reads `--replace` and `--override-loss-protection`. Undefined when neither
- * is given, so that a resume uses the request that the execution saved.
+ * Reads `--replace`, `--override-loss-protection` and `--credential`.
+ * Undefined when none is given, so that a resume uses the request that the
+ * execution saved.
  */
 export function replaceRequest(options: {
   replace?: string[];
   overrideLossProtection?: string[];
+  credential?: string[];
 }): ReplaceRequest | undefined {
-  if (!options.replace && !options.overrideLossProtection) return undefined;
+  if (
+    !options.replace &&
+    !options.overrideLossProtection &&
+    !options.credential
+  ) {
+    return undefined;
+  }
   return {
     replace: (options.replace ?? []).map(parseReplaceTarget),
     ...(options.overrideLossProtection
       ? { overrideLossProtection: options.overrideLossProtection }
+      : {}),
+    ...(options.credential
+      ? { credential: options.credential.map(parseCredentialTarget) }
       : {}),
   };
 }

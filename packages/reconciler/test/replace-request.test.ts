@@ -8,7 +8,9 @@ import { MemoryStateBackend, type StateNode } from "@notation/state";
 import { describe, expect, it } from "vitest";
 import { createPlan } from "../src/planner";
 import {
+  formatRequest,
   instanceHash,
+  parseCredentialTarget,
   parseReplaceTarget,
   type ReplaceRequest,
 } from "../src/replace-request";
@@ -181,6 +183,45 @@ describe("parseReplaceTarget", () => {
       id: "orders",
       instanceHash: "3c1f9a02",
     });
+  });
+});
+
+describe("parseCredentialTarget", () => {
+  it("splits at the last dot before the version, and at the last = ", () => {
+    expect(parseCredentialTarget("worker:a.b.privateKey@7B1E52C0=KEY")).toEqual(
+      {
+        id: "worker:a.b",
+        name: "privateKey",
+        version: "7b1e52c0",
+        variable: "KEY",
+      },
+    );
+  });
+
+  it("reads a value with no version", () => {
+    expect(parseCredentialTarget("app.privateKey=KEY")).toEqual({
+      id: "app",
+      name: "privateKey",
+      variable: "KEY",
+    });
+  });
+
+  it("throws for a value with no variable or no credential", () => {
+    expect(() => parseCredentialTarget("app.privateKey@7b1e52c0")).toThrow(
+      "is malformed",
+    );
+    expect(() => parseCredentialTarget("app@7b1e52c0=KEY")).toThrow(
+      "is malformed",
+    );
+  });
+
+  it("is formatted back as a flag", () => {
+    expect(
+      formatRequest({
+        replace: [],
+        credential: [parseCredentialTarget("app.privateKey@7b1e52c0=KEY")],
+      }),
+    ).toBe("--credential app.privateKey@7b1e52c0=KEY");
   });
 });
 

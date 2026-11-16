@@ -23,6 +23,7 @@ vi.mock("@notation/core", async (importOriginal) => {
     deployApp,
     destroyApp,
     formatRequest: core.formatRequest,
+    parseCredentialTarget: core.parseCredentialTarget,
     parseReplaceTarget: core.parseReplaceTarget,
     shellQuote: core.shellQuote,
     resolveDeploymentId: (d: Deployment) => `${d.app}:${d.stage}`,
@@ -175,7 +176,39 @@ describe("replace flags", () => {
     expect(deployApp).toHaveBeenCalledOnce();
   });
 
-  it("gives no request without either flag", () => {
+  it("fails a --credential with no version with the plan command", async () => {
+    deployApp.mockClear();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    await expect(
+      deploy(deployment, {
+        compile: false,
+        logger,
+        requested: replaceRequest({ credential: ["app.privateKey=APP_KEY"] }),
+      }),
+    ).rejects.toThrow(
+      "--credential app.privateKey needs the version, as --credential app.privateKey@<version>=APP_KEY. Run notation plan --stage prod --credential app.privateKey=APP_KEY to print the deploy command with the version.",
+    );
+    expect(deployApp).not.toHaveBeenCalled();
+  });
+
+  it("passes --credential to deploy as a target with a version and a variable", () => {
+    expect(
+      replaceRequest({ credential: ["app.privateKey@7b1e52c0=APP_KEY"] }),
+    ).toEqual({
+      replace: [],
+      credential: [
+        {
+          id: "app",
+          name: "privateKey",
+          version: "7b1e52c0",
+          variable: "APP_KEY",
+        },
+      ],
+    });
+  });
+
+  it("gives no request without any flag", () => {
     expect(replaceRequest({})).toBeUndefined();
   });
 });

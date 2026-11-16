@@ -1,5 +1,6 @@
 import {
   collectResourceGraph,
+  getActiveResourceCollection,
   type BaseResource,
   type NameScope,
   type ResourceGroup,
@@ -32,4 +33,20 @@ export async function getResourceGraph(
     },
     { scope, declarationChecks: opts.declarationChecks },
   );
+}
+
+/**
+ * The app and the stage that the infra code is being evaluated for, such as
+ * `{ app: "orders", stage: "prod" }`. Use it in a resource's config for a
+ * value that depends on the stage. Throws outside the evaluation of infra
+ * code.
+ */
+export function deployment(): { app: string; stage: string } {
+  const scope = getActiveResourceCollection()?.scope;
+  if (!scope) {
+    throw new Error(
+      "deployment() can only be called while notation evaluates the infra code, as deploy, plan, destroy and viz do.",
+    );
+  }
+  return { app: scope.app, stage: scope.stage };
 }

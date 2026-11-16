@@ -4,8 +4,11 @@ import {
   PROMPT_SOURCE,
   resolveDeploymentId,
   shellQuote,
+  UnobtainableCredentialError,
+  unobtainableCredentialMessage,
   type Deployment,
   type Plan,
+  type PlanAppOptions,
   type PlanNode,
   type ReplaceRequest,
 } from "@notation/core";
@@ -17,7 +20,7 @@ import { redirectStdoutToStderr } from "./stdio";
 export type PlanCommandOptions = {
   output?: OutputMode;
   logger?: Logger;
-  /** The replaces to plan, from `--replace`. */
+  /** The replaces and credentials to plan, from `--replace` and `--credential`. */
   requested?: ReplaceRequest;
   /** The `--config` path, for the deploy command that the plan prints. */
   config?: string;
@@ -56,7 +59,11 @@ export async function plan(
     const { restore } = redirectStdoutToStderr();
     try {
       await compile(deployment, { logger });
-      result = await planApp({ deployment, emit, requested: opts.requested });
+      result = await planWithCommands(deployment, opts, {
+        deployment,
+        emit,
+        requested: opts.requested,
+      });
     } finally {
       restore();
     }
@@ -66,7 +73,7 @@ export async function plan(
 
   await compile(deployment, { logger });
   logger.info(`Planning ${resolveDeploymentId(deployment)}\n`);
-  const result = await planApp({
+  const result = await planWithCommands(deployment, opts, {
     deployment,
     emit,
     requested: opts.requested,
@@ -76,6 +83,32 @@ export async function plan(
     logger.info(
       `\nTo deploy this plan:\n  notation deploy ${targetFlags(deployment, opts.config)} ${requestFlags(result, opts.requested)}`,
     );
+  }
+}
+
+/**
+ * Runs the plan. A plan that fails for a credential that deploy cannot get
+ * prints deploy commands with `--config`, `--stage` and the flags of the
+ * request.
+ */
+async function planWithCommands(
+  deployment: Deployment,
+  opts: PlanCommandOptions,
+  planOptions: PlanAppOptions,
+): Promise<Plan> {
+  try {
+    return await planApp(planOptions);
+  } catch (error) {
+    if (!UnobtainableCredentialError.is(error)) throw error;
+    const command = [
+      "notation deploy",
+      targetFlags(deployment, opts.config),
+      formatRequest(opts.requested),
+    ]
+      .filter(Boolean)
+      .join(" ");
+    error.message = unobtainableCredentialMessage(error.credential, command);
+    throw error;
   }
 }
 
@@ -94,6 +127,17 @@ function requestFlags(result: Plan, requested: ReplaceRequest): string {
       id,
       instanceHash: findRecordNode(result, id)?.instanceHash,
     })),
+    ...(requested.credential
+      ? {
+          credential: requested.credential.map((target) => ({
+            ...target,
+            version:
+              findRecordNode(result, target.id)?.credentialVersions?.[
+                target.name
+              ] ?? target.version,
+          })),
+        }
+      : {}),
   });
 }
 
@@ -139,12 +183,7 @@ function printPlanSummary(result: Plan, logger: Logger) {
     );
     if (node.rotates) {
       logger.info(
-        `    ${node.rotates.join(", ")} gets a new value, as a resource that takes it needs one`,
-      );
-    }
-    for (const { resource, name } of node.unheldCredentials ?? []) {
-      logger.info(
-        `    deploy fails here, as it holds no value for ${name} of ${resource}. The deploy after it replaces ${resource}`,
+        `    ${node.rotates.join(", ")} gets a new value, as a resource that takes it needs one or --credential passes one`,
       );
     }
     if (node.retiredAt) {
@@ -155,12 +194,6 @@ function printPlanSummary(result: Plan, logger: Logger) {
     for (const field of node.replaceFields ?? []) {
       if (field.requested) {
         logger.info("    replaced by --replace");
-        continue;
-      }
-      if (field.credential) {
-        logger.info(
-          `    ${field.name} needs a new value, as a resource that takes it needs one, and it has no rotate operation`,
-        );
         continue;
       }
       logger.info(

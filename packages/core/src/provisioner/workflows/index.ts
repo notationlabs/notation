@@ -1,12 +1,16 @@
 export {
   createLoggerReconcilerSubscriber,
   createNdjsonEventEmitter,
+  UnobtainableCredentialError,
   formatRequest,
+  parseCredentialTarget,
   parseReplaceTarget,
   shellQuote,
+  unobtainableCredentialMessage,
   type Logger,
   type ReconcilerEvent,
   type ReconcilerEventEmitter,
+  type CredentialTarget,
   type ReplaceRequest,
   type ReplaceTarget,
 } from "@notation/reconciler";

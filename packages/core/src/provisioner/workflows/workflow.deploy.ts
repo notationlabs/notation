@@ -36,8 +36,9 @@ export type DeployAppOptions = {
    */
   promptSecret?: SecretPrompt;
   /**
-   * The replaces that the user asked for. Saved with a new execution. A
-   * resume uses the saved request, and fails if this one differs from it.
+   * The replaces and credentials that the user asked for. Saved with a new
+   * execution, without the values of the credentials. A resume uses the
+   * saved request, and fails if this one differs from it.
    */
   requested?: ReplaceRequest;
 };
@@ -125,7 +126,7 @@ export function assertSameRequest(
   if (formatRequest(given) === started) return;
   throw new Error(
     started
-      ? `Execution ${executionId} was started with ${started}. Leave out --replace, or pass the same flags.`
-      : `Execution ${executionId} was started without --replace. Leave out --replace and --override-loss-protection.`,
+      ? `Execution ${executionId} was started with ${started}. Leave out --replace and --credential, or pass the same flags.`
+      : `Execution ${executionId} was started without --replace or --credential. Leave out --replace, --override-loss-protection and --credential.`,
   );
 }

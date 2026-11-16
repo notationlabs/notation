@@ -109,12 +109,25 @@ describe("assertSameRequest", () => {
     expect(() =>
       assertSameRequest("e", saved, { replace: [saved.replace[0]!] }),
     ).toThrow(
-      "Execution e was started with --replace bucket@9e04b7d1 --replace role@3c1f9a02 --override-loss-protection bucket. Leave out --replace, or pass the same flags.",
+      "Execution e was started with --replace bucket@9e04b7d1 --replace role@3c1f9a02 --override-loss-protection bucket. Leave out --replace and --credential, or pass the same flags.",
     );
     expect(() =>
       assertSameRequest("e", undefined, { replace: [saved.replace[0]!] }),
     ).toThrow(
-      "Execution e was started without --replace. Leave out --replace and --override-loss-protection.",
+      "Execution e was started without --replace or --credential. Leave out --replace, --override-loss-protection and --credential.",
+    );
+  });
+
+  it("refuses a resume with another --credential", () => {
+    const credential = { id: "app", name: "privateKey", variable: "KEY" };
+    expect(() =>
+      assertSameRequest(
+        "e",
+        { replace: [], credential: [{ ...credential, version: "7b1e52c0" }] },
+        { replace: [], credential: [{ ...credential, version: "3c90a1f4" }] },
+      ),
+    ).toThrow(
+      "Execution e was started with --credential app.privateKey@7b1e52c0=KEY.",
     );
   });
 

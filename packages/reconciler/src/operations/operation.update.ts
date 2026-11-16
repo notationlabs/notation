@@ -17,7 +17,6 @@ import {
   credentialOutputs,
   operationState,
   revealCredentials,
-  revealHeldCredentials,
 } from "../credentials";
 
 export async function* updateResourceOperation(
@@ -44,8 +43,16 @@ export async function* updateResourceOperation(
       (context) =>
         params.resource.update!(
           params.resource.key,
-          revealCredentials(params.patch, params.resource),
-          revealHeldCredentials(params.resourceParams, params.resource),
+          revealCredentials(
+            params.patch,
+            params.resource,
+            params.recordedParams,
+          ),
+          revealCredentials(
+            params.resourceParams,
+            params.resource,
+            params.recordedParams,
+          ),
           operationState(params.resource),
           context,
         ),

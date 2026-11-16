@@ -1,6 +1,8 @@
 import type { ReplaceField, ResourceType } from "@notation/resource";
 
-export type OperationName = "create" | "read" | "update" | "delete" | "rotate";
+/** `load` is a source's `loadCredential`. */
+export type OperationName =
+  "create" | "read" | "update" | "delete" | "rotate" | "load";
 
 /**
  * The order of the two halves of a replace.
@@ -32,6 +34,7 @@ export type OperationLifecycleEvent = {
    * `taken-over`: a create that took over a resource that already existed.
    * `retired`: the delete of an instance that a create-first replace
    * retired.
+   * `passed`: the rotate of a credential whose value `--credential` passed.
    */
   reason?: string;
   /**
@@ -39,7 +42,7 @@ export type OperationLifecycleEvent = {
    * deletes this one first. Plan names it in `PlanNode.replacedDependency`.
    */
   replacedDependency?: string;
-  /** With the operation `rotate`: the name of the credential. */
+  /** With the operations `rotate` and `load`: the name of the credential. */
   credential?: string;
   errorName?: string;
   errorMessage?: string;
@@ -104,6 +107,15 @@ export type OrphanDeletionSkippedEvent = {
   keptDependencies: string[];
 };
 
+/** A message that a source's `read` passed to `warn`. */
+export type SourceWarningEvent = {
+  level: "warn";
+  event: "reconciler.source.warning";
+  resourceId: string;
+  resourceType: ResourceType;
+  message: string;
+};
+
 /** A provider package named in state could not be loaded. */
 export type ProviderLoadFailedEvent = {
   level: "warn";
@@ -118,7 +130,8 @@ export type ReconcilerEvent =
   | DriftDetectedEvent
   | HoldWaitingEvent
   | OrphanDeletionSkippedEvent
-  | ProviderLoadFailedEvent;
+  | ProviderLoadFailedEvent
+  | SourceWarningEvent;
 
 export type ReconcilerEventEmitter = (
   event: ReconcilerEvent,
