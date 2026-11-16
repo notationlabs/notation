@@ -60,7 +60,7 @@ Deploy generates a Worker's name when it creates the Worker: `<app>--<stage>--<i
 | A [`SecretsStoreSecret`](secrets.md) resource              | Secrets Store secret     | `SecretsStoreSecret`            |
 | A [credential](#worker-secrets), such as `apiKey.credentials.value` | Secret text     | `string`                        |
 | An `R2Bucket` resource                                    | R2 bucket                | `R2Bucket`                      |
-| A `KVNamespace` resource                                  | KV namespace             | `KVNamespace`                   |
+| A [`KVNamespace`](kv.md) resource                        | KV namespace             | `KVNamespace`                   |
 | A value from `json(value)`                                | JSON                     | the type of `value`             |
 | A string                                                  | Plain text               | `string`                        |
 
