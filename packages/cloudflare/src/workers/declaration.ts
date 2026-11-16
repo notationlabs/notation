@@ -68,7 +68,7 @@ export type Bindings = Record<string, BindingValue>;
  * type, and with a constraint TypeScript resolves the class's base type
  * while it is still resolving it, which fails.
  */
-export interface Worker<B extends Bindings = Bindings, E = undefined> {
+export interface Worker<B extends Bindings = Bindings, E = unknown> {
   readonly id: string;
   /**
    * Exists only in the type. It is required, so that an arbitrary object

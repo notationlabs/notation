@@ -253,7 +253,7 @@ type WorkerExports = {
 
 /** How a Worker was declared, and where its code comes from. */
 type WorkerSource = {
-  declaration: Worker<any, any>;
+  declaration: Worker<any>;
   /** Names the Worker in errors, with its module if known. */
   describe: () => string;
   /** Undefined when the module is not known. */
@@ -559,10 +559,10 @@ function registerWorker(
  * @resource
  */
 export function addBindings(
-  worker: Worker<any, any>,
+  worker: Worker<any>,
   bindings: Bindings,
 ): void {
-  const caller = captureCallSiteLazily(addBindings);
+  const caller = captureCallSiteLazily(addBindings, { skipLibraryFrames: true });
   const at = () => caller() ?? "an unknown location";
   const entry = registeredWorker(worker);
   if (!entry) {

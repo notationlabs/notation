@@ -40,6 +40,7 @@ import {
   isWorkerGroup,
   json,
   worker,
+  type Worker,
   type WorkerEnv,
   type WorkerGroup,
 } from "src/workers";
@@ -1619,6 +1620,11 @@ describe("WorkerEnv", () => {
     expectTypeOf<
       (typeof rpc.plain)["~worker"]["entrypoint"]
     >().toEqualTypeOf<undefined>();
+  });
+
+  it("accepts a Worker with an entrypoint where a bare Worker is expected", () => {
+    expectTypeOf<typeof rpc.github>().toExtend<Worker>();
+    expectTypeOf<typeof rpc.plain>().toExtend<Worker>();
   });
 
   it("types a Worker that is bound back through addBindings(), and leaves the added binding out of env", () => {
