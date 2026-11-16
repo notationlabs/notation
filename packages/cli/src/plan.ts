@@ -1,6 +1,7 @@
 import {
   formatRequest,
   planApp,
+  requestedCredential,
   resolveDeploymentId,
   shellQuote,
   UnobtainableCredentialError,
@@ -71,7 +72,7 @@ export async function plan(
   const result = await withDeployCommands(deployment, opts.config, () =>
     planApp({ deployment, emit, requested: opts.requested }),
   );
-  printPlanSummary(result, logger);
+  printPlanSummary(result, logger, opts.requested);
   if (opts.requested) {
     logger.info(
       `\nTo deploy this plan:\n  notation deploy ${targetFlags(deployment, opts.config)} ${requestFlags(result, opts.requested)}`,
@@ -154,25 +155,44 @@ function retiredDeleteTime(result: Plan, id: string): string {
     : "deleted before the resource is replaced, or at the end of the deploy if it is not replaced";
 }
 
-function printPlanSummary(result: Plan, logger: Logger) {
-  // A resource that only rotates a credential is planned as a noop.
+function printPlanSummary(
+  result: Plan,
+  logger: Logger,
+  requested: DeployRequest | undefined,
+) {
+  // A resource that only gets a new value of a credential is planned as a noop.
   const changedNodes = result.nodes.filter(
     (node) => node.decision !== "noop" || node.rotates,
   );
 
   for (const node of changedNodes) {
     const order = node.replaceOrder && replaceOrders[node.replaceOrder];
-    const rotateOnly = node.decision === "noop";
-    const symbol = rotateOnly
+    const credentialOnly = node.decision === "noop";
+    const passed = (node.rotates ?? []).filter((name) =>
+      requestedCredential(requested, node.id, name),
+    );
+    const rotated = (node.rotates ?? []).filter(
+      (name) => !passed.includes(name),
+    );
+    const symbol = credentialOnly
       ? "~"
       : (order?.symbol ?? decisionSymbols[node.decision]);
-    const label = rotateOnly ? "rotate" : node.decision;
+    const label = !credentialOnly
+      ? node.decision
+      : rotated.length > 0
+        ? "rotate"
+        : "pass";
     logger.info(
       `${symbol} ${label} ${node.type} ${node.id}${order?.label ?? ""}`,
     );
-    if (node.rotates) {
+    if (rotated.length > 0) {
       logger.info(
-        `    ${node.rotates.join(", ")} gets a new value, as a resource that takes it needs one or --credential passes one`,
+        `    ${rotated.join(", ")} gets a new value, as a resource that takes it needs one`,
+      );
+    }
+    if (passed.length > 0) {
+      logger.info(
+        `    ${passed.join(", ")} gets the value that --credential passes`,
       );
     }
     if (node.retiredAt) {

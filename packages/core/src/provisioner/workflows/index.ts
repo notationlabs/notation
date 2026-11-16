@@ -5,6 +5,7 @@ export {
   formatRequest,
   parseCredentialTarget,
   parseReplaceTarget,
+  requestedCredential,
   shellQuote,
   unobtainableCredentialMessage,
   type Logger,

@@ -112,7 +112,7 @@ When a resource needs the value of a credential that deploy no longer holds, and
 
 ```
 ~ rotate cloudflare/tokens/AccountToken deploy-token
-    Value gets a new value, as a resource that takes it needs one or --credential passes one
+    Value gets a new value, as a resource that takes it needs one
 ```
 
 When the credential's resource cannot rotate it, plan fails, and prints a `--replace` command and a `--credential` command. See [A credential that deploy cannot get](./deploy.md#a-credential-that-deploy-cannot-get).
@@ -125,7 +125,15 @@ When the credential's resource cannot rotate it, plan fails, and prints a `--rep
 notation plan --stage prod --credential app.privateKey=APP_PRIVATE_KEY
 ```
 
-The plan shows the passed value as a rotate of the credential, and the update of each resource that takes it. The last line is the deploy command, with the version of each credential that `--credential` names:
+The plan shows the passed value, and the update of each resource that takes it:
+
+```
+~ pass github/App app
+    privateKey gets the value that --credential passes
+~ update cloudflare/secrets-store/SecretsStoreSecret app-key-secret
+```
+
+The last line is the deploy command, with the version of each credential that `--credential` names:
 
 ```
 To deploy this plan:

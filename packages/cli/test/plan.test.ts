@@ -17,6 +17,9 @@ vi.mock("@notation/core", async (importOriginal) => ({
     .formatRequest,
   shellQuote: (await importOriginal<typeof import("@notation/core")>())
     .shellQuote,
+  requestedCredential: (
+    await importOriginal<typeof import("@notation/core")>()
+  ).requestedCredential,
   UnobtainableCredentialError: (
     await importOriginal<typeof import("@notation/core")>()
   ).UnobtainableCredentialError,
@@ -393,9 +396,45 @@ it("prints a resource that only rotates a credential", async () => {
 
   expect(lines.slice(1, 4)).toEqual([
     "~ rotate test/plan/token token",
-    "    Value gets a new value, as a resource that takes it needs one or --credential passes one",
+    "    Value gets a new value, as a resource that takes it needs one",
     "+ create test/plan/secret secret",
   ]);
+});
+
+it("prints a credential that --credential passes apart from one that rotates", async () => {
+  const nodes = (rotates: string[]) => ({
+    createdAt: "",
+    nodes: [
+      {
+        id: "app",
+        type: "test/plan/app",
+        decision: "noop" as const,
+        rotates,
+        params: {},
+        dependsOn: [],
+      },
+    ],
+  });
+  const requested = {
+    replace: [],
+    credential: [{ id: "app", name: "privateKey", variable: "APP_KEY" }],
+  };
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  planApp.mockResolvedValueOnce(nodes(["privateKey"]));
+  await plan(deployment, { logger, requested });
+  planApp.mockResolvedValueOnce(nodes(["privateKey", "secret"]));
+  await plan(deployment, { logger, requested });
+
+  expect(lines).toContain("~ pass test/plan/app app");
+  expect(lines).toContain(
+    "    privateKey gets the value that --credential passes",
+  );
+  expect(lines).toContain("~ rotate test/plan/app app");
+  expect(lines).toContain(
+    "    secret gets a new value, as a resource that takes it needs one",
+  );
 });
 
 it("fails for a credential that deploy cannot get, with deploy commands for the same config, stage and request", async () => {

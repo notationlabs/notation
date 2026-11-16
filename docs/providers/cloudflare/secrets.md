@@ -154,7 +154,7 @@ Deploy names the token `<app>--<stage>--<id>-<instance>`, cut to 120 characters.
 
 ```text
 ~ rotate cloudflare/tokens/AccountToken deploy-token
-    Value gets a new value, as a resource that takes it needs one or --credential passes one
+    Value gets a new value, as a resource that takes it needs one
 ```
 
 ## Credentials
