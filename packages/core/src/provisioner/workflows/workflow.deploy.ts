@@ -105,7 +105,6 @@ async function deploy({
         driftDetection,
         maxOperationAttempts,
         nameScope,
-        // Executions started before requests were saved have none.
         requested: params.requested as ReplaceRequest | undefined,
       });
     },
