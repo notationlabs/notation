@@ -1,4 +1,5 @@
 import {
+  isCredentialMarker,
   ResourceNotFoundError,
   validateValues,
   type BaseResource,
@@ -78,7 +79,11 @@ export async function* readRemoteOperation(
     // RFC 0009 will keep a resource whose read is malformed as it is. Until
     // then the read fails, so that a malformed read is never compared with
     // params, where it could plan a replacement.
-    if (remote) await validateValues(params.resource, remote, "read");
+    // A read can return the credential markers of the params it received,
+    // for the part of a param that the remote still holds.
+    if (remote) {
+      await validateValues(params.resource, remote, "read", isCredentialMarker);
+    }
 
     const mergedOutput = {
       ...params.resourceParams,

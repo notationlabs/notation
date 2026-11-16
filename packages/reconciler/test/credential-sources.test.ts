@@ -18,11 +18,19 @@ type Outside = {
   contexts: CredentialSourceReadContext[];
   /** The params and the values that the last update received. */
   updates: { patch: unknown; params: unknown }[];
+  /** The entries of a bundle's `Values` that its remote no longer has. */
+  lost: Set<string>;
   warning?: string;
 };
 
 function createOutside(): Outside {
-  return { values: new Map(), calls: [], contexts: [], updates: [] };
+  return {
+    values: new Map(),
+    calls: [],
+    contexts: [],
+    updates: [],
+    lost: new Set(),
+  };
 }
 
 function set(outside: Outside, key: string, value: string) {
@@ -124,6 +132,15 @@ function defineResources(outside: Outside) {
         outside.calls.push(`update ${key.name}`);
         outside.updates.push({ patch, params });
       },
+      // Returns the markers in params of the entries that the remote has.
+      read: async (key, _context, params) => ({
+        name: key.name,
+        Values: Object.fromEntries(
+          Object.entries(params?.Values ?? {}).filter(
+            ([name]) => !outside.lost.has(name),
+          ),
+        ),
+      }),
       delete: async () => {},
     });
 
@@ -482,6 +499,47 @@ describe("an update of a resource that takes several credentials", () => {
       {
         patch: { Values: { A: "a_2", B: undefined } },
         params: { name: "bundle", Values: { A: "a_2", B: undefined } },
+      },
+    ]);
+    runtime.close();
+  });
+
+  it("receives, in a drift update, the value of each credential that the remote lost", async () => {
+    const outside = createOutside();
+    set(outside, "A", "a_1");
+    set(outside, "B", "b_1");
+    const types = defineResources(outside);
+    const runtime = createRuntime({ driftDetection: true });
+    const declared = () => {
+      const a = new types.Stored("a", { config: { key: "A" } });
+      const b = new types.Stored("b", { config: { key: "B" } });
+      return [
+        a,
+        b,
+        new types.Bundle("bundle", {
+          config: {
+            name: "bundle",
+            Values: { A: a.credentials.value, B: b.credentials.value },
+          },
+        }),
+      ];
+    };
+    await runtime.deploy("first", declared());
+    outside.lost.add("B");
+    outside.calls.length = 0;
+
+    await runtime.nextProcess("second", declared());
+
+    expect(outside.calls).toEqual([
+      "read A",
+      "read B",
+      "load B@1",
+      "update bundle",
+    ]);
+    expect(outside.updates).toEqual([
+      {
+        patch: { Values: { A: undefined, B: "b_1" } },
+        params: { name: "bundle", Values: { A: undefined, B: "b_1" } },
       },
     ]);
     runtime.close();

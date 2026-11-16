@@ -272,13 +272,19 @@ export async function* reconcileResource(
   }
 
   // An update receives the credentials whose version changed. Every other
-  // operation receives all of them.
+  // operation receives all of them. A drift update compares with the read,
+  // so that it receives the value of a credential that the remote lost, such
+  // as a Worker secret deleted outside notation.
   let unnamedParams = configParams;
   const updates =
     action.decision === "update" || action.decision === "drift-update";
+  const comparedParams =
+    action.decision === "drift-update"
+      ? { ...recordedParams, ...action.remote }
+      : recordedParams;
   const received = (): unknown =>
     "patch" in action && updates
-      ? changedCredentials(action.patch, recordedParams)
+      ? changedCredentials(action.patch, comparedParams)
       : params;
   if (
     !opts.dryRun &&
@@ -327,7 +333,7 @@ export async function* reconcileResource(
       emit,
       maxOperationAttempts: opts.maxOperationAttempts,
       prior: session.node,
-      recordedParams,
+      recordedParams: comparedParams,
     },
     // The params of a placeholder already leave out the contributions that
     // depend on a member of the cycle.

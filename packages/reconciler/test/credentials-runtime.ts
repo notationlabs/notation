@@ -47,7 +47,9 @@ class CrashAfterWriteHeap implements HeapClient {
  * A durable runtime in memory, for tests of credentials. Each deploy runs as
  * the deploy of the app `shop` to the stage `prod`.
  */
-export function createRuntime(options: { crashAfterStep?: string } = {}) {
+export function createRuntime(
+  options: { crashAfterStep?: string; driftDetection?: boolean } = {},
+) {
   const database = createSqliteDb({ path: ":memory:" });
   let skew = 0;
   const sqliteRuntime = new SqliteRuntime(database, {
@@ -76,7 +78,7 @@ export function createRuntime(options: { crashAfterStep?: string } = {}) {
         executionId: event.executionId,
         resources,
         state,
-        driftDetection: false,
+        driftDetection: options.driftDetection ?? false,
         nameScope: { app: "shop", stage: "prod" },
         requested,
         emit: (event) => {

@@ -142,6 +142,12 @@ export type ResourceAction =
       decision: "drift-update";
       patch: Record<string, unknown>;
       diff: PlanDiff;
+      /**
+       * The read of the remote, which the update compares credentials with:
+       * it receives the value of each credential whose marker the read
+       * does not hold.
+       */
+      remote: Record<string, unknown>;
     }
   | {
       decision: "replace";
@@ -289,9 +295,10 @@ export function decideDriftAction(opts: {
     return { decision: "drift-recreate" };
   }
 
+  const remote = pick(driftRead.output, params);
   const { patch, diff, replaceFields } = diffParams(
     resource.schema,
-    pick(driftRead.output, params),
+    remote,
     pick(params, driftRead.output),
     { canUpdate: Boolean(resource.update) },
   );
@@ -300,7 +307,7 @@ export function decideDriftAction(opts: {
     return { decision: "drift-replace", patch, diff, replaceFields };
   }
   if (Object.keys(patch).length > 0) {
-    return { decision: "drift-update", patch, diff };
+    return { decision: "drift-update", patch, diff, remote };
   }
 
   return { decision: "noop" };
