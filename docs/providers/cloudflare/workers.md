@@ -57,23 +57,22 @@ Deploy generates a Worker's name when it creates the Worker: `<app>--<stage>--<i
 | --------------------------------------------------------- | ------------------------ | ------------------------------- |
 | A namespace from [`$durableObject`](#durableobjectconfig) | Durable Object namespace | `DurableObjectNamespace<Class>` |
 | A Worker from `$worker`                                   | Service binding          | `Fetcher`                       |
-| A secret from [`secretsStore.bind`](secrets.md)           | Secrets Store secret     | `SecretsStoreSecret`            |
-| A secret from [`workerSecret`](#workersecretconfig)       | Secret text              | `string`                        |
+| A [`SecretsStoreSecret`](secrets.md) resource              | Secrets Store secret     | `SecretsStoreSecret`            |
+| A [credential](#worker-secrets), such as `apiKey.credentials.value` | Secret text     | `string`                        |
 | An `R2Bucket` resource                                    | R2 bucket                | `R2Bucket`                      |
 | A `KVNamespace` resource                                  | KV namespace             | `KVNamespace`                   |
 | A value from `json(value)`                                | JSON                     | the type of `value`             |
 | A string                                                  | Plain text               | `string`                        |
 
-`WorkerEnv<typeof worker>` is the type of `env`, and `WorkerHandler<typeof worker>` is the type of the default export. A Worker that binds another Worker, an R2 bucket or a KV namespace is uploaded after it.
+`WorkerEnv<typeof worker>` is the type of `env`, and `WorkerHandler<typeof worker>` is the type of the default export. A Worker is uploaded after each Worker, R2 bucket, KV namespace and store secret that it binds, and after each resource whose credential it binds.
 
-An infra module declares the R2 bucket, the KV namespace and the Worker secret, and the runtime module imports them. `R2Bucket` and `KVNamespace` are resources from `@notation/cloudflare/resources`:
+An infra module declares the R2 bucket, the KV namespace and the source of a Worker secret, and the runtime module imports them. `R2Bucket` and `KVNamespace` are resources from `@notation/cloudflare/resources`, and `sources.Env` is from `@notation/std/resources`:
 
 ::code-group
 
 ```ts [infra/main.ts]
 import { kv, r2 } from "@notation/cloudflare/resources";
-import { workerSecret } from "@notation/cloudflare/workers";
-import { env } from "@notation/std/sources";
+import { sources } from "@notation/std/resources";
 
 export const uploads = new r2.R2Bucket("uploads", {
   config: {
@@ -87,10 +86,8 @@ export const cache = new kv.KVNamespace("cache", {
   config: { Title: "shop-cache" },
 });
 
-export const apiKey = workerSecret({
-  id: "api-key",
-  source: env,
-  key: "API_KEY",
+export const apiKey = new sources.Env("api-key", {
+  config: { key: "API_KEY" },
 });
 ```
 
@@ -109,7 +106,7 @@ export const worker = $worker({
     UPLOADS: uploads,
     CACHE: cache,
     CONFIG: json({ retries: 3 }),
-    API_KEY: apiKey,
+    API_KEY: apiKey.credentials.value,
   }),
 });
 
@@ -127,7 +124,7 @@ export default {
 ::
 
 - A binding to a bucket in a jurisdiction other than `default` names the jurisdiction.
-- `json(value)` takes a JSON value. Deploy stores the value in state, and plan shows it. Bind a secret with `workerSecret` instead.
+- `json(value)` takes a JSON value. Deploy stores the value in state, and plan shows it. Bind a secret as a [credential](#worker-secrets) instead.
 
 Two Workers can bind each other as services. Each service binding is a [contribution](../../reference/resource.md#cycles) to the Worker's script, so deploy can break the cycle:
 
@@ -137,56 +134,46 @@ Two Workers can bind each other as services. Each service binding is a [contribu
 
 Between steps 1 and 3, the first Worker's `env` has no service bindings, so a request that calls the other Worker fails.
 
-### `workerSecret(config)`
+### Worker secrets
 
-`workerSecret` declares a secret that a Worker binds as secret text. In the Worker, the binding is a string. The value comes from a [source](../../manual/secrets.md#sources), or from the [prompt](../../manual/secrets.md#the-prompt) when there is no source. Cloudflare stores the value with the Worker, not in a Secrets Store.
+A Worker secret is stored with the Worker, not in a Secrets Store. In the handler, the binding is a string. To declare one, bind a [credential](../../manual/secrets.md#credentials), such as the value of a source or of a token:
 
-| Option   | Description                                                                                                                                                                      |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`     | Keys the secret in state, and is what `notation secret set <id>` takes. It must differ from the id of every other secret.                                                        |
-| `source` | Where the value comes from, such as `env` or `dotenv(".env.local")` from `@notation/std/sources`. Without a source, deploy asks for the value, or `notation secret set` sets it. |
-| `key`    | The key that the source is asked for. Required with `source`.                                                                                                                    |
-
-```ts [infra/main.ts]
-import { workerSecret } from "@notation/cloudflare/workers";
-
-// No source: deploy asks for the value, or `notation secret set admin-password` sets it.
-export const adminPassword = workerSecret({ id: "admin-password" });
+```ts [runtime/api.ts]
+export const worker = $worker({
+  id: "api",
+  compatibilityDate: "2026-10-12",
+  bindings: () => ({ API_KEY: apiKey.credentials.value }),
+});
 ```
 
-Each Worker that binds the secret has its own copy of it. The Worker script holds its secrets in the `Secrets` param, which maps each binding name to where its value comes from. For the `apiKey` above, bound as `API_KEY`:
+A credential is typed `string`, so TypeScript cannot tell it from plain text. `$worker` checks the value when infra is evaluated: an output ref to a credential becomes a secret, and an output ref to any other output fails:
+
+```text
+$worker({ id: "api" }) in runtime/api.ts binds CACHE_ID to the output NamespaceId of cache, which is not a credential. A Worker binds an output of a resource only as a secret, and only a credential, such as `token.credentials.Value`, can be a secret.
+```
+
+The Worker script holds its secrets in its `Secrets` param, which maps each binding name to a credential. State holds a marker for each name, with the credential's version, and never the value:
 
 ```ts
 Secrets: {
-  API_KEY: { Secret: "api-key", Source: "env", Key: "API_KEY", Version: "…" },
+  API_KEY: { $credential: { resource: "api-key", name: "value", version: "7b1e52c0…" } },
 }
 ```
 
-Deploy reads each value from its source, and sends it in the upload of the Worker's code, as a `secret_text` binding. So one request sets the code and its secrets, and the code never runs without them. A failed upload changes neither.
+Deploy sends the values in the upload of the Worker's code, as `secret_text` bindings. So one request sets the code and its secrets, and the code never runs without them. A failed upload changes neither.
 
-- Notation records the binding's name, the source, the key and the source's version of the key. It never records the value.
-- Each upload sends every secret that has a source. A change of the source's version of the key uploads the Worker again. For `env` and `dotenv`, the version changes on every deploy.
-- Every upload of a Worker reads every secret that has a source, so each source must be available on any deploy that changes the Worker.
-- A secret without a source is sent only when the Worker doesn't have it. Deploy asks for the value then. So a value given at an earlier prompt is kept, and so is a secret by that name that the Worker already has, such as one set with `wrangler secret put`.
-- Without a terminal, deploy can't ask for the value of a secret without a source, so it fails before it uploads the Worker. A Worker that is already deployed keeps its old code, and a new Worker is not created.
-- An upload keeps a secret that it doesn't send, such as one set with `wrangler secret put`. A binding in `bindings` with the name of such a secret replaces it.
+- **A create sends every secret.** Deploy gets the value of each credential, from memory, from the source, or by rolling a token.
+- **An update sends only the secrets whose credential has a new version.** Cloudflare keeps a secret that an upload leaves out, so the other secrets keep their values, and deploy does not need them.
+- **A new version uploads the Worker again.** An `Env` or a `Dotenv` without `track` has a new version on every deploy, so a Worker that binds its value is uploaded on every deploy. See [When a value is written](../../manual/secrets.md#when-a-value-is-written).
+- An upload keeps a secret that Notation did not send, such as one set with `wrangler secret put`. A binding in `bindings` with the name of such a secret replaces it.
 - A value changed in the dashboard or with wrangler stays until deploy next sends the secret.
-- A secret deleted in the dashboard or with wrangler shows as drift. The next `notation deploy` uploads the Worker, and sends the secret again from its source. If the secret has no source, the next deploy asks for its value, or fails without a terminal.
+- A secret deleted in the dashboard or with wrangler shows as drift. The next `notation deploy` uploads the Worker, and sends that secret again.
 
 When a Worker stops binding a secret, deploy deletes the secret from the Worker after the upload of the new code. Cloudflare keeps a secret that an upload leaves out, so the delete is a separate request. When the Worker is removed, deploy deletes the Worker, which deletes its secrets with it.
 
-When a Worker's `id` changes, the Worker gets a new name. Deploy uploads the new Worker with all its secrets, asks for each one that has no source, and then deletes the old Worker.
+When a Worker's `id` changes, the Worker gets a new name. Deploy uploads the new Worker with all its secrets, and then deletes the old Worker.
 
-As an alternative, a Worker can bind a [Secrets Store secret](secrets.md) with `secretsStore.bind()`. That secret belongs to the account, and several Workers can share it. The Worker depends on the secret, so the secret exists before the code is uploaded.
-
-#### `notation secret set` for a Worker secret
-
-`notation secret set <id>` writes the value to each Worker in the stage that binds the secret. `notation secret delete <id>` deletes it from each of those Workers. Neither command reads state, so each finds a Worker in the account by the name that deploy gives it, `<app>--<stage>--<id>-` followed by 8 hex characters.
-
-- `set` skips a Worker that isn't deployed yet. That Worker's first deploy asks for the value.
-- `set` fails when none of those Workers is deployed.
-- Both commands fail, and change nothing, when two Workers in the account have the name of one Worker that binds the secret, such as a Worker left over from a failed deploy. Delete the one that is left over.
-- `delete` succeeds when none of those Workers is deployed. The next deploy writes the secret again.
+As an alternative, a Worker can bind a [Secrets Store secret](secrets.md). That secret belongs to the account, and several Workers can share it.
 
 ### Gradual rollouts
 
@@ -198,7 +185,7 @@ The Worker shop--prod--api-3f9a1c2e is in a gradual rollout: 50% on version 3c9e
 
 The check applies to any upload: a change of code, of bindings, or of a secret. Deploy reads the deployments and then uploads, and Cloudflare has no request that does both. So a rollout that starts between the two requests is ended by the upload.
 
-A Worker that binds a secret from `env` or `dotenv` is uploaded on every deploy, because the version of those sources changes on every deploy. So while that Worker is in a rollout, every deploy of the stage fails.
+A Worker that binds the value of an `Env` or a `Dotenv` without `track` is uploaded on every deploy, because the version of the value changes on every deploy. So while that Worker is in a rollout, every deploy of the stage fails. Set [`track`](../../manual/secrets.md#tracking-a-value) on the source, so that the Worker is uploaded only when the value changes.
 
 ### Deleting a Worker that other Workers bind
 
