@@ -54,7 +54,7 @@ function parseGlob(written: string): Glob {
 
 // The real path of the root, because the bundler gives real paths. A root
 // that doesn't exist is kept as it is.
-function realRoot(root: string): string {
+export function realRoot(root: string): string {
   try {
     return fs.realpathSync(root);
   } catch {

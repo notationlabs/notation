@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Plugin } from "rolldown";
+import type { OutputChunk, Plugin } from "rolldown";
 import type { ModuleAnalysis } from "./analyze";
 import { location, parseModule } from "./ast";
 import { nodeModules, scriptFile } from "./files";
@@ -308,54 +308,98 @@ export function runtimePlugin({
         for (const fileName of Object.keys(bundle)) delete bundle[fileName];
         return;
       }
-      const show = (file: string) => analyses.show(file);
       for (const output of Object.values(bundle)) {
         if (output.type !== "chunk") continue;
-        for (const id of infraModules) {
-          const rendered = output.modules[id];
-          if (!rendered || rendered.renderedLength === 0) continue;
-          const uses = usesOfImports(
-            output.modules,
-            analyses,
-            (binding, file) =>
-              analyses.marks.resolve(binding.source, file) === id,
-          );
-          const chain = importChain(this, id).map(show);
-          this.error(
-            `${analyses.describeInfra(id)}, can't be used in the function in ${show(module.path)}, because an infra module only runs at deploy. The function ${listUses(uses)}imports ${show(id)} through ${chain.join(" → ")}. Read infra values in the function through the declaration's env(). Move a plain value that the function needs, such as a constant, to a shared module (files.shared).`,
-          );
-        }
-        // Infra functions from packages, such as queue() from
-        // @notation/aws/sqs. A package module can hold both infra and runtime
-        // functions, so the check looks at the exports that are left after
-        // tree-shaking.
-        for (const [id, rendered] of Object.entries(output.modules)) {
-          if (rendered.renderedLength === 0) continue;
-          const code = this.getModuleInfo(id)?.code;
-          if (!code || !/@resource|@declaration/.test(code)) continue;
-          for (const name of rendered.renderedExports) {
-            const mark = analyses.marks.exportMark(id, name);
-            if (mark?.kind !== "resource" && mark?.kind !== "declaration")
-              continue;
-            // Marks are cached per module, so an import of this export,
-            // through any re-export or alias, has the same mark object.
-            const uses = usesOfImports(
-              output.modules,
-              analyses,
-              (_binding, _file, importMark) => importMark === mark,
-            );
-            const chain = importChain(this, id);
-            const unmatched = chain
-              .map((file) => analyses.resourceCallAdvice(file))
-              .find(Boolean);
-            this.error(
-              `${name} from ${show(id)} can't be used in the function in ${show(module.path)}, because ${name}() declares infrastructure, so it only runs at deploy. The function ${listUses(uses)}imports ${show(id)} through ${chain.map(show).join(" → ")}.${unmatched ? ` ${unmatched}` : ""}`,
-            );
-          }
-        }
+        checkRenderedInfra(this, output, {
+          analyses,
+          infraModules,
+          root: resolvedEntryId,
+          subject: `the function in ${analyses.show(module.path)}`,
+          advice:
+            "Read infra values in the function through the declaration's env(). Move a plain value that the function needs, such as a constant, to a shared module (files.shared).",
+          show: (file) =>
+            file === resolvedEntryId ? undefined : analyses.show(file),
+        });
       }
     },
   };
+}
+
+export type RenderedInfraCheck = {
+  analyses: ModuleAnalyses;
+  /** The modules of the build that `files.infra` matches. */
+  infraModules: Set<string>;
+  /** The module that import chains start from. */
+  root: string;
+  /** What the code is in, such as "the function in runtime/api.ts". */
+  subject: string;
+  /** The last sentence of the error about an infra module. */
+  advice: string;
+  /**
+   * Names a module in errors. Undefined leaves the module out of the import
+   * chains, such as a generated entry. Defaults to `analyses.show`.
+   */
+  show?: (file: string) => string | undefined;
+};
+
+/**
+ * Fails the build if a chunk renders code from an infra module, or an infra
+ * function from a package, and names the import chain.
+ */
+export function checkRenderedInfra(
+  context: ModuleGraph & { error(message: string): never },
+  output: OutputChunk,
+  {
+    analyses,
+    infraModules,
+    root,
+    subject,
+    advice,
+    show: showOption = (file) => analyses.show(file),
+  }: RenderedInfraCheck,
+) {
+  const show = (file: string) => showOption(file) ?? file;
+  const chainTo = (id: string) => [root, ...importChain(context, id, root)];
+  const showChain = (chain: string[]) =>
+    chain.flatMap((file) => showOption(file) ?? []).join(" → ");
+  for (const id of infraModules) {
+    const rendered = output.modules[id];
+    if (!rendered || rendered.renderedLength === 0) continue;
+    const uses = usesOfImports(
+      output.modules,
+      analyses,
+      (binding, file) => analyses.marks.resolve(binding.source, file) === id,
+    );
+    context.error(
+      `${analyses.describeInfra(id)}, can't be used in ${subject}, because an infra module only runs at deploy. The code ${listUses(uses)}imports ${show(id)} through ${showChain(chainTo(id))}. ${advice}`,
+    );
+  }
+  // Infra functions from packages, such as queue() from @notation/aws/sqs. A
+  // package module can hold both infra and runtime functions, so the check
+  // looks at the exports that are left after tree-shaking.
+  for (const [id, rendered] of Object.entries(output.modules)) {
+    if (rendered.renderedLength === 0 || id.startsWith("\0")) continue;
+    const code = context.getModuleInfo(id)?.code;
+    if (!code || !/@resource|@declaration/.test(code)) continue;
+    for (const name of rendered.renderedExports) {
+      const mark = analyses.marks.exportMark(id, name);
+      if (mark?.kind !== "resource" && mark?.kind !== "declaration") continue;
+      // Marks are cached per module, so an import of this export, through
+      // any re-export or alias, has the same mark object.
+      const uses = usesOfImports(
+        output.modules,
+        analyses,
+        (_binding, _file, importMark) => importMark === mark,
+      );
+      const chain = chainTo(id);
+      const unmatched = chain
+        .map((file) => analyses.resourceCallAdvice(file))
+        .find(Boolean);
+      context.error(
+        `${name} from ${show(id)} can't be used in ${subject}, because ${name}() declares infrastructure, so it only runs at deploy. The code ${listUses(uses)}imports ${show(id)} through ${showChain(chain)}.${unmatched ? ` ${unmatched}` : ""}`,
+      );
+    }
+  }
 }
 
 type ImportUse = { at: string; name: string };
@@ -422,16 +466,19 @@ function listUses(uses: ImportUse[]): string {
 }
 
 type ModuleGraph = {
-  getModuleInfo(id: string): { importedIds: readonly string[] } | null;
+  getModuleInfo(
+    id: string,
+  ): { importedIds: readonly string[]; code: string | null } | null;
 };
 
-// The shortest chain of imports from the entry to `target`, without the
-// generated entry.
-function importChain(graph: ModuleGraph, target: string): string[] {
-  const previous = new Map<string, string | undefined>([
-    [resolvedEntryId, undefined],
-  ]);
-  const queue = [resolvedEntryId];
+// The shortest chain of imports from `root` to `target`, without `root`.
+function importChain(
+  graph: ModuleGraph,
+  target: string,
+  root: string,
+): string[] {
+  const previous = new Map<string, string | undefined>([[root, undefined]]);
+  const queue = [root];
   while (queue.length > 0) {
     const id = queue.shift()!;
     if (id === target) break;
@@ -444,10 +491,82 @@ function importChain(graph: ModuleGraph, target: string): string[] {
   const chain: string[] = [];
   for (
     let id: string | undefined = target;
-    id && id !== resolvedEntryId;
+    id && id !== root;
     id = previous.get(id)
   ) {
     chain.unshift(id);
   }
   return chain;
+}
+
+// The prefix of the ids of the modules from a bundle's `modules`. The `\0`
+// keeps them out of the bundle's inputs and out of other plugins.
+const generated = "\0notation-bundle:";
+
+type BundlePluginOptions = {
+  label: string;
+  modules: Record<string, string>;
+  analyses: ModuleAnalyses;
+  onModuleIds: (ids: string[]) => void;
+};
+
+/**
+ * The plugin of a bundle from `bundle()`: serves the modules of `modules`,
+ * records the ids of the modules that the build read, and fails the build if
+ * it renders infra code.
+ */
+export function bundlePlugin({
+  label,
+  modules,
+  analyses,
+  onModuleIds,
+}: BundlePluginOptions): Plugin {
+  const infraModules = new Set<string>();
+  return {
+    name: "notation-bundle",
+    resolveId(source) {
+      return Object.hasOwn(modules, source) ? `${generated}${source}` : null;
+    },
+    load(id) {
+      if (!id.startsWith(generated)) return null;
+      const specifier = id.slice(generated.length);
+      return {
+        code: modules[specifier]!,
+        moduleType: /\.[cm]?tsx$/.test(specifier)
+          ? "tsx"
+          : /\.[cm]?ts$/.test(specifier)
+            ? "ts"
+            : specifier.endsWith(".jsx")
+              ? "jsx"
+              : "js",
+      };
+    },
+    transform: {
+      filter: { id: { include: scriptFile, exclude: nodeModules } },
+      handler(_code, id) {
+        if (analyses.kindOf(id)?.kind === "infra") infraModules.add(id);
+        return null;
+      },
+    },
+    buildEnd(error) {
+      if (!error) onModuleIds([...this.getModuleIds()]);
+    },
+    generateBundle(_options, bundle) {
+      for (const output of Object.values(bundle)) {
+        if (output.type !== "chunk" || !output.facadeModuleId) continue;
+        checkRenderedInfra(this, output, {
+          analyses,
+          infraModules,
+          root: output.facadeModuleId,
+          subject: label,
+          advice:
+            "A bundle can't use infra code. Pass the values that its code needs through modules or through the bindings of the Worker.",
+          show: (file) =>
+            file.startsWith(generated)
+              ? file.slice(generated.length)
+              : analyses.show(file),
+        });
+      }
+    },
+  };
 }

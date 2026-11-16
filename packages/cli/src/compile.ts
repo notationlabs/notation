@@ -6,13 +6,13 @@ import {
   type OutputOptions,
 } from "rolldown";
 import {
+  functionBuildOptions,
   infraEntry,
   infraEntryPlugin,
   infraPlugin,
   infraWatchExclude,
   ModuleAnalyses,
   runtimeEntry,
-  platformOf,
   runtimePlugin,
   type DeclarationModule,
 } from "@notation/build";
@@ -220,27 +220,21 @@ export async function compileRuntimeModules(
   const analyses = opts.analyses ?? new ModuleAnalyses();
   const distDir = filePaths.dist.dir();
   const configs = bundled.map((module) => {
-    const { plugins, ...platform } = platformOf(module.platform).build();
+    const { input, output } = functionBuildOptions(module.platform);
     return {
       input: {
+        ...input,
         input: {
           [path
             .relative(distDir, filePaths.dist.runtime.index(module.path))
             .replace(/\.mjs$/, "")]: runtimeEntry,
         },
-        cwd: projectRoot(),
-        tsconfig: true,
-        ...platform,
-        // Off, so that the runtime plugin can detect a function that uses a
-        // constant from an infra module. The plugin checks whether the bundle
-        // has code from an infra module, and an inlined constant leaves none.
-        optimization: { inlineConst: false },
-        plugins: [plugins, runtimePlugin({ analyses, module })],
+        plugins: [input.plugins, runtimePlugin({ analyses, module })],
       } satisfies InputOptions,
       output: {
         ...outputOptions,
+        ...output,
         dir: distDir,
-        codeSplitting: false,
       } satisfies OutputOptions,
     };
   });

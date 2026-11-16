@@ -99,7 +99,7 @@ export const external = lambda({
 type LambdaConfig = {
   id: string;
   handler?: string; // default "handler"
-  code: { type: "file" | "zip"; path: string };
+  code: { type: "file" | "zip"; path: string } | BundleLike; // from bundle() with platform: "node"
   runtime?: string; // default "nodejs22.x"
   timeout?: number;
   memory?: number;
@@ -116,6 +116,29 @@ helloRouter.get("/hello", external);
 ```
 
 A group has no event, so every infra API accepts it, and nothing checks that the code handles the events it receives.
+
+### A bundle as the code
+
+`code` can be a [bundle](../../reference/bundle.md) with `platform: "node"`, which deploy builds. A library uses it to deploy code that it generates from its config:
+
+```ts [infra/greeter.ts]
+import { bundle } from "@notation/build/resources";
+import { lambda } from "@notation/aws/lambda";
+
+const code = bundle({
+  id: "greeter",
+  platform: "node",
+  entry: "lib/handler.ts",
+  modules: { "virtual:greeting": `export default "hello";` },
+});
+
+export const greeter = lambda({ id: "greeter", code });
+```
+
+- **The function calls `index.<handler>`.** The bundle's zip holds `index.mjs`.
+- **The group adds no zip.** The function depends on the bundle, which is declared outside the group.
+- **`lambda()` checks the handler.** It fails when the bundle's entry doesn't export `handler`, or the name in `handler`. An entry with `export *` is not checked, as the name may come from it. A CommonJS entry, which has no `export` statements, is not checked either.
+- **`lambda()` fails for a bundle built for `workerd`.**
 
 ## Inline policy
 

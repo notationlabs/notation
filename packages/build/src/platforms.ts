@@ -1,6 +1,6 @@
 import { builtinModules } from "node:module";
 import type { InputOptions, Plugin } from "rolldown";
-import type { ModuleAnalysis } from "./analyze";
+import type { ModuleTable } from "./marks";
 import { location, unwrap, type Node } from "./ast";
 
 /** Where a deployed function runs: Node for a Lambda, workerd for a Worker. */
@@ -17,7 +17,7 @@ export type Platform = {
    */
   reexportsModule: boolean;
   /** Throws if the platform can't start a module that exports `names`. */
-  checkExports?: (analysis: ModuleAnalysis, names: string[]) => void;
+  checkExports?: (table: ModuleTable, names: string[]) => void;
   /**
    * Modules that only this platform provides, such as `cloudflare:` modules.
    * Node can't load them at deploy. The infra build fails if code that runs
@@ -66,11 +66,11 @@ const nodeBuiltinsPlugin: Plugin = {
 // workerd only starts a module whose exports are functions, classes or
 // plain objects. Throws for an export that the source shows to be something
 // else, e.g. `export const NAME = "x"`.
-function checkExports(analysis: ModuleAnalysis, names: string[]) {
-  const { module } = analysis.table;
+function checkExports(table: ModuleTable, names: string[]) {
+  const { module } = table;
   const fail = (node: Node, name: string, value: string) => {
     throw new Error(
-      `${module.file}:${location(module.source, node.start)}: the module exports ${name}, whose value is ${value}. The runtime bundle re-exports the module's exports, and workerd doesn't start a module that exports a value other than a function, a class or an object. Move ${name} to another module, or don't export it.`,
+      `${module.file}:${location(module.source, node.start)}: the module exports ${name}, whose value is ${value}. The Worker's code exports what the module exports, and workerd doesn't start a module that exports a value other than a function, a class or an object. Move ${name} to another module, or don't export it.`,
     );
   };
   const declarators = new Map<string, Node>();
@@ -89,7 +89,7 @@ function checkExports(analysis: ModuleAnalysis, names: string[]) {
     }
   }
   for (const name of names) {
-    const target = analysis.table.exports.get(name)!;
+    const target = table.exports.get(name)!;
     if ("source" in target) {
       if (target.imported !== "*") continue;
       const statement = module.body.find(

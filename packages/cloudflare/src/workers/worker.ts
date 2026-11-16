@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import { readEntryExports } from "@notation/build";
 import { filePaths, fromProjectRoot, toProjectRoot } from "@notation/core";
 import {
   getDeclaredIn,
@@ -5,10 +7,10 @@ import {
   onEvaluationEnd,
   perCollection,
   ResourceGroup,
-  type DeclaredIn,
   type OutputRef,
 } from "@notation/resource";
 import * as std from "@notation/std/resources";
+import { isBundle, type BundleLike } from "@notation/build/resources";
 import * as cloudflare from "src/resources";
 import {
   assertWorkerId,
@@ -53,10 +55,35 @@ export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
   url?: boolean;
 };
 
-export type WorkerGroupConfig = {
+export type WorkerConfig<
+  Id extends string,
+  B extends Bindings,
+> = WorkerDeclarationConfig<Id, B> & {
+  /**
+   * A prebuilt JavaScript module, uploaded as-is, or a bundle from `bundle()`
+   * with `platform: "workerd"`. File paths are relative to the project root.
+   */
+  code: { type: "file"; path: string } | BundleLike;
+};
+
+/** The module that a Worker uploads: a file, or code declared elsewhere. */
+export type WorkerGroupCode =
+  | {
+      /** The bundle to upload, relative to the project root. */
+      codePath: string;
+      code?: undefined;
+    }
+  | {
+      codePath?: undefined;
+      /**
+       * Code declared outside the group, such as a bundle. The group depends
+       * on it, but doesn't add it.
+       */
+      code: BundleLike;
+    };
+
+export type WorkerGroupConfig = WorkerGroupCode & {
   id: string;
-  /** The bundle to upload, relative to the project root. */
-  codePath: string;
   compatibilityDate: string;
   compatibilityFlags: string[];
   bindings: cloudflare.workers.WorkerBinding[];
@@ -95,7 +122,7 @@ const workerGroupMark = Symbol.for("@notation/cloudflare/WorkerGroup");
 
 export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
   platform = "cloudflare";
-  readonly code: std.fs.FileInstance;
+  readonly code: std.fs.FileInstance | BundleLike;
   readonly script: cloudflare.workers.WorkerScriptInstance;
   readonly subdomain?: cloudflare.workers.WorkerSubdomainInstance;
   readonly containers: {
@@ -110,11 +137,13 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
 
   constructor(config: WorkerGroupConfig) {
     super("Worker", config.id, config);
-    this.code = this.add(
-      new std.fs.File(`worker:${config.id}:code`, {
-        config: { filePath: config.codePath },
-      }),
-    );
+    this.code =
+      config.code ??
+      this.add(
+        new std.fs.File(`worker:${config.id}:code`, {
+          config: { filePath: config.codePath },
+        }),
+      );
     this.script = this.add(
       new cloudflare.workers.WorkerScript(workerResourceId(config.id), {
         config: {
@@ -183,12 +212,32 @@ export function isWorkerGroup(value: unknown): value is WorkerGroup {
   return (value as any)?.[workerGroupMark] === true;
 }
 
-type Entry = {
+/** The exports of a Worker's module, which decide the namespaces it hosts. */
+type WorkerExports = {
+  names: string[];
+  /** The sources of the module's `export * from` statements. */
+  stars: string[];
+  /**
+   * Names the module at the start of a sentence in errors: its path, or the
+   * entry of a bundle and the Worker that takes the bundle.
+   */
+  source: string;
+  /** Names the module in advice: "the Worker's module" or "the entry". */
+  module: string;
+};
+
+/** How a Worker was declared, and where its code comes from. */
+type WorkerSource = {
   declaration: Worker<any>;
-  id: string;
   /** Names the Worker in errors, with its module if known. */
   describe: () => string;
-  record: () => DeclaredIn;
+  /** Undefined when the module is not known. */
+  exports: () => WorkerExports | undefined;
+  code: () => WorkerGroupCode;
+};
+
+type Entry = WorkerSource & {
+  id: string;
   bindings: () => Bindings;
   /** `chain` lists the Workers being built whose bindings led to this one. */
   build: (chain?: Entry[]) => WorkerGroup;
@@ -222,32 +271,132 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
   config: WorkerDeclarationConfig<Id, B>,
 ): Worker<B> {
   assertWorkerId("$worker", config.id);
-  if (typeof config.compatibilityDate !== "string") {
+  assertCompatibilityDate(`$worker({ id: "${config.id}" })`, config);
+  const declaration = { id: config.id } as unknown as Worker<B>;
+  registerWorker(config, {
+    declaration,
+    describe: () => {
+      const where = getDeclaredIn(declaration)?.path;
+      return `$worker({ id: "${config.id}" })${where ? ` in ${where}` : ""}`;
+    },
+    exports: () => {
+      const record = getDeclaredIn(declaration);
+      if (!record) return undefined;
+      return {
+        names: record.exports ?? [],
+        stars: record.starExports ?? [],
+        source: record.path,
+        module: "the Worker's module",
+      };
+    },
+    code: () => {
+      const record = getDeclaredIn(declaration);
+      if (!record) throw noModuleError(config.id);
+      return {
+        codePath: toProjectRoot(
+          filePaths.dist.runtime.index(fromProjectRoot(record.path)),
+        ),
+      };
+    },
+  });
+  return declaration;
+}
+
+/**
+ * Declares a Cloudflare Worker whose code is a prebuilt file or a bundle
+ * from `bundle()`. It takes the options of `$worker`,
+ * and binds the same values. It hosts a Durable Object namespace that it
+ * binds when the file or bundle's entry exports the namespace's class by name.
+ * @resource
+ */
+export function worker<const Id extends string, B extends Bindings = {}>(
+  config: WorkerConfig<Id, B>,
+): Worker<B> {
+  assertWorkerId("worker()", config.id);
+  const label = `worker({ id: "${config.id}" })`;
+  assertCompatibilityDate(label, config);
+  const { code } = config;
+  const declaration = { id: config.id } as unknown as Worker<B>;
+  if (!isBundle(code)) {
+    if (code?.type !== "file" || typeof code.path !== "string" || !code.path) {
+      throw new Error(
+        `${label} expects code to be { type: "file", path: "path/to/worker.mjs" } or a bundle from bundle() in @notation/build/resources.`,
+      );
+    }
+    const file = fromProjectRoot(code.path);
+    let source: string;
+    try {
+      source = fs.readFileSync(file, "utf8");
+    } catch (error) {
+      throw new Error(
+        `${label} can't read its code file ${code.path} at ${file}. Pass an absolute path or a path relative to the project root.`,
+        { cause: error },
+      );
+    }
+    const exports = readEntryExports(file, source, "workerd");
+    registerWorker(config, {
+      declaration,
+      describe: () => `${label} with the file ${code.path}`,
+      exports: () => ({
+        ...exports,
+        source: `The code file of ${label}, ${code.path},`,
+        module: "the code file",
+      }),
+      code: () => ({ codePath: toProjectRoot(file) }),
+    });
+    return declaration;
+  }
+  const { Entry, Platform } = code.config;
+  if (Platform !== "workerd") {
     throw new Error(
-      `$worker({ id: "${config.id}" }) requires compatibilityDate, such as "2026-10-12". Cloudflare runs the Worker with the behaviour of the runtime on that date, so the date is set in the code, and changes only when you change it.`,
+      `${label} takes ${code.id} as its code, which is built for ${Platform}. Build the bundle with platform: "workerd".`,
     );
   }
-  const declaration = { id: config.id } as unknown as Worker<B>;
+  registerWorker(config, {
+    declaration,
+    describe: () => `${label} with the entry ${Entry}`,
+    exports: () => ({
+      ...code.exports,
+      source: `The entry of ${label}, ${Entry},`,
+      module: "the entry",
+    }),
+    code: () => ({ code }),
+  });
+  return declaration;
+}
+
+function assertCompatibilityDate(
+  label: string,
+  config: { compatibilityDate?: unknown },
+) {
+  if (typeof config.compatibilityDate !== "string") {
+    throw new Error(
+      `${label} requires compatibilityDate, such as "2026-10-12". Cloudflare runs the Worker with the behaviour of the runtime on that date, so the date is set in the code, and changes only when you change it.`,
+    );
+  }
+}
+
+const noModuleError = (id: string) =>
+  new Error(
+    `The Worker "${id}" has no module. The infra build records the module of each $worker call; run the infra through notation compile, plan or deploy.`,
+  );
+
+/**
+ * Registers a Worker in the active collection. Its group is built when
+ * evaluation ends, so that its bindings can refer to Workers declared after
+ * it.
+ */
+function registerWorker(
+  config: WorkerDeclarationConfig<string, Bindings>,
+  source: WorkerSource,
+) {
   let bindings: Bindings | undefined;
   let group: WorkerGroup | undefined;
   const waiting: ((group: WorkerGroup) => void)[] = [];
 
   const entry: Entry = {
-    declaration,
+    ...source,
     id: config.id,
-    describe: () => {
-      const where = getDeclaredIn(declaration)?.path;
-      return `$worker({ id: "${config.id}" })${where ? ` in ${where}` : ""}`;
-    },
-    record: () => {
-      const record = getDeclaredIn(declaration);
-      if (!record) {
-        throw new Error(
-          `The Worker "${config.id}" has no module. The infra build records the module of each $worker call; run the infra through notation compile, plan or deploy.`,
-        );
-      }
-      return record;
-    },
     // Called once, after all infra modules have loaded.
     bindings: () => (bindings ??= config.bindings?.() ?? {}),
     // A Worker that is already in `chain` means the bindings form a cycle.
@@ -262,12 +411,9 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
         entry,
         (host) => host.build([...chain, entry]).script,
       );
-      const record = entry.record();
       group = new WorkerGroup({
+        ...entry.code(),
         id: config.id,
-        codePath: toProjectRoot(
-          filePaths.dist.runtime.index(fromProjectRoot(record.path)),
-        ),
         compatibilityDate: config.compatibilityDate,
         compatibilityFlags: cloudflare.workers.sortedFlags([
           NODEJS_COMPAT,
@@ -333,13 +479,14 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
       else waiting.push(callback);
     },
   };
-  Object.defineProperty(declaration, workerRegistration, { value: entry });
+  Object.defineProperty(source.declaration, workerRegistration, {
+    value: entry,
+  });
   const workers = declaredWorkers();
   if (workers) {
     workers.push(entry);
     onEvaluationEnd(() => entry.build());
   }
-  return declaration;
 }
 
 // Workers are built from onEvaluationEnd, when a collection is always
@@ -469,9 +616,7 @@ function resolveBindings(
       });
       continue;
     }
-    if (
-      hasResourceType(value, "cloudflare/secrets-store/SecretsStoreSecret")
-    ) {
+    if (hasResourceType(value, "cloudflare/secrets-store/SecretsStoreSecret")) {
       // The output refs make the Worker depend on the secret, so the secret
       // exists when the Worker is uploaded. Cloudflare fails an upload that
       // binds a missing secret.
@@ -490,7 +635,7 @@ function resolveBindings(
       continue;
     }
     throw new Error(
-      `${self.describe()} binds ${name} to a value that a Worker can't bind. Bind a Durable Object namespace from $durableObject, a Worker from $worker, a credential such as \`source.credentials.value\`, a SecretsStoreSecret, an R2Bucket, a KVNamespace, a value with json(), or a string.`,
+      `${self.describe()} binds ${name} to a value that a Worker can't bind. Bind a Durable Object namespace from $durableObject, a Worker from $worker or worker(), a credential such as \`source.credentials.value\`, a SecretsStoreSecret, an R2Bucket, a KVNamespace, a value with json(), or a string.`,
     );
   }
   return resolved;
@@ -609,17 +754,20 @@ function hostOf(
       `The Workers ${names} each export ${className} and bind ${describeNamespace(namespace)}, so each would host the namespace. Export the class from one of them. The others then bind the namespace on that Worker.`,
     );
   }
-  const record = self.record();
+  const own = self.exports();
+  if (!own) throw noModuleError(self.id);
+  const starList = own.stars
+    .map((star) => `export * from ${JSON.stringify(star)}`)
+    .join(", ");
   const stars =
-    record.starExports && record.starExports.length > 0
-      ? ` The bundle doesn't re-export the names of ${record.starExports.map((s) => `export * from ${JSON.stringify(s)}`).join(", ")}, so export ${className} by name.`
-      : "";
+    own.stars.length === 0
+      ? ""
+      : ` The names that ${starList} brings in are not known when the bindings are resolved, so export ${className} by name.`;
   throw new Error(
-    `${record.path} doesn't export ${className}, the class of ${describeNamespace(namespace)}, which the Worker "${self.id}" binds as ${bindingName}. Export the class from the Worker's module under that name, as Cloudflare finds the class by its export name, or from the module of another Worker that binds the namespace.${stars}`,
+    `${own.source} doesn't export ${className}, the class of ${describeNamespace(namespace)}, which the Worker "${self.id}" binds as ${bindingName}. Export the class from ${own.module} under that name, as Cloudflare finds the class by its export name, or from the module of another Worker that binds the namespace.${stars}`,
   );
 }
 
 // A Worker with no recorded module fails in its own build, so this returns
 // no exports for it instead of throwing.
-const exportsOf = (entry: Entry): string[] =>
-  getDeclaredIn(entry.declaration)?.exports ?? [];
+const exportsOf = (entry: Entry): string[] => entry.exports()?.names ?? [];

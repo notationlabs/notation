@@ -7,8 +7,11 @@ export {
 export {
   $worker,
   isWorkerGroup,
+  worker,
   WorkerGroup,
+  type WorkerConfig,
   type WorkerDeclarationConfig,
+  type WorkerGroupCode,
   type WorkerGroupConfig,
 } from "./worker";
 export { json } from "./json";

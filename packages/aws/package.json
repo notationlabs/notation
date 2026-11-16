@@ -35,6 +35,7 @@
     "@aws-sdk/client-lambda": "^3.1164.0",
     "@aws-sdk/client-sqs": "^3.1164.0",
     "@aws-sdk/client-sts": "^3.1164.0",
+    "@notation/build": "workspace:*",
     "@notation/core": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/std": "workspace:*",

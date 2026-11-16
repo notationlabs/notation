@@ -182,7 +182,7 @@ export function stripForInfra(
 
   const platform = declaration.mark.platform;
   const exports = otherExports(analysis);
-  if (exports) platformOf(platform).checkExports?.(analysis, exports);
+  if (exports) platformOf(platform).checkExports?.(analysis.table, exports);
   const record = [
     path.relative(root, module.file).split(path.sep).join("/"),
     declaration.binding,

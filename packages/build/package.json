@@ -4,6 +4,16 @@
   "version": "0.24.1",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./resources": {
+      "types": "./dist/resources/index.d.ts",
+      "default": "./dist/resources/index.js"
+    }
+  },
   "files": [
     "dist"
   ],
@@ -14,10 +24,9 @@
   },
   "dependencies": {
     "@notation/core": "workspace:*",
+    "@notation/resource": "workspace:*",
+    "fflate": "0.8.3",
     "magic-string": "^0.30.21",
     "rolldown": "^1.3.0"
-  },
-  "devDependencies": {
-    "@notation/resource": "workspace:*"
   }
 }

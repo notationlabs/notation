@@ -119,3 +119,39 @@ it("deploys a change saved during a deploy that fails", async () => {
   await vi.waitFor(() => expect(deployInChild).toHaveBeenCalledTimes(2));
   changeConfig();
 });
+
+const writeInputs = (files: string[]) => {
+  mkdirSync(path.join(root, "dist/.bundles/router"), { recursive: true });
+  writeFileSync(
+    path.join(root, "dist/.bundles/router/inputs.json"),
+    JSON.stringify({
+      key: "key",
+      files: Object.fromEntries(files.map((file) => [file, "hash"])),
+      fileSha256: "base64",
+    }),
+  );
+};
+
+it("redeploys after an edit to a file that a bundle read, and stops watching a file that no bundle reads", async () => {
+  mkdirSync(path.join(root, "lib"));
+  writeFileSync(path.join(root, "lib/template.js"), "export default 1;");
+  writeFileSync(path.join(root, "lib/old.js"), "export default 1;");
+  writeInputs(["lib/template.js", "lib/old.js"]);
+  deployInChild.mockResolvedValue(undefined);
+
+  await watch(deployment, { logger: logger(), exit: vi.fn() });
+  await vi.waitFor(() => expect(deployInChild).toHaveBeenCalledTimes(1), {
+    timeout: 2000,
+  });
+  // The deploy built the bundle again, and it no longer reads lib/old.js.
+  writeInputs(["lib/template.js"]);
+  writeFileSync(path.join(root, "lib/template.js"), "export default 2;");
+  await vi.waitFor(() => expect(deployInChild).toHaveBeenCalledTimes(2), {
+    timeout: 3000,
+  });
+
+  writeFileSync(path.join(root, "lib/old.js"), "export default 2;");
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  expect(deployInChild).toHaveBeenCalledTimes(2);
+  changeConfig();
+});

@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@cloudflare/workers-types": "5.20261012.1",
+    "@notation/build": "workspace:*",
     "@notation/core": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/std": "workspace:*",

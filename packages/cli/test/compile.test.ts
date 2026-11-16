@@ -347,7 +347,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      'infra/orders.ts, an infra module (files.infra: "infra/**", the default), can\'t be used in the function in runtime/process-orders.ts, because an infra module only runs at deploy. The function uses orders at runtime/process-orders.ts:15:38, and imports infra/orders.ts through runtime/process-orders.ts → infra/orders.ts.',
+      'infra/orders.ts, an infra module (files.infra: "infra/**", the default), can\'t be used in the function in runtime/process-orders.ts, because an infra module only runs at deploy. The code uses orders at runtime/process-orders.ts:15:38, and imports infra/orders.ts through runtime/process-orders.ts → infra/orders.ts.',
     );
   });
 
@@ -372,7 +372,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The function uses orders at runtime/queue-url.ts:2:31, and imports infra/orders.ts through runtime/process-orders.ts → runtime/queue-url.ts → infra/orders.ts.",
+      "The code uses orders at runtime/queue-url.ts:2:31, and imports infra/orders.ts through runtime/process-orders.ts → runtime/queue-url.ts → infra/orders.ts.",
     );
   });
 
@@ -393,7 +393,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      'infra/orders.ts, an infra module (files.infra: "infra/**", the default), can\'t be used in the function in runtime/process-orders.ts, because an infra module only runs at deploy. The function uses orders at runtime/process-orders.ts:15:38,',
+      'infra/orders.ts, an infra module (files.infra: "infra/**", the default), can\'t be used in the function in runtime/process-orders.ts, because an infra module only runs at deploy. The code uses orders at runtime/process-orders.ts:15:38,',
     );
   });
 
@@ -411,7 +411,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "queue from @notation/aws/sqs.js can't be used in the function in runtime/process-orders.ts, because queue() declares infrastructure, so it only runs at deploy. The function uses queue at runtime/process-orders.ts:17:38, and imports @notation/aws/sqs.js through runtime/process-orders.ts → @notation/aws/sqs.js.",
+      "queue from @notation/aws/sqs.js can't be used in the function in runtime/process-orders.ts, because queue() declares infrastructure, so it only runs at deploy. The code uses queue at runtime/process-orders.ts:17:38, and imports @notation/aws/sqs.js through runtime/process-orders.ts → @notation/aws/sqs.js.",
     );
   });
 
@@ -429,7 +429,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "so it only runs at deploy. The function uses queue at runtime/process-orders.ts:18:62, and imports",
+      "so it only runs at deploy. The code uses queue at runtime/process-orders.ts:18:62, and imports",
     );
   });
 
@@ -447,7 +447,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "queue from @notation/aws/sqs.js can't be used in the function in runtime/process-orders.ts, because queue() declares infrastructure, so it only runs at deploy. The function imports @notation/aws/sqs.js through runtime/process-orders.ts → @notation/aws/helpers.js → @notation/aws/sqs.js.",
+      "queue from @notation/aws/sqs.js can't be used in the function in runtime/process-orders.ts, because queue() declares infrastructure, so it only runs at deploy. The code imports @notation/aws/sqs.js through runtime/process-orders.ts → @notation/aws/helpers.js → @notation/aws/sqs.js.",
     );
   });
 
@@ -567,7 +567,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "queue from @notation/aws/sqs.js can't be used in the function in runtime/process-orders.ts, because queue() declares infrastructure, so it only runs at deploy. The function uses queue at lib/labels.ts:3:20, and imports @notation/aws/sqs.js through runtime/process-orders.ts → lib/labels.ts → @notation/aws/sqs.js.",
+      "queue from @notation/aws/sqs.js can't be used in the function in runtime/process-orders.ts, because queue() declares infrastructure, so it only runs at deploy. The code uses queue at lib/labels.ts:3:20, and imports @notation/aws/sqs.js through runtime/process-orders.ts → lib/labels.ts → @notation/aws/sqs.js.",
     );
   });
 
@@ -598,7 +598,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      'infra/names.ts, an infra module (files.infra: "infra/**", the default), can\'t be used in the function in runtime/process-orders.ts, because an infra module only runs at deploy. The function uses queueConfig at runtime/process-orders.ts:16:40, and imports infra/names.ts through runtime/process-orders.ts → infra/names.ts.',
+      'infra/names.ts, an infra module (files.infra: "infra/**", the default), can\'t be used in the function in runtime/process-orders.ts, because an infra module only runs at deploy. The code uses queueConfig at runtime/process-orders.ts:16:40, and imports infra/names.ts through runtime/process-orders.ts → infra/names.ts.',
     );
   });
 
@@ -616,7 +616,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "queue from @notation/aws/sqs.js can't be used in the function in runtime/process-orders.ts, because queue() declares infrastructure, so it only runs at deploy. The function uses queue at runtime/process-orders.ts:17:39,",
+      "queue from @notation/aws/sqs.js can't be used in the function in runtime/process-orders.ts, because queue() declares infrastructure, so it only runs at deploy. The code uses queue at runtime/process-orders.ts:17:39,",
     );
   });
 
@@ -852,7 +852,7 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
       `console.log("labels loaded");\nexport const label = () => "orders";`,
     );
     await expect(buildProject()).rejects.toThrow(
-      "infra/labels.ts, an infra module (files.infra: \"infra/**\", the default), can't be used in the function in runtime/process-orders.ts, because an infra module only runs at deploy. The function uses label at runtime/process-orders.ts:16:38, and imports infra/labels.ts through runtime/process-orders.ts → infra/labels.ts. Read infra values in the function through the declaration's env(). Move a plain value that the function needs, such as a constant, to a shared module (files.shared).",
+      "infra/labels.ts, an infra module (files.infra: \"infra/**\", the default), can't be used in the function in runtime/process-orders.ts, because an infra module only runs at deploy. The code uses label at runtime/process-orders.ts:16:38, and imports infra/labels.ts through runtime/process-orders.ts → infra/labels.ts. Read infra values in the function through the declaration's env(). Move a plain value that the function needs, such as a constant, to a shared module (files.shared).",
     );
   });
 
@@ -893,7 +893,7 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
       ].join("\n"),
     );
     await expect(buildProject()).rejects.toThrow(
-      "The function uses queue at lib/labels.ts:3:20, and imports @notation/aws/sqs.js through runtime/process-orders.ts → lib/labels.ts → @notation/aws/sqs.js. lib/labels.ts calls queue at its top level, but files.infra doesn't match it. Add lib/labels.ts to files.infra to leave it out of the function.",
+      "The code uses queue at lib/labels.ts:3:20, and imports @notation/aws/sqs.js through runtime/process-orders.ts → lib/labels.ts → @notation/aws/sqs.js. lib/labels.ts calls queue at its top level, but files.infra doesn't match it. Add lib/labels.ts to files.infra to leave it out of the function.",
     );
   });
 
@@ -1072,7 +1072,7 @@ describe("workspace packages outside the project root", () => {
       (error: Error) => error,
     );
     expect(error?.message).toContain(
-      "queue from @notation/aws/sqs.js can't be used in the function in runtime/process-orders.ts, because queue() declares infrastructure, so it only runs at deploy. The function imports @notation/aws/sqs.js through runtime/process-orders.ts → acme-installed/index.js → @notation/aws/sqs.js.",
+      "queue from @notation/aws/sqs.js can't be used in the function in runtime/process-orders.ts, because queue() declares infrastructure, so it only runs at deploy. The code imports @notation/aws/sqs.js through runtime/process-orders.ts → acme-installed/index.js → @notation/aws/sqs.js.",
     );
     expect(error?.message).not.toContain("sideEffects");
     expect(error?.message).not.toContain("files.infra");

@@ -23,6 +23,15 @@ notation watch --stage dev
 4. On change, redeploys – only changed resources are updated (same reconciler as `deploy`).
 5. Queues deploys if one is already in progress.
 
+## Bundles
+
+A [bundle](../reference/bundle.md) reads files that the infra build doesn't watch, such as a template in a package. After each deploy, `watch` reads `dist/.bundles/*/inputs.json` and watches the files listed in `files`. A change to one of them starts a deploy, after the same debounce. `watch` stops watching a file that no inputs file lists any more.
+
+- **A file in `node_modules` is not watched**, so an edit to an installed package doesn't redeploy. A linked workspace package resolves to its real path outside `node_modules`, so an edit to a library in the same workspace does redeploy.
+- **Writing a bundle doesn't start a deploy.** The output is in `dist/.bundles/`, and `watch` ignores dot directories.
+- **A deleted output is not written again.** `watch` deploys without drift detection, so a deploy after `dist/` is cleaned plans no change for the bundle. Run `notation deploy` to write it again.
+- **Stages that deploy from the same machine share `dist/.bundles/`.** After another stage writes a bundle, `watch` can fail to upload the bundle's file until `notation deploy` runs, which rewrites the file.
+
 ## Secrets
 
 Each deploy runs in its own process, which shares the terminal with `watch`. A deploy that needs the value of a secret without a source asks for it on the terminal. `watch` doesn't keep the answer, so each later deploy that needs the value asks again. See [Secrets](../manual/secrets.md).

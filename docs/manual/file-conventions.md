@@ -159,7 +159,7 @@ export const handler: LambdaHandler<typeof lambda> = async () => {
 The runtime build leaves infra modules out of the function's bundle. An infra module is a file that `files.infra` matches, `infra/**` by default. If the function uses an infra module, the build fails, says why the module is infra, and names the chain of imports:
 
 ```text
-infra/orders.ts, an infra module (files.infra: "infra/**", the default), can't be used in the function in runtime/orders.ts, because an infra module only runs at deploy. The function uses orderQueue at runtime/orders.ts:12:15, and imports infra/orders.ts through runtime/orders.ts → infra/orders.ts. Read infra values in the function through the declaration's env(). Move a plain value that the function needs, such as a constant, to a shared module (files.shared).
+infra/orders.ts, an infra module (files.infra: "infra/**", the default), can't be used in the function in runtime/orders.ts, because an infra module only runs at deploy. The code uses orderQueue at runtime/orders.ts:12:15, and imports infra/orders.ts through runtime/orders.ts → infra/orders.ts. Read infra values in the function through the declaration's env(). Move a plain value that the function needs, such as a constant, to a shared module (files.shared).
 ```
 
 **An infra module never runs in the function, even if it calls no resource function.** A function that uses a plain constant from `infra/config.ts` fails the build. Put a value that the function needs in a shared module, or in a file that no glob matches.
@@ -220,7 +220,7 @@ A file that no glob matches, such as `lib/format.ts`, has no kind. Both builds b
 **A file with no kind that calls a resource function at its top level stays in the function's bundle.** For example, `lib/queues.ts` with `export const dlq = queue({ id: "dlq", schema: DeadLetter })` fails the runtime build if a function imports anything from it. The error says to add the file to `files.infra`, which leaves it out:
 
 ```text
-queue from @notation/aws/sqs.js can't be used in the function in runtime/orders.ts, because queue() declares infrastructure, so it only runs at deploy. The function uses queue at lib/queues.ts:3:20, and imports @notation/aws/sqs.js through runtime/orders.ts → runtime/format.ts → lib/queues.ts → @notation/aws/sqs.js. lib/queues.ts calls queue at its top level, but files.infra doesn't match it. Add lib/queues.ts to files.infra to leave it out of the function.
+queue from @notation/aws/sqs.js can't be used in the function in runtime/orders.ts, because queue() declares infrastructure, so it only runs at deploy. The code uses queue at lib/queues.ts:3:20, and imports @notation/aws/sqs.js through runtime/orders.ts → runtime/format.ts → lib/queues.ts → @notation/aws/sqs.js. lib/queues.ts calls queue at its top level, but files.infra doesn't match it. Add lib/queues.ts to files.infra to leave it out of the function.
 ```
 
 So a project that keeps its infra outside `infra/`, such as in `src/`, sets `files.infra` to that folder.
