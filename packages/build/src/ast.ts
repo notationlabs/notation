@@ -23,11 +23,13 @@ export type ParsedModule = {
 
 /** Parses a JS or TS module. Throws with the first syntax error. */
 export function parseModule(file: string, source: string): ParsedModule {
-  const lang = /\.[cm]?tsx?$/.test(file)
-    ? file.endsWith("x")
-      ? "tsx"
-      : "ts"
-    : "js";
+  const lang = /\.[cm]?tsx$/.test(file)
+    ? "tsx"
+    : /\.[cm]?ts$/.test(file)
+      ? "ts"
+      : file.endsWith(".jsx")
+        ? "jsx"
+        : "js";
   const result = parseSync(file, source, { lang, sourceType: "module" });
   if (result.errors.length > 0) {
     const [error] = result.errors;

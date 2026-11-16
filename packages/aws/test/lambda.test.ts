@@ -1,4 +1,5 @@
-import { test, expect } from "vitest";
+import { describe, test, expect } from "vitest";
+import { bundle } from "@notation/build/resources";
 import { UNKNOWN_AFTER_APPLY, collectResourceGraph } from "@notation/resource";
 import { lambda, type NameSafe } from "src/lambda";
 
@@ -176,4 +177,69 @@ test("resources declared by the helper are reported at the caller's line", () =>
   for (const resource of group.resources) {
     expect(resource.declaredAt).toMatch(/(^|\/)test\/lambda\.test\.ts:\d+$/);
   }
+});
+
+describe("a bundle as the code", () => {
+  const handlerBundle = (
+    source: string,
+    platform: "node" | "workerd" = "node",
+  ) =>
+    bundle({
+      id: "router",
+      platform,
+      entry: "virtual:main",
+      modules: { "virtual:main": source },
+    });
+
+  test("the function depends on the bundle, and calls index.<handler>", async () => {
+    let group!: ReturnType<typeof lambda>;
+    let code!: ReturnType<typeof bundle>;
+    const graph = await collectResourceGraph(() => {
+      code = handlerBundle(`export const route = async () => "ok";`);
+      group = lambda({ id: "router", code, handler: "route" });
+    });
+
+    expect(group.fn.config.Handler).toBe("index.route");
+    expect(group.fn.dependencies.zipFile).toBe(code);
+    expect(code.group).toBeNull();
+    expect(group.resources.map((r) => r.id)).not.toContain("lambda:router:zip");
+    expect(graph.resources).toContain(code);
+
+    code.setOutput({
+      ...code.config,
+      FilePath: "dist/.bundles/router/index.zip",
+      FileSha256: "sha",
+      filePath: "dist/.bundles/router/index.zip",
+      fileSha256: "sha",
+    });
+    group.role.setOutput({ Arn: "arn:aws:iam::1:role/r" } as any);
+    expect(await group.fn.getParams()).toMatchObject({
+      CodeFilePath: "dist/.bundles/router/index.zip",
+      CodeSha256: "sha",
+    });
+  });
+
+  test("a bundle for workerd fails", () => {
+    const code = handlerBundle(`export default {};`, "workerd");
+    expect(() => lambda({ id: "router", code })).toThrow(
+      'lambda({ id: "router" }) takes bundle:router as its code, which is built for workerd. Build the bundle with platform: "node".',
+    );
+  });
+
+  test("a bundle whose entry doesn't export the handler fails", () => {
+    const code = handlerBundle(`export const route = async () => "ok";`);
+    expect(() => lambda({ id: "router", code })).toThrow(
+      'lambda({ id: "router" }) calls the export handler of bundle:router, but its entry virtual:main doesn\'t export handler.',
+    );
+  });
+
+  test("an entry with export * is not checked", () => {
+    const code = handlerBundle(`export * from "./handlers";`);
+    expect(() => lambda({ id: "router", code })).not.toThrow();
+  });
+
+  test("a CommonJS entry is not checked", () => {
+    const code = handlerBundle(`exports.route = async () => "ok";`);
+    expect(() => lambda({ id: "router", code })).not.toThrow();
+  });
 });

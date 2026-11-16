@@ -32,6 +32,10 @@ export function $durableObject<
 const infraOnly = (name: string) =>
   new Error(`${name} declares infrastructure, so it can't run in a Worker.`);
 
+export function worker(): never {
+  throw infraOnly("worker()");
+}
+
 export class WorkerGroup {
   constructor() {
     throw infraOnly("WorkerGroup");

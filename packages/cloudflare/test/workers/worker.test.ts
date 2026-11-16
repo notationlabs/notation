@@ -20,6 +20,7 @@ import {
   generatedPhysicalName,
   UNKNOWN_AFTER_APPLY,
 } from "@notation/resource";
+import { bundle } from "@notation/build/resources";
 import * as v from "valibot";
 import { applicationNameSchema } from "src/api/containers";
 import {
@@ -35,6 +36,7 @@ import {
   $worker,
   isWorkerGroup,
   json,
+  worker,
   type WorkerEnv,
   type WorkerGroup,
 } from "src/workers";
@@ -774,7 +776,7 @@ describe("$worker", () => {
         );
       }),
     ).rejects.toThrow(
-      `runtime/api.ts doesn't export Counter, the class of $durableObject({ id: "counters" }) in runtime/counter.ts, which the Worker "api" binds as COUNTERS. Export the class from the Worker's module under that name, as Cloudflare finds the class by its export name, or from the module of another Worker that binds the namespace. The bundle doesn't re-export the names of export * from "./counter", so export Counter by name.`,
+      `runtime/api.ts doesn't export Counter, the class of $durableObject({ id: "counters" }) in runtime/counter.ts, which the Worker "api" binds as COUNTERS. Export the class from the Worker's module under that name, as Cloudflare finds the class by its export name, or from the module of another Worker that binds the namespace. The names that export * from "./counter" brings in are not known when the bindings are resolved, so export Counter by name.`,
     );
   });
 
@@ -1380,5 +1382,204 @@ describe("WorkerEnv", () => {
       // @ts-expect-error an object with an id is not a namespace or a Worker
       bindings: () => ({ BUCKET: { id: "uploads" } }),
     });
+  });
+});
+
+describe("worker()", () => {
+  const routerBundle = (
+    main: string,
+    platform: "node" | "workerd" = "workerd",
+  ) =>
+    bundle({
+      id: "router",
+      platform,
+      entry: "virtual:main",
+      modules: { "virtual:main": main },
+    });
+
+  it("uploads its bundle, which it depends on and doesn't hold", async () => {
+    let code!: ReturnType<typeof bundle>;
+    const graph = await collect(() => {
+      code = routerBundle(`export default {};`);
+      worker({ id: "router", code, compatibilityDate });
+    });
+    const router = group(graph, "router");
+
+    expect(router.code).toBe(code);
+    expect(router.script.id).toBe("worker:router");
+    expect(router.script.dependencies.code).toBe(code);
+    expect(router.resources).not.toContain(code);
+    expect(code.group).toBeNull();
+    expect(router.script.config).toMatchObject({
+      CompatibilityFlags: ["nodejs_compat"],
+      Bindings: [],
+    });
+  });
+
+  it("binds a $worker's namespace and is bound as a service", async () => {
+    const graph = await collect(() => {
+      const counters = inModule(
+        $durableObject({ id: "counters", class: Counter }),
+        "runtime/counter.ts",
+      );
+      const router = worker({
+        id: "router",
+        code: routerBundle(`export default {};`),
+        compatibilityDate,
+        bindings: () => ({ COUNTERS: counters }),
+      });
+      inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters, ROUTER: router }),
+        }),
+        "runtime/api.ts",
+        ["Counter"],
+      );
+    });
+    const router = group(graph, "router");
+    const api = group(graph, "api");
+
+    expect(router.script.getFixedDependencies()).toContain(api.script);
+    expect(await deployParams(router, [api])).toMatchObject({
+      Bindings: [
+        {
+          type: "durable_object_namespace",
+          name: "COUNTERS",
+          class_name: "Counter",
+          script_name: nameOf("api"),
+        },
+      ],
+    });
+    expect(await deployParams(api, [router])).toMatchObject({
+      Bindings: expect.arrayContaining([
+        { type: "service", name: "ROUTER", service: nameOf("router") },
+      ]),
+    });
+  });
+
+  it("hosts a namespace whose class its entry exports, and runs its container", async () => {
+    const graph = await collect(() => {
+      const rooms = inModule(
+        $durableObject({
+          id: "rooms",
+          class: Room,
+          container: {
+            image: { context: "containers/sandbox" },
+            maxInstances: 1,
+          },
+        }),
+        "runtime/room.ts",
+      );
+      worker({
+        id: "router",
+        code: routerBundle(`export class Room {}\nexport default {};`),
+        compatibilityDate,
+        bindings: () => ({ ROOMS: rooms }),
+      });
+    });
+    const router = group(graph, "router");
+
+    expect(router.script.config.DurableObjectNamespaces).toEqual([
+      { id: "rooms", className: "Room", container: true },
+    ]);
+    expect(router.containers.map(({ application }) => application.id)).toEqual([
+      "container:rooms",
+    ]);
+  });
+
+  it("fails for a namespace whose class its entry re-exports with export *", async () => {
+    await expect(
+      collect(() => {
+        const rooms = inModule(
+          $durableObject({ id: "rooms", class: Room }),
+          "runtime/room.ts",
+        );
+        worker({
+          id: "router",
+          code: routerBundle(`export * from "./rooms";\nexport default {};`),
+          compatibilityDate,
+          bindings: () => ({ ROOMS: rooms }),
+        });
+      }),
+    ).rejects.toThrow(
+      `The entry of worker({ id: "router" }), virtual:main, doesn't export Room, the class of $durableObject({ id: "rooms" }) in runtime/room.ts, which the Worker "router" binds as ROOMS. Export the class from the entry under that name, as Cloudflare finds the class by its export name, or from the module of another Worker that binds the namespace. The names that export * from "./rooms" brings in are not known when the bindings are resolved, so export Room by name.`,
+    );
+  });
+
+  it("keeps the namespace of a $worker that it replaces with the same id", async () => {
+    const declare = (replace: boolean) =>
+      collect(() => {
+        const rooms = inModule(
+          $durableObject({ id: "rooms", class: Room }),
+          "runtime/room.ts",
+        );
+        const bindings = () => ({ ROOMS: rooms });
+        if (replace) {
+          worker({
+            id: "chat",
+            code: routerBundle(`export class Room {}\nexport default {};`),
+            compatibilityDate,
+            bindings,
+          });
+        } else {
+          inWorker(
+            $worker({ id: "chat", compatibilityDate, bindings }),
+            "runtime/chat.ts",
+            ["Room"],
+          );
+        }
+      });
+    const before = group(await declare(false), "chat").script;
+    const after = group(await declare(true), "chat").script;
+
+    expect(after.id).toBe(before.id);
+    expect(after.config).toEqual(before.config);
+  });
+
+  it("fails for a bundle built for node", async () => {
+    await expect(
+      collect(() =>
+        worker({
+          id: "router",
+          code: routerBundle(`export default {};`, "node"),
+          compatibilityDate,
+        }),
+      ),
+    ).rejects.toThrow(
+      'worker({ id: "router" }) takes bundle:router as its code, which is built for node. Build the bundle with platform: "workerd".',
+    );
+  });
+
+  it("fails for code that is not a bundle", () => {
+    expect(() =>
+      worker({
+        id: "router",
+        code: { type: "std/fs/File" } as any,
+        compatibilityDate,
+      }),
+    ).toThrow(
+      'worker({ id: "router" }) expects code to be a bundle from bundle() in @notation/build/resources.',
+    );
+  });
+
+  it("fails with the id of a $worker", async () => {
+    await expect(
+      collect(() => {
+        inWorker($worker({ id: "router", compatibilityDate }), "runtime/r.ts");
+        worker({
+          id: "router",
+          code: routerBundle(`export default {};`),
+          compatibilityDate,
+        });
+      }),
+    ).rejects.toThrow('Duplicate Worker id "router"');
+  });
+
+  it("throws in a Worker", () => {
+    expect(() => runtime.worker()).toThrow(
+      "worker() declares infrastructure, so it can't run in a Worker.",
+    );
   });
 });

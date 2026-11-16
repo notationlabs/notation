@@ -11,6 +11,7 @@ import {
   type RejectChangeContext,
   type ResourceDeletion,
 } from "@notation/resource";
+import type { BundleLike } from "@notation/build/resources";
 import type { fs } from "@notation/std/resources";
 import { accountId, cloudflareCreate } from "src/api/client";
 import { matchesWorkerNames, workerNameRule } from "src/id";
@@ -127,7 +128,7 @@ export type WorkerScriptSchema = {
 };
 
 export type WorkerScriptDependencies = {
-  code: fs.FileInstance;
+  code: fs.FileInstance | BundleLike;
 };
 
 const WORKER_SCRIPT_TYPE = "cloudflare/workers/WorkerScript";

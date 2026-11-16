@@ -2,6 +2,7 @@
   "extends": "tsconfig/base.json",
   "compilerOptions": {
     "types": ["node"],
+    "resolveJsonModule": true,
     "paths": {
       "src/*": ["./src/*"],
       "test/*": ["./test/*"]

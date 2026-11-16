@@ -1,6 +1,6 @@
 # Workers
 
-`@notation/cloudflare/workers` declares Cloudflare Workers and Durable Object namespaces. A Worker is declared with `$worker` in a runtime module, next to its code, and Notation builds the code for workerd.
+`@notation/cloudflare/workers` declares Cloudflare Workers and Durable Object namespaces. A Worker is declared with `$worker` in a runtime module, next to its code, and Notation builds the code for workerd. A library that generates a Worker's code declares it with [`worker()`](#workerconfig-1) and a [bundle](../../reference/bundle.md).
 
 ## `$worker(config)`
 
@@ -56,7 +56,7 @@ Deploy generates a Worker's name when it creates the Worker: `<app>--<stage>--<i
 | Value                                                               | Binding                  | Type in `env`                   |
 | ------------------------------------------------------------------- | ------------------------ | ------------------------------- |
 | A namespace from [`$durableObject`](#durableobjectconfig)           | Durable Object namespace | `DurableObjectNamespace<Class>` |
-| A Worker from `$worker`                                             | Service binding          | `Fetcher`                       |
+| A Worker from `$worker` or `worker()`                              | Service binding          | `Fetcher`                       |
 | A [`SecretsStoreSecret`](secrets.md) resource                       | Secrets Store secret     | `SecretsStoreSecret`            |
 | A [credential](#worker-secrets), such as `apiKey.credentials.value` | Secret text              | `string`                        |
 | An `R2Bucket` resource                                              | R2 bucket                | `R2Bucket`                      |
@@ -198,6 +198,37 @@ Deleting a Worker deletes the objects of the Durable Object namespaces that it h
 
 Namespaces can't close a cycle. When two Workers each bind a namespace that the other hosts, plan fails, as each Worker is uploaded after the host of each namespace that it binds.
 
+## `worker(config)`
+
+`worker()` declares a Worker whose code is a [bundle](../../reference/bundle.md), which deploy builds. A library calls it from infra code, such as a router that generates a Worker from a route table:
+
+```ts [node_modules/acme-router/index.js]
+import { fileURLToPath } from "node:url";
+import { bundle } from "@notation/build/resources";
+import { worker } from "@notation/cloudflare/workers";
+
+export function router({ id, routes, bindings }) {
+  const code = bundle({
+    id,
+    platform: "workerd",
+    entry: fileURLToPath(new URL("./template.js", import.meta.url)),
+    modules: {
+      "virtual:routes": `export default ${JSON.stringify(routes)};`,
+    },
+  });
+  return worker({ id, code, compatibilityDate: "2026-10-12", bindings });
+}
+```
+
+`worker()` takes the options of [`$worker`](#workerconfig), and `code`, a bundle with `platform: "workerd"`. It fails for a bundle built for `node`.
+
+- **The Worker is the same as one from `$worker`.** It has the same resource ids, so a `$worker` with the id `router` and a `worker({ id: "router" })` fail with `Duplicate Worker id "router"`. Its group uploads the bundle's `index.mjs`.
+- **The bundle is not in the Worker's group.** The script depends on the bundle, so deploy writes the bundle before it uploads the script.
+- **It binds every value that `$worker` binds**, and another Worker can bind it as a service.
+- **It hosts a Durable Object namespace that it binds when the bundle's entry exports the namespace's class by name.** `bundle()` reads the exports of the entry when it is called. A class that the entry re-exports with `export *` is not found, and plan fails. A container of the namespace runs on the Worker, as for a `$worker`.
+
+A `$worker` that is replaced by a `worker()` with the same id and the same exports keeps its namespaces on the same script.
+
 ## `$durableObject(config)`
 
 A runtime module calls `$durableObject` to declare a Durable Object namespace. The module holds only this declaration and the class. A Worker hosts the namespace when it binds the namespace and its module exports the class:
@@ -253,7 +284,7 @@ The infra build doesn't load the class, or its imports such as `cloudflare:worke
 
 Exactly one of the Workers that bind a namespace exports its class, and that Worker hosts the namespace. Every other Worker that binds the namespace binds it on the hosting Worker, and is uploaded after it. Plan fails when:
 
-- no Worker that binds the namespace exports the class. The error names the Worker's module. A class re-exported with `export * from` is not found, because the bundle doesn't re-export the names of `export *`.
+- no Worker that binds the namespace exports the class. The error names the Worker's module, or the entry of a [`worker()`](#workerconfig-1). A class re-exported with `export * from` is not found, because the names that `export *` brings in are not known when the bindings are resolved.
 - two Workers that bind the namespace export the class.
 - one Worker hosts two namespaces with the same class.
 

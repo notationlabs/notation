@@ -18,6 +18,7 @@ import {
 import { AwsSchema } from "src/resources/utils/types";
 import { nameBase } from "src/id";
 import { fs } from "@notation/std/resources";
+import type { BundleLike } from "@notation/build/resources";
 import { LambdaIamRoleInstance } from "./";
 
 export type LambdaFunctionSchema = AwsSchema<{
@@ -64,7 +65,7 @@ type LambdaCodeParams = {
 
 export type LambdaDependencies = {
   role: LambdaIamRoleInstance;
-  zipFile: fs.ZipFileInstance | fs.FileInstance;
+  zipFile: fs.ZipFileInstance | fs.FileInstance | BundleLike;
 };
 
 const lambdaFunction = resource<LambdaFunctionSchema>({

@@ -21,3 +21,5 @@ export {
 export { ModuleAnalyses, type ModuleAnalysesOptions } from "./modules";
 export { FileKinds, type KindMatch } from "./files";
 export { infraEntry, infraEntryPlugin, infraWatchExclude } from "./infra-entry";
+export { functionBuildOptions, type FunctionBuildOptions } from "./options";
+export { bundleInputFiles } from "./bundle/cache";

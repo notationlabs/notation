@@ -73,7 +73,10 @@ export const deploy = {
         {
           heading: "Resource SDK",
           icon: "layers",
-          links: [{ label: "Resource", slug: "reference/resource" }],
+          links: [
+            { label: "Resource", slug: "reference/resource" },
+            { label: "Bundle", slug: "reference/bundle" },
+          ],
         },
       ],
     },

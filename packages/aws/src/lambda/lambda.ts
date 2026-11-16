@@ -1,6 +1,7 @@
 import * as aws from "src/resources";
 import { AwsResourceGroup } from "src/resource-group";
 import * as std from "@notation/std/resources";
+import { isBundle, type BundleLike } from "@notation/build/resources";
 import { getActiveResourceCollection } from "@notation/resource";
 import path from "path";
 import { assertId, resourceId, type NameSafe } from "src/id";
@@ -19,11 +20,11 @@ export type LambdaConfig = {
    * `handler`.
    */
   handler?: string;
-  /** The bundle to deploy. */
-  code: {
-    type: "file" | "zip";
-    path: string;
-  };
+  /**
+   * The code to deploy: a file, which deploy zips, a zip file, or a bundle
+   * from `bundle()` with `platform: "node"`.
+   */
+  code: { type: "file" | "zip"; path: string } | BundleLike;
   runtime?: aws.lambda.LambdaFunctionConfig["Runtime"];
   /** Seconds the function may run for each event. Lambda's default is 3. */
   timeout?: number;
@@ -118,23 +119,33 @@ function assertUniqueLambdaId(caller: string, id: string) {
 }
 
 const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
-  const filePath = config.code.path;
   const lambdaId = config.id;
+  const handler = config.handler ?? "handler";
+  const { code } = config;
 
-  let zipFile: std.fs.ZipFileInstance | std.fs.FileInstance;
+  let zipFile: aws.lambda.LambdaDependencies["zipFile"];
+  // The name of the module in the zip, without its extension.
+  let fileName: string;
 
-  if (config.code.type === "file") {
+  if (isBundle(code)) {
+    assertNodeBundle(lambdaId, code, handler);
+    // The bundle is declared outside the group, so it is not added to it.
+    zipFile = code;
+    fileName = "index";
+  } else if (code.type === "file") {
     zipFile = functionGroup.add(
       new std.fs.Zip(resourceId("lambda", lambdaId, "zip"), {
-        config: { sourceFilePath: filePath },
+        config: { sourceFilePath: code.path },
       }),
     );
+    fileName = path.parse(code.path).name;
   } else {
     zipFile = functionGroup.add(
       new std.fs.File(resourceId("lambda", lambdaId, "zip"), {
-        config: { filePath },
+        config: { filePath: code.path },
       }),
     );
+    fileName = path.parse(code.path).name;
   }
 
   const role = functionGroup.add(
@@ -150,13 +161,12 @@ const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
     ),
   );
 
-  const fileName = path.parse(filePath).name;
   const runtime = config.runtime || "nodejs22.x";
 
   const lambdaResource = functionGroup.add(
     new aws.lambda.LambdaFunction(resourceId("lambda", lambdaId), {
       config: {
-        Handler: `${fileName}.${config.handler ?? "handler"}`,
+        Handler: `${fileName}.${handler}`,
         Runtime: runtime,
         Timeout: config.timeout,
         MemorySize: config.memory,
@@ -189,3 +199,21 @@ const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
 
   return { fn: lambdaResource, role };
 };
+
+function assertNodeBundle(id: string, code: BundleLike, handler: string) {
+  const { Entry, Platform } = code.config;
+  if (Platform !== "node") {
+    throw new Error(
+      `lambda({ id: "${id}" }) takes ${code.id} as its code, which is built for ${Platform}. Build the bundle with platform: "node".`,
+    );
+  }
+  // A name from `export *` is not known, and a CommonJS entry has no ES
+  // module exports, so neither entry is checked.
+  const { names, stars } = code.exports;
+  if (stars.length > 0 || names.length === 0 || names.includes(handler)) {
+    return;
+  }
+  throw new Error(
+    `lambda({ id: "${id}" }) calls the export ${handler} of ${code.id}, but its entry ${Entry} doesn't export ${handler}. Export the function from the entry, or set handler to the name that the entry exports it under.`,
+  );
+}
