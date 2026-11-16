@@ -4,6 +4,7 @@ import {
   isOwnPhysicalName,
   ownPhysicalName,
   resource,
+  type StateRef,
 } from "src";
 import { object, string } from "./validators";
 
@@ -75,7 +76,7 @@ describe("~state refs", () => {
   it("is typed as an output that may be missing", () => {
     const binder = new Worker("binder", { config: { Path: "/" } });
     expectTypeOf(binder["~state"].outputRef("Name")).toEqualTypeOf<
-      string | undefined
+      StateRef<string>
     >();
   });
 
@@ -114,8 +115,8 @@ describe("~state refs", () => {
     const absent = new Worker("absent", { config: { Path: "/" } });
     host.contribute({
       Sources: [
-        binder["~state"].outputRef("Name")!,
-        absent["~state"].outputRef("Name")!,
+        binder["~state"].outputRef("Name"),
+        absent["~state"].outputRef("Name"),
       ],
     });
 
@@ -132,7 +133,11 @@ describe("~state refs", () => {
   it("throws when config holds one", () => {
     const binder = new Worker("binder", { config: { Path: "/" } });
     const host = new Worker("host", {
-      config: { Path: "/", Sources: [binder["~state"].outputRef("Name")!] },
+      config: {
+        Path: "/",
+        // @ts-expect-error config doesn't take a ~state ref
+        Sources: [binder["~state"].outputRef("Name")],
+      },
     });
 
     expect(() => host.getDependencies()).toThrow(
@@ -143,7 +148,7 @@ describe("~state refs", () => {
   it("throws when the outputs in state were not read for the target", async () => {
     const host = new Worker("host", { config: { Path: "/" } });
     const binder = new Worker("binder", { config: { Path: "/" } });
-    host.contribute({ Sources: [binder["~state"].outputRef("Name")!] });
+    host.contribute({ Sources: [binder["~state"].outputRef("Name")] });
 
     await expect(host.getParams({ recordedOutputs: {} })).rejects.toThrow(
       "Output binder.Name is read from state, but the outputs in state were not read for binder.",

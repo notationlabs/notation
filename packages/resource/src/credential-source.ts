@@ -7,6 +7,7 @@ import type {
 import {
   Resource,
   type BaseResource,
+  type ConfigInput,
   type ConfigParams,
   type InferResourceTypes,
   type ResourceArgs,
@@ -197,7 +198,7 @@ export function credentialSourceResource<
             readSource = opts.read;
             loadCredential = opts.loadCredential;
 
-            constructor(id: string, args?: { config?: NoInfer<C> }) {
+            constructor(id: string, args?: { config?: NoInfer<ConfigInput<C>> }) {
               super(id, args);
               this.checkDeclaration();
             }

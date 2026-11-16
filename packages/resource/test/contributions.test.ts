@@ -7,10 +7,15 @@ import {
   mergeContributions,
   onEvaluationEnd,
   resource,
+  type Input,
 } from "src";
 import { number, object, string } from "./validators";
 
-type Statement = { Effect: string; Action: string[]; Resource: string };
+type Statement = {
+  Effect: string;
+  Action: string[];
+  Resource: Input<string>;
+};
 type PolicyDocument = { Version: string; Statement: Statement[] };
 
 const Queue = resource<{
@@ -114,7 +119,7 @@ const Fn = resource<{
     delete: async () => undefined,
   });
 
-const grant = (arn: string): Statement => ({
+const grant = (arn: Input<string>): Statement => ({
   Effect: "Allow",
   Action: ["sqs:ReceiveMessage"],
   Resource: arn,
@@ -327,7 +332,7 @@ describe("output refs", () => {
     const queue = new Queue("orders", { config: { QueueName: "orders" } });
     const arn = queue.outputRef("QueueArn");
     const message =
-      "an output ref can't be turned into a string; place it whole, or compute with it in a function that receives deps";
+      "an output ref can't be turned into a string. Place it whole, join it with text`…`, or compute with it in map().";
     expect(() => `${arn}/*`).toThrow(message);
     expect(() => String(arn)).toThrow(message);
     expect(() => arn + "").toThrow(message);
@@ -340,6 +345,7 @@ describe("output refs", () => {
     const fn = new Fn("fn", { config: { FunctionName: "f", Role: "r" } });
     expect(() =>
       fn.contribute({
+        // @ts-expect-error a ref is not a key
         Environment: { Variables: { [queue.outputRef("QueueArn")]: "x" } },
       }),
     ).toThrow("can't be turned into a string");
@@ -823,7 +829,8 @@ describe("plan params", () => {
     const Derived = LogGroup.requireDependencies<{
       fn: InstanceType<typeof Fn>;
     }>().deriveParams(({ deps }) => ({
-      logGroupName: deps.fn.outputRef("FunctionArn"),
+      // A param that deriveParams returns is typed as a plain value.
+      logGroupName: deps.fn.outputRef("FunctionArn") as unknown as string,
     }));
 
     it("plans as unknown when the dependency has no output", async () => {
@@ -854,7 +861,7 @@ describe("plan params", () => {
       const Derived = LogGroup.requireDependencies<{
         fn: InstanceType<typeof Fn>;
       }>().deriveParams(({ deps }) => ({
-        logGroupName: deps.fn.outputRef("FunctionName"),
+        logGroupName: deps.fn.outputRef("FunctionName") as unknown as string,
       }));
       const fn = fnWith();
       fn.setOutput({ FunctionName: "f", Role: "r" } as any);

@@ -4,6 +4,7 @@ import {
   ResourceOperationPendingError,
   type DefineResourceMeta,
   type ResourceOperationContext,
+  type ResolvedDependencies,
 } from "@notation/resource";
 import { cloudflareCreate } from "src/api/client";
 import { deleteKVValue, getKVValue, isNotFound, putKVValue } from "src/api/kv";
@@ -66,7 +67,7 @@ export const kvKeyParams = {
 export const deriveKVKeyParams = async ({
   deps,
 }: {
-  deps: KVKeyDependencies;
+  deps: ResolvedDependencies<KVKeyDependencies>;
 }) => ({
   AccountId: deps.namespace.output.AccountId,
   NamespaceId: deps.namespace.output.NamespaceId,
