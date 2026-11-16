@@ -172,7 +172,8 @@ export function patternNames(pattern: Node | null | undefined): string[] {
  */
 export function declaredBy(statement: Node): string[] {
   const node =
-    statement.type === "ExportNamedDeclaration"
+    statement.type === "ExportNamedDeclaration" ||
+    statement.type === "ExportDefaultDeclaration"
       ? statement.declaration
       : statement;
   if (!node) return [];

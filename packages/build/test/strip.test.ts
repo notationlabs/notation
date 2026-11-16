@@ -232,6 +232,23 @@ describe("stripForInfra", () => {
     expect(declaration.entry).toBeUndefined();
   });
 
+  it("removes a Worker's default-exported entrypoint class, and replaces the option", () => {
+    const source = `
+      import { WorkerEntrypoint } from "cloudflare:workers";
+      /** @declaration shared: id; runtime: entrypoint; entryOption: entrypoint; entry: default; platform: workerd */
+      function $worker(config) { return config; }
+      export default class Github extends WorkerEntrypoint { receive() { return 1; } }
+      export const github = $worker({ id: "github", entrypoint: Github });
+    `;
+    const { code } = infra(source);
+    expect(code).toContain(
+      `entrypoint: function Github() { throw new Error("entrypoint only runs in the function, not in the infra build."); }`,
+    );
+    expect(code).not.toContain("cloudflare:workers");
+    expect(code).not.toContain("extends WorkerEntrypoint");
+    expect(recordedExports(code)).toEqual([]);
+  });
+
   it('gives a class expression in a runtime-only option the name ""', () => {
     const source = `
       /** @declaration runtime: class */

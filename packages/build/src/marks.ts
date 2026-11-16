@@ -31,6 +31,12 @@ export type DeclarationMark = {
   keys: string[];
   /** The export of the module that the platform calls, such as `handler`. */
   entry?: string;
+  /**
+   * An option whose value must be the name that the module exports as
+   * `entry`, such as `entrypoint` for a Worker's default-exported class.
+   * The analysis fails when it names anything else.
+   */
+  entryOption?: string;
   /** The platform that runs the function. Defaults to `node`. */
   platform?: PlatformName;
 };
@@ -131,6 +137,13 @@ export function parseMark(
           );
         }
         mark.entry = value;
+      } else if (name === "entryOption") {
+        if (!value) {
+          throw new Error(
+            `${where}: the entryOption clause of the @declaration mark has no option name. ${fix("write entryOption: entrypoint, or leave the clause out.")}`,
+          );
+        }
+        mark.entryOption = value;
       } else if (name === "platform") {
         if (!isPlatformName(value)) {
           throw new Error(
@@ -140,9 +153,14 @@ export function parseMark(
         mark.platform = value;
       } else {
         throw new Error(
-          `${where}: unknown clause "${name}" in the @declaration mark. ${fix("use shared, runtime, keys, entry or platform.")}`,
+          `${where}: unknown clause "${name}" in the @declaration mark. ${fix("use shared, runtime, keys, entry, entryOption or platform.")}`,
         );
       }
+    }
+    if (mark.entryOption && !mark.entry) {
+      throw new Error(
+        `${where}: the @declaration mark has an entryOption clause but no entry clause, so there is no export for ${mark.entryOption} to name. ${fix("add an entry clause, such as entry: default.")}`,
+      );
     }
     return mark;
   }
@@ -274,6 +292,8 @@ export function readModuleTable(
             );
             table.exports.set("default", { local: declaration.id.name });
           }
+        } else if (declaration.type === "ClassDeclaration" && declaration.id) {
+          table.exports.set("default", { local: declaration.id.name });
         } else if (declaration.type === "Identifier") {
           table.exports.set("default", { local: declaration.name });
         } else {

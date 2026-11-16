@@ -112,6 +112,69 @@ describe("analyzeModule", () => {
   });
 });
 
+describe("the entryOption of a declaration", () => {
+  const worker = `/** @declaration shared: id; runtime: entrypoint; entryOption: entrypoint; entry: default; platform: workerd */
+export function $worker(config) { return config; }`;
+  const runWorker = (source: string, extra: Record<string, string> = {}) =>
+    analyze(
+      {
+        "pkg/workers.js": worker,
+        "runtime/github-impl.ts": "export default class Github {}",
+        ...extra,
+        "runtime/github.ts": source,
+      },
+      "runtime/github.ts",
+      { "@notation/cloudflare/workers": "pkg/workers.js" },
+    ).analysis;
+  const declare = (entrypoint: string) =>
+    `import { $worker } from "@notation/cloudflare/workers";\n` +
+    `export const github = $worker({ id: "github", entrypoint: ${entrypoint} });\n`;
+
+  it.each([
+    ["export default class Github {}", "a default-exported class"],
+    ["class Github {}\nexport default Github;", "export default of a class"],
+    ["class Github {}\nexport { Github as default };", "export as default"],
+  ])("accepts %s (%s)", (classSource) => {
+    const source = `${classSource}\n${declare("Github")}`;
+    expect(runWorker(source).declaration?.binding).toBe("github");
+  });
+
+  it("accepts a declaration without the option", () => {
+    const source = `import { $worker } from "@notation/cloudflare/workers";\nexport const github = $worker({ id: "github" });\nexport default {};`;
+    expect(runWorker(source).declaration?.binding).toBe("github");
+  });
+
+  it.each([
+    [
+      "a class that isn't the default export",
+      `export default class Github {}\nexport class Admin {}\n${declare("Admin")}`,
+      "/project/runtime/github.ts:4:59: entrypoint is Admin, but github.ts exports Github as its default. The platform calls that export, so entrypoint must name it. Pass entrypoint: Github.",
+    ],
+    [
+      "an imported class",
+      `import Github from "./github-impl";\nexport default Github;\n${declare("Github")}`,
+      "entrypoint is Github, which github.ts imports from ./github-impl. Declare it in github.ts and export it as its default.",
+    ],
+    [
+      "a re-exported default",
+      `export { default } from "./github-impl";\nclass Github {}\n${declare("Github")}`,
+      "entrypoint is Github, but github.ts re-exports its default from ./github-impl.",
+    ],
+    [
+      "an anonymous default export",
+      `class Github {}\nexport default class {}\n${declare("Github")}`,
+      "entrypoint is Github, but the default export of github.ts has no name.",
+    ],
+    [
+      "a value that isn't a name",
+      `export default class Github {}\n${declare("class {}")}`,
+      "entrypoint must be the name of the value that github.ts exports as its default. Pass entrypoint: Github.",
+    ],
+  ])("fails for %s", (_, source, message) => {
+    expect(() => runWorker(source)).toThrow(message);
+  });
+});
+
 describe("ModuleAnalyses", () => {
   it("reuses the analysis of a source that hasn't changed", () => {
     const analyses = new ModuleAnalyses({

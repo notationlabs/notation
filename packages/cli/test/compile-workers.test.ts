@@ -65,7 +65,7 @@ function writeCloudflarePackage() {
       `  (globalThis.namespaces ??= []).push(namespace);`,
       `  return namespace;`,
       `}`,
-      `/** @declaration shared: id, bindings; keys: bindings; entry: default; platform: workerd */`,
+      `/** @declaration shared: id, bindings; runtime: entrypoint; entryOption: entrypoint; keys: bindings; entry: default; platform: workerd */`,
       `export function $worker(config) {`,
       `  const worker = { kind: "INFRA_WORKER", id: config.id, bindings: config.bindings, check: () => checkExports(worker, config) };`,
       `  (globalThis.workers ??= []).push(worker);`,
@@ -265,6 +265,84 @@ it("builds a worker that exports a type without the type keyword", async () => {
   await build();
   expect(recordedExports()).toEqual(["Counter"]);
   expect(read(apiBundle)).not.toContain("Local");
+});
+
+describe("a Worker with an entrypoint class", () => {
+  const githubModule = (entrypoint = "Github") => `
+import { WorkerEntrypoint } from "cloudflare:workers";
+import { $worker } from "@notation/cloudflare/workers";
+
+export type Input = { body: string };
+
+export default class Github extends WorkerEntrypoint {
+  async receive(input) {
+    return { from: "GITHUB_CODE", length: input.body.length };
+  }
+}
+
+export class Admin extends WorkerEntrypoint {}
+
+export const github = $worker({
+  id: "github",
+  entrypoint: ${entrypoint},
+});
+`;
+
+  const routerModule = `
+import { $worker } from "@notation/cloudflare/workers";
+import { github, type Input } from "./github";
+
+export const router = $worker({
+  id: "router",
+  bindings: () => ({ GITHUB: github }),
+});
+
+export default {
+  async fetch(request, env) {
+    const input: Input = { body: await request.text() };
+    return Response.json(await env.GITHUB.receive(input));
+  },
+};
+`;
+
+  function writeRpcProject(entrypoint?: string) {
+    writeCloudflarePackage();
+    write("infra/main.ts", `export {};`);
+    write("runtime/github.ts", githubModule(entrypoint));
+    write("runtime/router.ts", routerModule);
+  }
+
+  it("leaves the bound Worker's code out of the runtime bundle of the Worker that binds it", async () => {
+    writeRpcProject();
+    await build();
+
+    const router = read("dist/runtime/router/index.mjs");
+    expect(router).not.toContain("GITHUB_CODE");
+    expect(router).not.toContain("WorkerEntrypoint");
+    expect(router).toContain("GITHUB");
+    expect(read("dist/runtime/github/index.mjs")).toContain("GITHUB_CODE");
+  });
+
+  it("leaves the class and cloudflare:workers out of the infra bundle", async () => {
+    writeRpcProject();
+    await build();
+
+    const infraFiles = readdirSync(path.join(root, "dist"), { recursive: true })
+      .map(String)
+      .filter((file) => file.endsWith(".mjs") && !file.startsWith("runtime"));
+    for (const file of infraFiles) {
+      const code = read(path.join("dist", file));
+      expect(code).not.toContain("cloudflare:workers");
+      expect(code).not.toContain("GITHUB_CODE");
+    }
+  });
+
+  it("fails the build for an entrypoint that isn't the default export", async () => {
+    writeRpcProject("Admin");
+    await expect(build()).rejects.toThrow(
+      "entrypoint is Admin, but github.ts exports Github as its default. The platform calls that export, so entrypoint must name it. Pass entrypoint: Github.",
+    );
+  });
 });
 
 it("defines NODE_ENV and imports a bare Node built-in as its node: module, over an installed polyfill", async () => {
