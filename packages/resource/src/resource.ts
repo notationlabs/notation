@@ -28,8 +28,8 @@ import type {
 import type { DurableObject } from "./durable-value";
 import { UNKNOWN_AFTER_APPLY, toComparableParams } from "./diff-params";
 import {
-  captureCallSite,
   captureCallSiteLazily,
+  lazyStrings,
   sortContributions,
   type CollectContext,
   type ContributedValues,
@@ -57,23 +57,41 @@ import {
 } from "./output-ref";
 import { ownPhysicalName } from "./physical-name";
 import { getActiveResourceCollection } from "./resource-collection";
-import { assertParamFields, validateValues } from "./value-validation";
+import type { StandardSchemaV1 } from "./standard-schema";
+import {
+  assertParamFields,
+  validateValues,
+  type ParamChecks,
+} from "./value-validation";
 
 export type { Schema, SchemaItem, DefineResourceApiSchema };
 
 export type ResourceType = `${string}/${string}/${string}`;
 
-export type ResourceOpts<C, D> = OptionalIfAllPropertiesOptional<"config", C> &
-  OptionalIfAllPropertiesOptional<"dependencies", D>;
+/**
+ * The options a resource takes after its ID. `P` holds the params that
+ * `checks` can name.
+ */
+export type ResourceOpts<C, D, P = C> = OptionalIfAllPropertiesOptional<
+  "config",
+  C
+> &
+  OptionalIfAllPropertiesOptional<"dependencies", D> & {
+    /** See `ParamChecks`. */
+    checks?: ResourceChecks<P>;
+  };
+
+/** A validator for each of some params, by param name. See `ParamChecks`. */
+export type ResourceChecks<P> = { [K in keyof P]?: StandardSchemaV1 };
 
 /**
  * The arguments a resource takes after its ID. The options can be left out
  * when neither config nor dependencies has a required property.
  */
-export type ResourceArgs<C, D> =
-  {} extends ResourceOpts<C, D>
-    ? [opts?: ResourceOpts<C, D>]
-    : [opts: ResourceOpts<C, D>];
+export type ResourceArgs<C, D, P = C> =
+  {} extends ResourceOpts<C, D, P>
+    ? [opts?: ResourceOpts<C, D, P>]
+    : [opts: ResourceOpts<C, D, P>];
 
 /**
  * The object types a resource's schema gives rise to.
@@ -146,6 +164,8 @@ export interface BaseResource {
   readonly provider: string;
   readonly schema: Schema;
   readonly config: any;
+  /** See `ParamChecks`. */
+  readonly checks?: ParamChecks;
   id: string;
   /** `file:line` of the code that declared the resource, when known. */
   readonly declaredAt?: string;
@@ -282,6 +302,7 @@ export abstract class Resource<
 > implements BaseResource {
   readonly kind: ResourceKind = "resource";
   config: C;
+  readonly checks: ParamChecks;
   id: string;
   declare readonly declaredAt?: string;
   group: ResourceGroupRef | null = null;
@@ -332,10 +353,19 @@ export abstract class Resource<
 
   constructor(
     id: string,
-    { config, dependencies }: { config?: C; dependencies?: D } = {},
+    {
+      config,
+      dependencies,
+      checks,
+    }: {
+      config?: C;
+      dependencies?: D;
+      checks?: ResourceChecks<T["params"]>;
+    } = {},
   ) {
     this.id = id;
     this.config = config || ({} as C);
+    this.checks = (checks ?? {}) as ParamChecks;
     this.dependencies = dependencies || ({} as D);
     // ResourceGroup.add() sets the group later, and does not push it again.
     this.#collection?.graph.resources.push(this);
@@ -352,8 +382,10 @@ export abstract class Resource<
   }
 
   /**
-   * Checks config when the resource is declared: every field is a param, and
-   * every value passes its validator. The outputs that output refs point at are not known yet, so
+   * Checks config when the resource is declared: every field and every check
+   * names a param, and every value passes its validator and its check. A
+   * check of a collected param waits for plan, as config holds only the
+   * first of its items. The outputs that output refs point at are not known yet, so
    * issues that they could cause are left to plan and deploy; see
    * `validateValues`. A subclass calls this at the end of its constructor,
    * when the schema has been set.
@@ -503,8 +535,12 @@ export abstract class Resource<
     input: unknown,
     options: { deps?: Record<string, BaseResource> } = {},
   ): void {
-    const contributor =
-      captureCallSite(Resource.prototype.contribute) ?? "an unknown call site";
+    // A library that contributes for the user, such as a group's
+    // `contribute`, is skipped, so the error names the user's code.
+    const callSite = captureCallSiteLazily(Resource.prototype.contribute, {
+      skipLibraryFrames: true,
+    });
+    const contributor = () => callSite() ?? "an unknown call site";
     this.#assertOpen("contribute to");
 
     if (typeof input === "function") {
@@ -788,7 +824,7 @@ export abstract class Resource<
     if (configured !== undefined) {
       items.unshift({
         value: configured,
-        contributor: `the config of ${this.id}`,
+        contributor: () => `the config of ${this.id}`,
       });
     }
     if (items.length === 0) return undefined;
@@ -797,7 +833,7 @@ export abstract class Resource<
       {
         resourceId: this.id,
         param: key,
-        contributors: items.map((item) => item.contributor),
+        contributors: lazyStrings(items.map((item) => item.contributor)),
       },
     );
   }
@@ -1082,7 +1118,7 @@ export type ResourceClass<
   C extends Record<string, any> = T["params"],
   IntrinsicParams extends Partial<T["params"]> = {},
 > = {
-  new (id: string, ...args: ResourceArgs<C, D>): Resource<T, D, C>;
+  new (id: string, ...args: ResourceArgs<C, D, T["params"]>): Resource<T, D, C>;
   readonly type: ResourceType;
   /** See `DefineResourceMeta.blocksDeleteOf`. */
   readonly blocksDeleteOf: readonly ResourceType[];
@@ -1175,7 +1211,11 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
 
             constructor(
               id: string,
-              args?: { config?: NoInfer<C>; dependencies?: NoInfer<D> },
+              args?: {
+                config?: NoInfer<C>;
+                dependencies?: NoInfer<D>;
+                checks?: ResourceChecks<T["params"]>;
+              },
             ) {
               super(id, args);
               this.checkDeclaration();

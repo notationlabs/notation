@@ -23,9 +23,11 @@ export type ContributionFunction<Deps, Values> = (context: {
   deps: Deps;
 }) => Values;
 
+// `contributor` returns the call site of the contribution. It is a function
+// so that the stack is formatted only when a message or a tie needs it.
 export type ContributedValues = {
   values: Record<string, unknown>;
-  contributor: string;
+  contributor: () => string;
 };
 
 export type Contribution =
@@ -33,8 +35,24 @@ export type Contribution =
   | {
       compute: ContributionFunction<any, Record<string, unknown>>;
       deps: Record<string, BaseResource>;
-      contributor: string;
+      contributor: () => string;
     };
+
+/**
+ * An array whose entries are found by calling `getters` on first read. Each
+ * getter is called at most once.
+ */
+export function lazyStrings(getters: (() => string)[]): string[] {
+  const strings: string[] = [];
+  getters.forEach((get, index) => {
+    let value: string | undefined;
+    Object.defineProperty(strings, index, {
+      get: () => (value ??= get()),
+      enumerable: true,
+    });
+  });
+  return strings;
+}
 
 export class ContributionConflictError extends Error {
   constructor(
@@ -164,7 +182,7 @@ function isLibraryFile(file: string): boolean {
  * Sorts contributions by their content, so the order does not depend on the
  * order code ran in, and moving code to another file changes nothing.
  */
-export function sortContributions<T extends { contributor: string }>(
+export function sortContributions<T extends { contributor: () => string }>(
   items: T[],
   valueOf: (item: T) => unknown,
 ): T[] {
@@ -174,7 +192,8 @@ export function sortContributions<T extends { contributor: string }>(
   }));
   keyed.sort(
     (a, b) =>
-      compare(a.key, b.key) || compare(a.item.contributor, b.item.contributor),
+      compare(a.key, b.key) ||
+      compare(a.item.contributor(), b.item.contributor()),
   );
   return keyed.map(({ item }) => item);
 }
@@ -206,12 +225,16 @@ export function mergeContributions<T>(
   context: CollectContext,
 ): T {
   const root: Record<string, unknown> = {};
-  const owners = new Map<string, string>();
+  // The index of the item that set each path. The contributor is read only
+  // for an error, as reading it can format a stack.
+  const owners = new Map<string, number>();
+  const contributorAt = (index: number): string =>
+    context.contributors[index] ?? "an unnamed contributor";
 
   const ownerOf = (path: string[]): string => {
     for (let length = path.length; length > 0; length -= 1) {
       const owner = owners.get(JSON.stringify(path.slice(0, length)));
-      if (owner) return owner;
+      if (owner !== undefined) return contributorAt(owner);
     }
     return "an earlier contributor";
   };
@@ -219,7 +242,7 @@ export function mergeContributions<T>(
   const mergeInto = (
     target: Record<string, unknown>,
     source: Record<string, unknown>,
-    contributor: string,
+    contributor: number,
     path: string[],
   ) => {
     for (const [key, value] of Object.entries(source)) {
@@ -244,19 +267,14 @@ export function mergeContributions<T>(
       throw new ContributionConflictError(
         context.resourceId,
         entryPath.join("."),
-        [ownerOf(entryPath), contributor],
+        [ownerOf(entryPath), contributorAt(contributor)],
         [existing, value],
       );
     }
   };
 
   items.forEach((item, index) => {
-    mergeInto(
-      root,
-      { [context.param]: item },
-      context.contributors[index] ?? "an unnamed contributor",
-      [],
-    );
+    mergeInto(root, { [context.param]: item }, index, []);
   });
   return root[context.param] as T;
 }

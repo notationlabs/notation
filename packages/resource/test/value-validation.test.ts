@@ -8,11 +8,12 @@ import {
   UNKNOWN_AFTER_APPLY,
   collectResourceGraph,
   isUnknownAfterApply,
+  mergeContributions,
   resource,
   validateValues,
   type StandardSchemaV1,
 } from "src";
-import { async, check, number, string } from "./validators";
+import { async, check, number, object, string } from "./validators";
 
 type RoleApi = {
   Key: { RoleName: string };
@@ -411,6 +412,208 @@ describe("values that hold unknowns", () => {
     expect(() => new Throwing("bad", { config: { RoleName: "" } })).toThrow(
       ValueValidationError,
     );
+  });
+});
+
+type Flags = { features: Record<string, boolean> };
+
+// A user's schema for a document: `features` is required, and each feature
+// is a boolean. A failed document also gets an issue with no path, as a
+// refinement of the whole document gives.
+const flags = (): StandardSchemaV1<Flags, Flags> => ({
+  "~standard": {
+    version: 1,
+    vendor: "test",
+    validate: (value) => {
+      const { features } = value as Record<string, unknown>;
+      const issues: StandardSchemaV1.Issue[] = [];
+      if (typeof features !== "object" || features === null) {
+        issues.push({ message: "Required", path: ["features"] });
+      } else {
+        for (const [key, entry] of Object.entries(features)) {
+          if (typeof entry !== "boolean") {
+            issues.push({
+              message: "Expected a boolean",
+              path: ["features", key],
+            });
+          }
+        }
+      }
+      if (issues.length > 0) issues.push({ message: "Invalid document" });
+      return issues.length > 0 ? { issues } : { value: value as Flags };
+    },
+  },
+});
+
+const Document = resource<{
+  Key: { Key: string };
+  CreateParams: { Key: string; Value: Record<string, unknown> };
+  UpdateParams: { Value: Record<string, unknown> };
+  ReadResult: {};
+}>({ type: "test/validation/document", provider: "test" })
+  .defineSchema({
+    Key: {
+      propertyType: "param",
+      presence: "required",
+      value: string(),
+      primaryKey: true,
+      immutable: true,
+    },
+    Value: {
+      propertyType: "param",
+      presence: "required",
+      value: object<Record<string, unknown>>(),
+      collect: mergeContributions,
+    },
+  })
+  .defineOperations(operations);
+
+const shortKey = () =>
+  check<string>(
+    (value) => typeof value === "string" && value.length <= 8,
+    "Too long",
+  );
+
+describe("checks", () => {
+  it("runs a check of a param that is not collected at declaration", () => {
+    const error = catchError(
+      () =>
+        new Document("doc", {
+          config: { Key: "a-long-key" },
+          checks: { Key: shortKey() },
+        }),
+    );
+    expect(error).toMatchObject({
+      name: "ValueValidationError",
+      field: "Key",
+      point: "declaration",
+      issues: ["Too long"],
+    });
+  });
+
+  it("skips the check of a collected param at declaration", () => {
+    new Document("doc", {
+      config: { Key: "flags", Value: {} },
+      checks: { Value: flags() },
+    });
+  });
+
+  it("checks the merged value at plan and deploy, after the class's validator", async () => {
+    const doc = new Document("doc", {
+      config: { Key: "flags", Value: { features: {} } },
+      checks: { Value: flags() },
+    });
+    doc.contribute({ Value: { features: { invoices: "yes" } } });
+
+    const atPlan = await validateParams(
+      doc,
+      await doc.planParams(),
+      "plan",
+    ).catch((error) => error);
+    expect(atPlan).toMatchObject({
+      name: "ValueValidationError",
+      field: "Value",
+      point: "plan",
+      issues: ["features.invoices: Expected a boolean", "Invalid document"],
+    });
+    expect(atPlan.message).toMatch(
+      /^Invalid Value for doc \(test\/validation\/document\) at plan, declared at packages\/resource\/test\/value-validation\.test\.ts:\d+: features\.invoices: Expected a boolean; Invalid document$/,
+    );
+    await expect(
+      validateParams(doc, await doc.getParams(), "deploy"),
+    ).rejects.toMatchObject({ field: "Value", point: "deploy" });
+    // The class's validator fails first, so its issue is the one reported.
+    await expect(
+      validateParams(doc, { Key: "flags", Value: "text" }, "deploy"),
+    ).rejects.toMatchObject({ issues: ["Expected an object"] });
+  });
+
+  it("accepts a value that passes the check", async () => {
+    const doc = new Document("doc", {
+      config: { Key: "flags" },
+      checks: { Value: flags() },
+    });
+    doc.contribute({ Value: { features: { invoices: true } } });
+    doc.contribute({ Value: { features: { uploads: true } } });
+    await validateParams(doc, await doc.getParams(), "deploy");
+  });
+
+  it("drops the issues at, inside and above an unknown value", async () => {
+    const doc = new Document("doc", {
+      config: { Key: "flags" },
+      checks: { Value: flags() },
+    });
+    await validateParams(
+      doc,
+      { Key: "flags", Value: { features: UNKNOWN_AFTER_APPLY } },
+      "plan",
+    );
+    await expect(
+      validateParams(
+        doc,
+        {
+          Key: "flags",
+          Value: { features: { uploads: UNKNOWN_AFTER_APPLY, invoices: 1 } },
+        },
+        "plan",
+      ),
+    ).rejects.toMatchObject({
+      issues: ["features.invoices: Expected a boolean"],
+    });
+  });
+
+  it("does not run on partial params", async () => {
+    const doc = new Document("doc", {
+      config: { Key: "flags" },
+      checks: { Value: flags() },
+    });
+    await validateParams(doc, { Key: "flags", Value: {} }, "deploy", {
+      partial: true,
+    });
+    await expect(
+      validateParams(doc, { Key: "flags", Value: "text" }, "deploy", {
+        partial: true,
+      }),
+    ).rejects.toMatchObject({ issues: ["Expected an object"] });
+  });
+
+  it("does not run on the result of a read, create or rotate", () => {
+    const doc = new Document("doc", {
+      config: { Key: "flags" },
+      checks: { Value: flags() },
+    });
+    for (const point of ["read", "create", "rotate"] as const) {
+      validateValues(doc, { Value: {} }, point);
+    }
+  });
+
+  it("rejects a check that names a field that is not a param", () => {
+    const error = catchError(
+      () =>
+        new Role("role", {
+          config: { RoleName: "role" },
+          // @ts-expect-error Arn is not a param
+          checks: { Arn: string() },
+        }),
+    );
+    expect(SchemaStructureError.is(error)).toBe(true);
+    expect(error.message).toMatch(
+      /these checks name fields that are not params in its schema: Arn$/,
+    );
+  });
+
+  it("fails collection when an async check rejects config", async () => {
+    const collected = collectResourceGraph(() => {
+      new Document("doc", {
+        config: { Key: "a-long-key" },
+        checks: { Key: async(shortKey()) },
+      });
+    });
+    await expect(collected).rejects.toMatchObject({
+      name: "ValueValidationError",
+      field: "Key",
+      point: "declaration",
+    });
   });
 });
 

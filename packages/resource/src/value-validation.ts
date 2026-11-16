@@ -23,9 +23,28 @@ export type ValidationSubject = {
   id: string;
   type: string;
   schema: Schema;
+  /** See `ParamChecks`. */
+  checks?: ParamChecks;
   /** `file:line` of the code that declared the resource, when known. */
   declaredAt?: string;
 };
+
+/**
+ * Validators for one resource's params, keyed by param name. The value of a
+ * param must pass its check as well as the validator in the class's schema.
+ * A check runs at `declaration`, `plan` and `deploy` only, so drift that a
+ * read returns is planned as a change. At `declaration` it does not run on
+ * a collected param, as contributions can supply what config leaves out.
+ */
+export type ParamChecks = Readonly<
+  Record<string, StandardSchemaV1 | undefined>
+>;
+
+const CHECK_POINTS: ReadonlySet<ValidationPoint> = new Set([
+  "declaration",
+  "plan",
+  "deploy",
+]);
 
 /** Thrown when a value fails its schema item's validator. */
 export class ValueValidationError extends Error {
@@ -116,7 +135,8 @@ export class SchemaStructureError extends Error {
 /**
  * Validates each value with the validator of its schema item, and throws
  * `ValueValidationError` for the first that fails. A value that is undefined,
- * or that has no schema item, is not validated.
+ * or that has no schema item, is not validated. At the points in
+ * `ParamChecks`, a value with a check is then validated with the check too.
  *
  * `isUnknown` marks values that stand for something not known yet, such as
  * output refs or values unknown until apply. A value that is unknown as a
@@ -135,6 +155,20 @@ export function validateValues(
   point: ValidationPoint,
   isUnknown: (value: unknown) => boolean = () => false,
 ): void | Promise<void> {
+  return validateWithChecks(subject, values, point, isUnknown, true);
+}
+
+/**
+ * `validateValues`, which also runs the subject's checks after the class's
+ * validator when `runChecks` is set and `point` is one that checks run at.
+ */
+function validateWithChecks(
+  subject: ValidationSubject,
+  values: Record<string, unknown>,
+  point: ValidationPoint,
+  isUnknown: (value: unknown) => boolean,
+  runChecks: boolean,
+): void | Promise<void> {
   const pending: Promise<void>[] = [];
   try {
     for (const [field, value] of Object.entries(values)) {
@@ -142,15 +176,33 @@ export function validateValues(
       if (!item || value === undefined) continue;
       const unknowns = findUnknownPaths(value, isUnknown);
       if (unknowns.some((path) => path.length === 0)) continue;
-      const result = runValidator(item.value, value, unknowns.length > 0);
-      if (result instanceof Promise) {
-        pending.push(
-          result.then((settled) =>
+      const check =
+        runChecks &&
+        CHECK_POINTS.has(point) &&
+        !(
+          point === "declaration" &&
+          item.propertyType === "param" &&
+          item.collect
+        )
+          ? subject.checks?.[field]
+          : undefined;
+      const validate = (validator: StandardSchemaV1) => {
+        const result = runValidator(validator, value, unknowns.length > 0);
+        if (result instanceof Promise) {
+          return result.then((settled) =>
             assertValid(subject, field, point, knownIssues(settled, unknowns)),
-          ),
-        );
-      } else {
+          );
+        }
         assertValid(subject, field, point, knownIssues(result, unknowns));
+      };
+      const validated = validate(item.value);
+      if (!check) {
+        if (validated) pending.push(validated);
+      } else if (validated) {
+        pending.push(validated.then(() => validate(check)));
+      } else {
+        const checked = validate(check);
+        if (checked) pending.push(checked);
       }
     }
   } catch (error) {
@@ -260,35 +312,58 @@ function formatIssue(
 
 /**
  * Checks params at plan or deploy: every field is a param, every required
- * param has a value, and every value passes its validator. Values unknown
- * until apply are treated as described in `validateValues`.
+ * param has a value, and every value passes its validator and its check.
+ * Values unknown until apply are treated as described in `validateValues`.
  */
 export async function validateParams(
   subject: ValidationSubject,
   params: Record<string, unknown>,
   point: "plan" | "deploy",
+  options: {
+    /**
+     * Set when the params leave out some contributions, as those of a
+     * cycle's placeholder do. The class's validators run, and the checks do
+     * not, because a check can require a field that only the left-out
+     * contributions supply.
+     */
+    partial?: boolean;
+  } = {},
 ): Promise<void> {
   assertParamFields(subject, params);
   assertRequiredParams(subject, params);
   // A credential's value was checked when its resource returned it.
-  await validateValues(
+  await validateWithChecks(
     subject,
     params,
     point,
     (value) => isUnknownAfterApply(value) || isCredentialMarker(value),
+    !options.partial,
   );
 }
 
-/** Throws unless every defined value is a param in the schema. */
+/**
+ * Throws unless every defined value is a param in the schema, and every
+ * check names a param.
+ */
 export function assertParamFields(
   subject: ValidationSubject,
   params: Record<string, unknown>,
 ): void {
-  const extra = Object.keys(params).filter(
-    (field) =>
-      params[field] !== undefined &&
-      subject.schema[field]?.propertyType !== "param",
-  );
+  const notParams = (values: Readonly<Record<string, unknown>>) =>
+    Object.keys(values).filter(
+      (field) =>
+        values[field] !== undefined &&
+        subject.schema[field]?.propertyType !== "param",
+    );
+  const checked = notParams(subject.checks ?? {});
+  if (checked.length > 0) {
+    throw new SchemaStructureError(
+      subject,
+      "these checks name fields that are not params in its schema",
+      checked,
+    );
+  }
+  const extra = notParams(params);
   if (extra.length > 0) {
     throw new SchemaStructureError(
       subject,
