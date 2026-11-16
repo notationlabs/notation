@@ -12,10 +12,7 @@ export type ReplaceTarget = {
 /** The replaces that the user asked for, with `--replace`. */
 export type ReplaceRequest = {
   replace: ReplaceTarget[];
-  /**
-   * The IDs, each also in `replace`, whose class's `rejectChange` deploy
-   * does not call for the requested replace.
-   */
+  /** IDs in `replace` whose class's `rejectChange` deploy skips. */
   overrideLossProtection?: string[];
 };
 

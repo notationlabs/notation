@@ -54,15 +54,11 @@ export type RunWorkflowOptions = {
   workflowId: string;
   executionId: string;
   /**
-   * Saved with a new execution, next to the deployment ID. The workflow
-   * reads them from its event, so a resume gets the params that the
-   * execution started with.
+   * Saved with a new execution. A resume gets the params that the execution
+   * started with, not these.
    */
   params?: Record<string, DurableValue>;
-  /**
-   * Called with the saved params when the execution already exists. Throws
-   * to refuse the resume.
-   */
+  /** Called with the saved params on a resume. Throws to refuse it. */
   assertResumable?: (saved: Record<string, unknown>) => void;
 };
 

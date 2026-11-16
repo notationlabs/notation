@@ -87,8 +87,6 @@ export function targetFlags(deployment: Deployment, config?: string): string {
     : `--config ${shellQuote(config)} ${stage}`;
 }
 
-// The flags of the request, each `--replace` with the instance hash from the
-// plan.
 function requestFlags(result: Plan, requested: ReplaceRequest): string {
   return formatRequest({
     ...requested,

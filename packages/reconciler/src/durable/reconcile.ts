@@ -842,9 +842,9 @@ async function* deleteBlockingDependents(
       continue;
     }
     if (!declared.rejectChange) continue;
-    // As the planner does. `validateKnownParams` has already called the
-    // `rejectChange` of a requested dependent through `decideAction`, which
-    // skips it with --override-loss-protection.
+    // As in the planner. `validateKnownParams` already ran a requested
+    // dependent's `rejectChange` through `decideAction`, which skips it with
+    // --override-loss-protection.
     if (requestedReplace(opts.requested, id)) continue;
     // A step, as deriveParams is user code and need not be deterministic.
     const params = yield* step.run(

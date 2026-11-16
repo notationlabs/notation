@@ -8617,9 +8617,9 @@ describe("refs that add no dependency", () => {
 
 describe("requested replace", () => {
   /**
-   * Queues whose names deploy generates, so a replace creates first, and a
-   * mirror that takes the name of its target. `beforeUpdate` runs at the
-   * start of each update.
+   * Queues with generated names, so a replace creates first, and a mirror
+   * that takes its target's name. `beforeUpdate` runs at the start of each
+   * update.
    */
   function defineQueues(beforeUpdate?: () => Promise<void>) {
     const calls: string[] = [];
@@ -9051,10 +9051,10 @@ function createRuntime(
       driftDetection: options.driftDetection ?? false,
       // Read at execution time, so a test can switch it between runs.
       dryRun: options.dryRun,
-      // Read at execution time, as is `requested`.
       emit: options.emit,
       maxOperationAttempts: options.maxOperationAttempts,
       nameScope: { app: "shop", stage: "prod" },
+      // Read at execution time, as is `dryRun`.
       requested: options.requested,
     });
   });

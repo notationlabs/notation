@@ -117,8 +117,8 @@ export type PlanNode = {
    */
   mayTakeOver?: true;
   /**
-   * Set for a resource in code that has a record: the hash that
-   * `--replace <id>@<instance hash>` takes. See `instanceHash`.
+   * The hash for `--replace <id>@<instance hash>`. Set for a resource in
+   * code that has a record.
    */
   instanceHash?: string;
   params: Record<string, unknown>;

@@ -306,7 +306,6 @@ describe("KVNamespace", () => {
   });
 });
 
-// A state that holds one record of the resource, with its params.
 function stateWith(resource: { id: string; type: string }, params: object) {
   const record = {
     version: 1,

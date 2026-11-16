@@ -23,9 +23,8 @@ export type DurableDeployOptions = DurableWorkflowOptions & {
   /** The app and stage that start each generated physical name. */
   nameScope: NameScope;
   /**
-   * The replaces that the user asked for. A resumed execution must pass the
-   * request that it started with, so that the replay takes the same
-   * decisions.
+   * The replaces that the user asked for. A resume must pass the request
+   * that the execution started with, or the replay decides differently.
    */
   requested?: ReplaceRequest;
 };

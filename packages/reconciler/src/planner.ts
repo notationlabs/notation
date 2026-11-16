@@ -89,7 +89,7 @@ export type CreatePlanOptions = {
   /**
    * The key of the deployment's state. With it, each node of a resource in
    * code that has a record gets its instance hash. Required with
-   * `requested`, whose hashes are checked against it.
+   * `requested`.
    */
   deploymentId?: string;
 };

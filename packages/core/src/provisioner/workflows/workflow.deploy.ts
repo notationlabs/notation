@@ -105,8 +105,7 @@ async function deploy({
         driftDetection,
         maxOperationAttempts,
         nameScope,
-        // An execution from before requests were saved has none, and
-        // deploys as one without the flag.
+        // Executions started before requests were saved have none.
         requested: params.requested as ReplaceRequest | undefined,
       });
     },
