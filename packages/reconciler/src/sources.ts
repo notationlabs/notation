@@ -114,8 +114,8 @@ export async function* readAndDecideSource(
 
 /**
  * Decides what deploy does with a source, from its record and a read. The
- * source is created when it has no record, and updated when a param or a
- * computed output differs from the record. It is never replaced. `output`
+ * source is created when it has no record, and updated when a param, a
+ * computed output or a credential's marker differs from the record. It is never replaced. `output`
  * holds a marker for each credential, with the version that the params and
  * the revision make.
  */
@@ -144,7 +144,15 @@ export function decideSource(
   const { patch, diff } = diffParams(source.schema, record.params, params, {
     canUpdate: true,
   });
-  for (const [key, value] of Object.entries(result)) {
+  // The markers are compared too, so that a record whose version is not the
+  // one that the params and the revision make is updated.
+  const computed = {
+    ...result,
+    ...Object.fromEntries(
+      credentialNames(source.schema).map((name) => [name, output[name]]),
+    ),
+  };
+  for (const [key, value] of Object.entries(computed)) {
     const previous = record.output[key];
     if (isDeepStrictEqual(previous, value)) continue;
     if (previous === undefined) diff.added[key] = value;

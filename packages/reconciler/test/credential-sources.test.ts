@@ -1,7 +1,9 @@
 import * as v from "valibot";
 import {
+  credentialMarker,
   credentialSourceResource,
   resource,
+  type BaseCredentialSource,
   type BaseResource,
   type CredentialSourceReadContext,
 } from "@notation/resource";
@@ -9,6 +11,7 @@ import { clearSecretValues } from "@notation/utils";
 import { beforeEach, describe, expect, it } from "vitest";
 import { clearHeldCredentials } from "../src/credentials";
 import { createPlan } from "../src/planner";
+import { decideSource } from "../src/sources";
 import { createRuntime } from "./credentials-runtime";
 
 /** The values outside notation, with every version of each key. */
@@ -458,6 +461,31 @@ describe("a plan with a source", () => {
       "noop",
       "create",
     ]);
+    runtime.close();
+  });
+});
+
+describe("the decision for a source", () => {
+  it("is an update when the record holds another version of the credential", async () => {
+    const outside = createOutside();
+    set(outside, "STRIPE_KEY", "sk_1");
+    const types = defineResources(outside);
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types));
+    const record = (await runtime.state.get("stripe-key"))!;
+    const source = declare(types)[0] as BaseCredentialSource;
+    const { revision } = record.output;
+    const decide = (output: typeof record.output) =>
+      decideSource(source, { ...record, output }, record.params, { revision })
+        .decision;
+
+    expect(decide(record.output)).toBe("noop");
+    expect(
+      decide({
+        ...record.output,
+        value: credentialMarker("stripe-key", "value", "other-version"),
+      }),
+    ).toBe("update");
     runtime.close();
   });
 });
