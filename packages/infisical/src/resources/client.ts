@@ -29,7 +29,7 @@ export async function getSecret(
   address: SecretAddress,
   options: { expandSecretReferences: boolean; version?: number },
 ): Promise<FetchedSecret> {
-  const site = siteUrl(undefined);
+  const site = siteUrl();
   const token = await cachedAccessToken(site);
   const url = apiUrl(
     site,

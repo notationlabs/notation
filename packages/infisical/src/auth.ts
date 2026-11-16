@@ -5,9 +5,17 @@ type LoginResponse = { accessToken: string; expiresIn?: number };
 const logins = new Map<string, { token: Promise<string>; expiresAt: number }>();
 
 /**
- * Returns an access token as `accessToken` does, and keeps a token from a
- * login for half of its lifetime, so that the secrets of one process log in
- * once.
+ * Returns an Infisical access token. It takes the first of:
+ *
+ * 1. `INFISICAL_TOKEN`, an access token.
+ * 2. `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID` and
+ *    `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET`, a machine identity's client ID
+ *    and secret, exchanged through universal auth.
+ * 3. `INFISICAL_IDENTITY_ID`, a machine identity that uses OIDC auth, with
+ *    the CI platform's OIDC token. See `oidcToken`.
+ *
+ * It keeps a token from a login for half of its lifetime, so that the secrets
+ * of one process log in once.
  */
 export function cachedAccessToken(site: string): Promise<string> {
   const env = process.env;
@@ -36,20 +44,6 @@ export function cachedAccessToken(site: string): Promise<string> {
   );
   logins.set(key, entry);
   return entry.token;
-}
-
-/**
- * Returns an Infisical access token. It takes the first of:
- *
- * 1. `INFISICAL_TOKEN`, an access token.
- * 2. `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID` and
- *    `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET`, a machine identity's client ID
- *    and secret, exchanged through universal auth.
- * 3. `INFISICAL_IDENTITY_ID`, a machine identity that uses OIDC auth, with
- *    the CI platform's OIDC token. See `oidcToken`.
- */
-export async function accessToken(site: string): Promise<string> {
-  return (await login(site)).accessToken;
 }
 
 async function login(site: string): Promise<LoginResponse> {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiUrl, siteUrl } from "src/api";
-import { accessToken } from "src/auth";
+import { cachedAccessToken } from "src/auth";
 
 type Call = { method: string; url: URL; headers: Headers; body: unknown };
 let calls: Call[];
@@ -21,10 +21,13 @@ function mockFetch(respond: (call: Call) => Response | Promise<Response>) {
 const loginResponse = (accessToken: string) =>
   Response.json({ accessToken, expiresIn: 7200, tokenType: "Bearer" });
 
-const site = "https://app.infisical.com";
+// Tokens are cached per site and credentials, so each test uses its own site.
+let site: string;
+let siteCount = 0;
 
 beforeEach(() => {
   calls = [];
+  site = `https://app${siteCount++}.infisical.com`;
   for (const name of [
     "INFISICAL_TOKEN",
     "INFISICAL_UNIVERSAL_AUTH_CLIENT_ID",
@@ -48,22 +51,23 @@ afterEach(() => {
 describe("siteUrl", () => {
   it("uses INFISICAL_DOMAIN and drops a trailing /api", () => {
     vi.stubEnv("INFISICAL_DOMAIN", "https://vault.example.com/api/");
-    expect(siteUrl(undefined)).toBe("https://vault.example.com");
+    expect(siteUrl()).toBe("https://vault.example.com");
   });
 
   it("keeps the path prefix of a site URL", () => {
-    const url = apiUrl(siteUrl("https://example.com/infisical/"), "/api/v4");
+    vi.stubEnv("INFISICAL_DOMAIN", "https://example.com/infisical/");
+    const url = apiUrl(siteUrl(), "/api/v4");
     expect(url.href).toBe("https://example.com/infisical/api/v4");
   });
 });
 
-describe("accessToken", () => {
+describe("cachedAccessToken", () => {
   it("logs in with a machine identity's client ID and secret", async () => {
     vi.stubEnv("INFISICAL_UNIVERSAL_AUTH_CLIENT_ID", "client");
     vi.stubEnv("INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET", "secret");
     mockFetch(() => loginResponse("ua.token"));
 
-    await expect(accessToken(site)).resolves.toBe("ua.token");
+    await expect(cachedAccessToken(site)).resolves.toBe("ua.token");
 
     expect(calls.map((c) => `${c.method} ${c.url.pathname}`)).toEqual([
       "POST /api/v1/auth/universal-auth/login",
@@ -80,14 +84,14 @@ describe("accessToken", () => {
     vi.stubEnv("INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET", "secret");
     mockFetch(() => loginResponse("ua.token"));
 
-    await expect(accessToken(site)).resolves.toBe("st.token");
+    await expect(cachedAccessToken(site)).resolves.toBe("st.token");
     expect(calls).toHaveLength(0);
   });
 
   it("fails when only one of the client ID and secret is set", async () => {
     vi.stubEnv("INFISICAL_UNIVERSAL_AUTH_CLIENT_ID", "client");
 
-    await expect(accessToken(site)).rejects.toThrow(
+    await expect(cachedAccessToken(site)).rejects.toThrow(
       "Set both INFISICAL_UNIVERSAL_AUTH_CLIENT_ID and INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET",
     );
   });
@@ -106,7 +110,7 @@ describe("accessToken", () => {
         : loginResponse("oidc.token"),
     );
 
-    await expect(accessToken(site)).resolves.toBe("oidc.token");
+    await expect(cachedAccessToken(site)).resolves.toBe("oidc.token");
 
     expect(calls[0]!.headers.get("authorization")).toBe("Bearer request-token");
     expect(Object.fromEntries(calls[0]!.url.searchParams)).toEqual({
@@ -125,7 +129,7 @@ describe("accessToken", () => {
     vi.stubEnv("INFISICAL_JWT", "gitlab.jwt");
     mockFetch(() => loginResponse("oidc.token"));
 
-    await accessToken(site);
+    await cachedAccessToken(site);
 
     expect(calls[0]!.body).toEqual({
       identityId: "identity",
@@ -136,13 +140,13 @@ describe("accessToken", () => {
   it("explains how to get an OIDC token when there is none", async () => {
     vi.stubEnv("INFISICAL_IDENTITY_ID", "identity");
 
-    await expect(accessToken(site)).rejects.toThrow(
+    await expect(cachedAccessToken(site)).rejects.toThrow(
       "give the job the permission `id-token: write`",
     );
   });
 
   it("lists the credentials it reads when none are set", async () => {
-    await expect(accessToken(site)).rejects.toThrow(
+    await expect(cachedAccessToken(site)).rejects.toThrow(
       "Set INFISICAL_TOKEN, or INFISICAL_UNIVERSAL_AUTH_CLIENT_ID and INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET, or INFISICAL_IDENTITY_ID in CI",
     );
   });

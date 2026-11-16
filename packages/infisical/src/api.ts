@@ -15,12 +15,12 @@ export class InfisicalApiError extends Error {
 }
 
 /**
- * Returns the URL of the Infisical instance: the `siteUrl` option, then
- * `INFISICAL_DOMAIN`, then Infisical Cloud. A trailing `/api` is dropped, as
+ * Returns the URL of the Infisical instance: `INFISICAL_DOMAIN`, or else
+ * Infisical Cloud. A trailing `/api` is dropped, as
  * Infisical's CLI has taken the instance URL both with and without it.
  */
-export function siteUrl(option: string | undefined): string {
-  const url = option ?? process.env.INFISICAL_DOMAIN ?? DEFAULT_SITE_URL;
+export function siteUrl(): string {
+  const url = process.env.INFISICAL_DOMAIN ?? DEFAULT_SITE_URL;
   return url.replace(/\/+$/, "").replace(/\/api$/, "");
 }
 
