@@ -156,12 +156,7 @@ export function useProject({
     }
     expect(await scriptsWithPrefix(runPrefix)).toEqual([]);
     // The list can show a deleted Worker's namespaces for a short while.
-    await expect
-      .poll(() => namespacesWithPrefix(runPrefix), {
-        timeout: 60_000,
-        interval: 3_000,
-      })
-      .toEqual([]);
+    expect(await untilEmpty(() => namespacesWithPrefix(runPrefix))).toEqual([]);
     expect(await bucketsWithPrefix(runPrefix)).toEqual([]);
     expect(await kvNamespacesWithPrefix(runPrefix)).toEqual([]);
     expect(await containerApplicationsWithPrefix(runPrefix)).toEqual([]);
@@ -172,6 +167,22 @@ export function useProject({
   });
 
   return project;
+}
+
+/**
+ * Calls `list` until it returns an empty array or `timeoutMs` passes, and
+ * returns the last result. `expect.poll` can't run in a hook.
+ */
+async function untilEmpty<T>(
+  list: () => Promise<T[]>,
+  timeoutMs = 60_000,
+): Promise<T[]> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const found = await list();
+    if (found.length === 0 || Date.now() >= deadline) return found;
+    await sleep(3_000);
+  }
 }
 
 export type ApiResponse<T> = {
