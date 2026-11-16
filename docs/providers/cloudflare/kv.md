@@ -63,7 +63,7 @@ export const Flags = v.object({
 });
 ```
 
-Any [Standard Schema](https://standardschema.dev) works, such as a valibot or Zod schema. Its input type must be JSON. Its output type can be any type: a schema can turn a string into a `Date`, as described in [Reading the document in a Worker](#reading-the-document-in-a-worker).
+Any [Standard Schema](https://standardschema.dev) works, such as a valibot or Zod schema. Its input type must be JSON. `unknown` is allowed at any depth, such as the extra keys of `v.looseObject()`, as is a recursive JSON schema built with `v.lazy()`; the schema check at plan and deploy still checks what deploy writes. A field typed as a `Date` or a function is a type error that names the key, such as `meta.at`. Its output type can be any type: a schema can turn a string into a `Date`, as described in [Reading the document in a Worker](#reading-the-document-in-a-worker).
 
 ### Declaring the document
 
