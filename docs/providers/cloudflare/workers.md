@@ -63,9 +63,9 @@ Deploy generates a Worker's name when it creates the Worker: `<app>--<stage>--<i
 | An `R2Bucket` resource                                              | R2 bucket                | `R2Bucket`                                                                            |
 | A [`KVNamespace`](kv.md) resource                                   | KV namespace             | `KVNamespace`                                                                         |
 | A value from `json(value)`                                          | JSON                     | the type of `value`                                                                   |
-| A string                                                            | Plain text               | `string`                                                                              |
+| A string, or an output ref or a derived value of one                | Plain text               | `string`                                                                              |
 
-`WorkerEnv<typeof worker>` is the type of `env`, and `WorkerHandler<typeof worker>` is the type of the default export. A Worker is uploaded after each Worker, R2 bucket, KV namespace and store secret that it binds, and after each resource whose credential it binds.
+`WorkerEnv<typeof worker>` is the type of `env`, and `WorkerHandler<typeof worker>` is the type of the default export. A Worker is uploaded after each Worker, R2 bucket, KV namespace and store secret that it binds, and after each resource whose credential or output ref it binds. See [Output refs](../../reference/resource.md#output-refs) for refs and derived values such as `` text`${api.url}/callback` ``.
 
 An infra module declares the R2 bucket, the KV namespace and the source of a Worker secret, and the runtime module imports them. `R2Bucket` and `KVNamespace` are resources from `@notation/cloudflare/resources`, and `sources.Env` is from `@notation/std/resources`:
 
@@ -224,11 +224,7 @@ export const worker = $worker({
 });
 ```
 
-A credential is typed `string`, so TypeScript cannot tell it from plain text. `$worker` checks the value when infra is evaluated: an output ref to a credential becomes a secret, and an output ref to any other output fails:
-
-```text
-$worker({ id: "api" }) in runtime/api.ts binds CACHE_ID to the output NamespaceId of cache, which is not a credential. A Worker binds an output of a resource only as a secret, and only a credential, such as `token.credentials.Value`, can be a secret.
-```
+A credential is typed `CredentialRef<string>`, so TypeScript tells it from plain text. A credential becomes a secret, and an output ref to any other output becomes plain text.
 
 The Worker script holds its secrets in its `Secrets` param, which maps each binding name to a credential. State holds a marker for each name, with the credential's version, and never the value:
 

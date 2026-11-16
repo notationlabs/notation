@@ -492,6 +492,13 @@ const LambdaIntegration = defineResource<{ ... }>({ type: "aws/apiGateway/Lambda
 
 `requireDependencies` declares typed dependency slots. `deriveParams` receives `{ id, config, deps }` and returns properties computed from dependency outputs. At deploy it runs after its dependencies have been provisioned, with their real outputs. At plan, a dependency that has no output yet throws `PendingOutput` when `deriveParams` reads its `output`; see [Unknown values](reconciler.md#unknown-values).
 
+`config`, and the `config` of each dependency, have their [output refs and derived values](#output-refs) filled in. So `deriveParams` reads config as plain values, which its type says:
+
+- **At deploy**, every ref in config is known, and `deriveParams` receives the values.
+- **At plan**, `deriveParams` receives a view of config. Reading a value that plan knows gives the value. Reading a ref or a derived value that plan doesn't know throws `PendingOutput`, as a read of a pending output in `deps` does. Plan then marks every param that config doesn't set as unknown.
+
+A `deriveParams` that annotates `deps` types it as `ResolvedDependencies<Deps>`, which types the `config` of each dependency as plain params.
+
 A resource takes its ID first, then its config and dependencies:
 
 ```ts
@@ -510,7 +517,7 @@ Dependencies also determine deployment order: a resource is not created until al
 
 ## Output refs
 
-An output, such as a queue's ARN, does not exist until the provider creates the resource. Infra code still needs to put it in another resource's config. `resource.outputRef(key)` returns an output ref. This is an object that names the resource and one of its outputs. It does not hold the output. TypeScript types it as the output, so it fits where the output would go:
+An output, such as a queue's ARN, does not exist until the provider creates the resource. Infra code still needs to put it in another resource's config. `resource.outputRef(key)` returns an output ref. This is an object that names the resource and one of its outputs. It does not hold the output. TypeScript types it as `OutputRef<T>`, where `T` is the type of the output, and a resource's config takes it where it takes a `T`:
 
 ```ts [packages/aws/src/sqs/queue.ts]
 const queue = new aws.sqs.Queue("orders-queue", {
@@ -527,7 +534,61 @@ The ref has two effects:
 - `mapping` depends on `queue`, so the queue deploys first.
 - Deploy replaces the ref with the queue's real ARN before it calls the provider for `mapping`. A ref to a number becomes a number.
 
-**A ref can only be placed whole.** Turning it into a string throws `OutputRefStringError`, whether in a template string, with `String()` or with `JSON.stringify`. This matters because a string such as `` `${arn}/*` `` would hide the ref, and plan could not tell that the value is unknown. It follows that a ref cannot be a map key: key the entry by something known now, and put the ref inside it. To compute with an output, use `deriveParams` or a [function contribution](#function-contributions), which receive the real output at deploy.
+An output that the schema makes optional gives a ref to `T | undefined`. An optional param takes it, and a required param doesn't. Give it a default with `map`, which [Derived values](#derived-values) describes:
+
+```ts
+Name: bucket.outputRef("Alias").map((alias) => alias ?? "none"),
+```
+
+**A ref is not a string.** `OutputRef<string>` has no string methods, and a parameter typed `string` doesn't take it, so `new URL(queue.url)` fails the type check. A template literal and `+` accept any type, so `` `${arn}/*` `` passes the type check. At runtime, turning a ref into a string throws `OutputRefStringError`, whether in a template literal, with `String()` or with `JSON.stringify`:
+
+```
+Output orders-queue.QueueArn: an output ref can't be turned into a string. Place it whole, join it with text`…`, or compute with it in map().
+```
+
+The error matters because a string such as `` `${arn}/*` `` would hide the ref, and plan could not tell that the value is unknown. It follows that a ref cannot be a map key: key the entry by something known now, and put the ref inside it.
+
+`Input<T>` from `@notation/resource` is the type of a value that config takes for a `T`: a `T`, an `OutputRef<T>` or a `Derived<T>`. A helper that passes a value on to config takes `Input<string>`:
+
+```ts
+function callbackFor(base: Input<string>) {
+  return text`${base}/callback`;
+}
+```
+
+`DeepInput<T>` is `Input` at each level of an object or an array. A resource's `config` and `contribute` take `DeepInput` of each param.
+
+### Derived values
+
+To compute with an output, make a derived value. A derived value holds the refs that it reads and a function of their values. Three functions make one, and each gives a `Derived<T>`:
+
+| Made by       | Gives                                                          | Example                                                         |
+| ------------- | -------------------------------------------------------------- | --------------------------------------------------------------- |
+| `` text`…` `` | a string joined from strings, numbers, refs and derived values | `` text`${queue.arn}-*` ``                                      |
+| `ref.map(fn)` | the result of `fn` on the value of a ref or a derived value    | `api.url.map((url) => new URL(url).host)`                       |
+| `all([a, b])` | the list of the values of several refs and derived values      | `all([api.url, queue.arn]).map(([url, arn]) => ({ url, arn }))` |
+
+A derived value goes where a ref goes: in config, in a contribution, in a Lambda's `env` or in a Worker's binding. The resource that holds it depends on the resource of each ref that it reads.
+
+| Step           | A derived value                                                                                                                                                                                                               |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Declaration    | Validation skips a derived value that reads a ref. A derived value that reads no ref, such as `callbackFor("https://example.com")`, is computed, and the validator checks the result.                                         |
+| Plan           | When every ref that it reads is known, plan runs the function and shows the result. Otherwise only the path of the derived value is unknown.                                                                                  |
+| Deploy         | Deploy runs the function, and the param's validator checks the result.                                                                                                                                                        |
+| Canonical form | `text` prints its parts, such as `<output orders-queue.QueueArn>-*`. `map` prints its ref and its call site, such as `<map of api.Url at infra/main.ts:17>`. The order of collected contributions follows the canonical form. |
+
+The function of `map`:
+
+- **is called with real values**, at plan when they are known, and at deploy. Plan and deploy can each call it more than once, so it must depend only on its argument.
+- **returns a value that state can record.** A promise fails, and so does a value that holds a ref or a derived value at any depth.
+- **fails plan or deploy when it throws.** The error names the call site of `map`. In `ref.map(f).map(g)`, each `map` has its own call site.
+- **is not async.**
+
+`text` checks each part when it joins them. A part must be a string or a number, so an optional output that is `undefined` at deploy fails, and doesn't become an empty string.
+
+**A credential and a state ref can only be placed whole.** `map`, `text` and `all` reject a [credential](#credentials), because a value computed from it would be recorded in state as a plain param. They reject a [state ref](#state-refs) too. The types say so, and the functions throw for code that gets past the types.
+
+`text` and `all` are marked `@resource`, so a function bundle that calls them fails to build, with the file and line of each call. A ref has no value in a function's code. A function reads a value through its declaration's `env`, or a Worker's `env`.
 
 ### Credentials
 
@@ -557,7 +618,7 @@ export const GithubApp = githubAppSchema.defineOperations({
 });
 ```
 
-Another resource takes the value with `resource.credentials.<name>`, which is an output ref:
+Another resource takes the value with `resource.credentials.<name>`, which is an output ref typed `CredentialRef<T>`. A `CredentialRef<T>` doesn't fit an `OutputRef<T>`, and the other way round. Any param that isn't `hidden` takes one in place of its value:
 
 ```ts
 new cloudflare.secretsStore.SecretsStoreSecret("app-key-secret", {
@@ -638,7 +699,7 @@ A state ref differs from an output ref in five ways:
 
 - **It adds no dependency.** `host` does not depend on `binder.script`, so the graph and the deploy order stay the same.
 - **It resolves to the output in the target's state record at the start of the deploy.** Deploy reads these outputs once, after it takes the deployment hold, in the step `notation:recorded-outputs`. When this deploy replaces the target, the ref resolves to the output from before the replace. A resumed deploy uses the outputs that this step recorded. Plan reads the same outputs from state, so the value is known at plan.
-- **It resolves to `undefined` when the target has no record**, or only a `creating` record. TypeScript types the ref as the output or `undefined`.
+- **It resolves to `undefined` when the target has no record**, or only a `creating` record. TypeScript types the ref as `StateRef<T>`, whose value is a `T` or `undefined`. A `StateRef` doesn't fit an `OutputRef`, so config doesn't take it.
 - **It reads only an output that only a replace changes.** `outputRef(key)` throws unless the output is a param that is `immutable`, `primaryKey` or `secondaryKey`, or that has `physicalName`. An output that an update changes would be read one deploy late, with no error. It also throws for a `hidden` param, which the state record does not hold.
 - **It can only be placed in a contribution.** `create` and `update` read the refs in config from the live outputs of their targets, which a state ref's target may not have yet. `getDependencies()` throws when config holds a state ref.
 
@@ -751,9 +812,10 @@ Library code that contributes a map entry for the user should key the entry by a
 
 ### Function contributions
 
-A plain contribution cannot compute with an output ref, because the output does not exist while infra is being evaluated. For example, to let a function send to every queue whose name starts with `orders-`, a policy statement needs the queue's ARN with `-*` appended. A function contribution receives the real output at deploy:
+**Function contributions are deprecated.** A later release removes them. Contribute values instead, with a [derived value](#derived-values) where the value is computed from an output. To let a function send to every queue whose name starts with `orders-`, a policy statement needs the queue's ARN with `-*` appended:
 
 ```ts [infra/orders.ts]
+import { text } from "@notation/resource";
 import { lambda } from "@notation/aws/lambda";
 import { queue } from "@notation/aws/sqs";
 import { Order } from "shared/schema";
@@ -764,6 +826,22 @@ const importer = lambda({
   code: { type: "file", path: "external/importer.mjs" },
 });
 
+importer.policy.contribute({
+  PolicyDocument: {
+    Statement: [
+      {
+        Effect: "Allow",
+        Action: "sqs:SendMessage",
+        Resource: text`${orderQueue.arn}-*`, // ← a string at deploy
+      },
+    ],
+  },
+});
+```
+
+The same contribution as a function, which the type marks `@deprecated`:
+
+```ts
 importer.policy.contribute(
   ({ deps }) => ({
     PolicyDocument: {
@@ -771,7 +849,7 @@ importer.policy.contribute(
         {
           Effect: "Allow",
           Action: "sqs:SendMessage",
-          Resource: `${deps.queue.output.QueueArn}-*`, // ← a real string at deploy
+          Resource: `${deps.queue.output.QueueArn}-*`,
         },
       ],
     },
@@ -780,11 +858,21 @@ importer.policy.contribute(
 );
 ```
 
-`contribute` takes the function and, in `deps`, the resources the function reads. `deps` is typed from those resources, so `deps.queue.output` is the queue's output type.
+`contribute` takes the function and, in `deps`, the resources that the function reads. At deploy, deploy runs the function with the real outputs of `deps`, and collects the result like a plain contribution. A function contribution has three costs that a contribution of values doesn't:
 
-1. **While infra is evaluated**, `contribute` records the function and its deps. The policy now depends on the queue, and state records the edge.
-2. **At deploy**, the queue deploys first. Deploy then runs the function with the queue's real output, and collects the result like a plain contribution. The call site, lifetime and conflicts work the same way. The result can only set collected params.
-3. **At plan**, the function receives the same views of its deps as `deriveParams` (see [Unknown values](reconciler.md#unknown-values)). When the queue has no output yet, reading `deps.queue.output` throws, and plan marks every collected param of the policy unknown. When the queue exists, plan uses the function's result.
+- **At plan**, the function receives the same views of its deps as `deriveParams` (see [Unknown values](reconciler.md#unknown-values)). When the queue has no output yet, reading `deps.queue.output` throws, and plan marks every collected param of the policy unknown. With `text`, only the path of `Resource` is unknown.
+- **In a cycle**, a function contribution counts as setting every collected param. See [Cycles](#cycles).
+- **It names the resource, not the output.** The function reads `orderQueue.queue`, the resource inside the group, where `orderQueue.arn` is the value it needs.
+
+| A function contribution that             | Becomes                              |
+| ---------------------------------------- | ------------------------------------ |
+| places an output                         | the ref: `{ QUEUE_ARN: orders.arn }` |
+| joins an output to a string              | `text`                               |
+| computes with an output                  | `map`                                |
+| computes with several outputs            | `all([...]).map(...)`                |
+| chooses which keys to set from an output | `map` at the path above those keys   |
+
+In the last row, the mapped value is unknown at its whole path while its ref is unknown. Plan then hides the keys that other contributions set under that path. At deploy the value is known, and it merges with the other contributions.
 
 As an aside, a provider that stores a collected map as one string should still keep the map structured in the param, so state, diff and plan see each key. The provider encodes it only in `create` and `update`, for example with `sortedJson` from `@notation/utils`, and decodes it in `read`.
 
