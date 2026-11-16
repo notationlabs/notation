@@ -1,7 +1,7 @@
 # notation plan
 
 ```sh
-notation plan [--config <path>] [--stage <stage>] [--replace <id>[@<hash>]] [--override-loss-protection <id>]
+notation plan [--config <path>] [--stage <stage>] [--replace <id>[@<hash>]] [--override-loss-protection <id>] [--credential <id>.<credential>[@<version>]=<variable>]
 ```
 
 | Option                            | Meaning                                                                                                     |
@@ -10,6 +10,7 @@ notation plan [--config <path>] [--stage <stage>] [--replace <id>[@<hash>]] [--o
 | `--stage <stage>`                 | The stage. Default: `defaultStage`.                                                                         |
 | `--replace <id>[@<hash>]`         | Plan a replace of the resource with this ID. Repeatable. See [Replacing a resource](#replacing-a-resource). |
 | `--override-loss-protection <id>` | Plan the replace of a resource that `--replace` names, though its class refuses the replace. Repeatable.    |
+| `--credential <id>.<credential>[@<version>]=<variable>` | Plan a deploy that takes the credential's value from the variable. Repeatable. See [Passing a credential](#passing-a-credential). |
 
 Compiles the entry file and shows what a deploy to the stage would change:
 
@@ -92,6 +93,45 @@ To deploy this plan:
 
 The last line is the deploy command, with the instance hash of each resource that `--replace` names. Copy it to deploy the plan. When a changed param also replaces the resource, the plan shows one replace with both reasons.
 
+## Sources and credentials
+
+Plan calls the `read` operation of every [source](../manual/secrets.md#sources), such as `sources.Env`, and shows a new revision as an update of the source. Each resource that takes the source's value is updated with it:
+
+```
+~ update std/sources/Env stripe-key
+~ update cloudflare/secrets-store/SecretsStoreSecret stripe-key-secret
+```
+
+A source can warn, for example when `track` is set and the variable is not:
+
+```
+! stripe-key std/sources/Env STRIPE_KEY is not set. Its value was not checked for a change.
+```
+
+When a resource needs the value of a credential that deploy no longer holds, and the credential's resource can rotate it, plan shows the rotation:
+
+```
+~ rotate cloudflare/tokens/AccountToken deploy-token
+    Value gets a new value, as a resource that takes it needs one or --credential passes one
+```
+
+When the credential's resource cannot rotate it, plan fails, and prints a `--replace` command and a `--credential` command. See [A credential that deploy cannot get](./deploy.md#a-credential-that-deploy-cannot-get).
+
+## Passing a credential
+
+`--credential` plans the deploy that [`notation deploy --credential`](./deploy.md#a-credential-that-deploy-cannot-get) makes. The version is optional, because plan changes nothing, and the variable need not be set. When you give the version, plan checks it as deploy does.
+
+```sh
+notation plan --stage prod --credential app.privateKey=APP_PRIVATE_KEY
+```
+
+The plan shows the passed value as a rotate of the credential, and the update of each resource that takes it. The last line is the deploy command, with the version of each credential that `--credential` names:
+
+```
+To deploy this plan:
+  notation deploy --stage prod --credential app.privateKey@7b1e52c0=APP_PRIVATE_KEY
+```
+
 ## JSON output
 
 `--json` writes the complete plan to stdout. Build output and diagnostics move to stderr.
@@ -100,4 +140,4 @@ The last line is the deploy command, with the instance hash of each resource tha
 notation plan --stage prod --json > plan.json
 ```
 
-Each node has `id`, `type`, `decision`, `params` and `dependsOn`. A node with the decision `replace` or `drift-replace` has `replaceOrder`, `"create-first"` or `"delete-first"`. A retired resource is a node with the decision `delete-retired`. It has the ID of the resource that replaced it, `retiredIndex`, its position in the list of retired instances of that resource, its own `params` and `dependsOn`, and `retiredAt`, the time when the replace started. The ID and `retiredIndex` together name the instance. A node of a resource in code that has a state record has `instanceHash`, the hash that `--replace` takes. A replace that `--replace` asked for has `{ "requested": true, "known": true }` in its `replaceFields`.
+Each node has `id`, `type`, `decision`, `params` and `dependsOn`. A node with the decision `replace` or `drift-replace` has `replaceOrder`, `"create-first"` or `"delete-first"`. A retired resource is a node with the decision `delete-retired`. It has the ID of the resource that replaced it, `retiredIndex`, its position in the list of retired instances of that resource, its own `params` and `dependsOn`, and `retiredAt`, the time when the replace started. The ID and `retiredIndex` together name the instance. A node of a resource in code that has a state record has `instanceHash`, the hash that `--replace` takes. A replace that `--replace` asked for has `{ "requested": true, "known": true }` in its `replaceFields`. A node of a resource with a state record has `credentialVersions`, the version of each of its credentials as `--credential` takes it, such as `{ "privateKey": "7b1e52c0" }`.
