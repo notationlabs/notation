@@ -12,6 +12,8 @@ export type ResourceCollection = {
   // Set once evaluation has ended. Contributions to a resource made in this
   // collection are rejected from then on.
   closed: boolean;
+  // Set once the `onEvaluationEnd` callbacks have started to run.
+  evaluationEnded: boolean;
   endOfEvaluation: Array<() => unknown | Promise<unknown>>;
   // Checks of config by async validators, started when resources were
   // declared. Collection fails with the first that fails.
@@ -75,6 +77,7 @@ export async function collectResourceGraph(
   const collection: ResourceCollection = {
     graph: { resourceGroups: [], resources: [] },
     closed: false,
+    evaluationEnded: false,
     endOfEvaluation: [],
     pendingValidations: [],
     declarationChecks: opts.declarationChecks ?? true,
@@ -85,6 +88,7 @@ export async function collectResourceGraph(
   activeCollection = collection;
   try {
     await evaluate();
+    collection.evaluationEnded = true;
     // A callback can register another callback, which joins the end of the
     // queue.
     while (collection.endOfEvaluation.length > 0) {
@@ -137,4 +141,13 @@ export function onEvaluationEnd(
     );
   }
   activeCollection.endOfEvaluation.push(callback);
+}
+
+/**
+ * Whether the active collection has started to run its `onEvaluationEnd`
+ * callbacks. Code that must run while the infra modules load checks it.
+ * Returns false when no collection is active.
+ */
+export function evaluationEnded(): boolean {
+  return activeCollection?.evaluationEnded ?? false;
 }

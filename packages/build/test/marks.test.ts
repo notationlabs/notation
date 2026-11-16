@@ -73,6 +73,30 @@ describe("parseMark", () => {
     );
   });
 
+  it("reads the entryOption of a declaration mark", () => {
+    expect(
+      parseMark(
+        "* @declaration runtime: entrypoint; entryOption: entrypoint; entry: default ",
+        f,
+      ),
+    ).toEqual({
+      kind: "declaration",
+      shared: [],
+      runtime: ["entrypoint"],
+      keys: [],
+      entry: "default",
+      entryOption: "entrypoint",
+    });
+  });
+
+  it("fails for an entryOption clause with no entry clause", () => {
+    expect(() =>
+      parseMark("* @declaration entryOption: entrypoint ", f),
+    ).toThrow(
+      "f: the @declaration mark has an entryOption clause but no entry clause",
+    );
+  });
+
   it("reads a resource mark", () => {
     expect(parseMark("* @resource ", f)).toEqual({ kind: "resource" });
   });
@@ -126,6 +150,19 @@ describe("Marks", () => {
       kind: "resource",
     });
     expect(marks.exportMark(at("dist/chunk.js"), "o")).toBeUndefined();
+  });
+
+  it("records the name of a default-exported class, and *default* for an anonymous one", () => {
+    const marks = virtualMarks({
+      "named.ts": "export default class Github {}",
+      "anonymous.ts": "export default class {}",
+    });
+    expect(marks.table(at("named.ts"))!.exports.get("default")).toEqual({
+      local: "Github",
+    });
+    expect(marks.table(at("anonymous.ts"))!.exports.get("default")).toEqual({
+      local: "*default*",
+    });
   });
 
   it("stops at an export cycle", () => {

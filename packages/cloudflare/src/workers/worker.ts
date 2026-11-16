@@ -2,6 +2,8 @@ import fs from "node:fs";
 import { readEntryExports } from "@notation/build";
 import { filePaths, fromProjectRoot, toProjectRoot } from "@notation/core";
 import {
+  captureCallSiteLazily,
+  evaluationEnded,
   getDeclaredIn,
   isOutputRef,
   onEvaluationEnd,
@@ -19,7 +21,12 @@ import {
   workerNames,
   workerResourceId,
 } from "src/id";
-import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
+import type {
+  Bindings,
+  DurableObjectDeclaration,
+  EntrypointType,
+  Worker,
+} from "./declaration";
 import {
   describeNamespace,
   registeredNamespace,
@@ -32,7 +39,11 @@ import { isJsonBinding } from "./json";
 // which workerd only provides under this flag.
 const NODEJS_COMPAT = "nodejs_compat";
 
-export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
+export type WorkerDeclarationConfig<
+  Id extends string,
+  B extends Bindings,
+  E,
+> = {
   /**
    * Keys the Worker in state. Deploy names the Worker in Cloudflare
    * `<app>--<stage>--<id>-<instance>` when it creates it, with 8 random hex
@@ -53,12 +64,26 @@ export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
   compatibilityFlags?: string[];
   /** Serves the Worker on its workers.dev URL. Defaults to `true`, as in wrangler. */
   url?: boolean;
+  /**
+   * The class that the module exports as its default, such as
+   * `class Api extends WorkerEntrypoint`. A Worker that binds this Worker
+   * gets `Service<Api>` in `env`, so its RPC calls are typed. The class
+   * must be declared in the module, before `$worker`. Deploy doesn't read
+   * the value.
+   *
+   * `worker()` takes `entrypointType<typeof Api>()` here, for the class that
+   * its code file or bundle entry exports as its default. The build doesn't
+   * check that the entry exports the class.
+   */
+  entrypoint?: E;
 };
 
+/** The options of `worker()`: the options of `$worker`, and `code`. */
 export type WorkerConfig<
   Id extends string,
   B extends Bindings,
-> = WorkerDeclarationConfig<Id, B> & {
+  E,
+> = WorkerDeclarationConfig<Id, B, EntrypointType<E>> & {
   /**
    * A prebuilt JavaScript module, uploaded as-is, or a bundle from `bundle()`
    * with `platform: "workerd"`. File paths are relative to the project root.
@@ -238,7 +263,10 @@ type WorkerSource = {
 
 type Entry = WorkerSource & {
   id: string;
+  /** The Worker's own bindings and the ones from `addBindings()`. */
   bindings: () => Bindings;
+  /** The bindings from `addBindings()`, in the order of the calls. */
+  added: AddedBindings[];
   /** `chain` lists the Workers being built whose bindings led to this one. */
   build: (chain?: Entry[]) => WorkerGroup;
   /**
@@ -247,6 +275,12 @@ type Entry = WorkerSource & {
    * the Worker that binds it.
    */
   whenBuilt: (callback: (group: WorkerGroup) => void) => void;
+};
+
+type AddedBindings = {
+  bindings: Bindings;
+  /** The location of the code that called `addBindings()`. */
+  caller: () => string;
 };
 
 const workerRegistration = Symbol.for("@notation/cloudflare/WorkerDeclaration");
@@ -265,14 +299,16 @@ const declaredWorkers = perCollection(
  * Declares a Cloudflare Worker. The module's default export is the handler.
  * `bindings` is called after all infra modules have loaded, so it can refer
  * to a Worker whose module imports this one.
- * @declaration shared: id, bindings; keys: bindings; entry: default; platform: workerd
+ * @declaration shared: id, bindings; runtime: entrypoint; entryOption: entrypoint; keys: bindings; entry: default; platform: workerd
  */
-export function $worker<const Id extends string, B extends Bindings = {}>(
-  config: WorkerDeclarationConfig<Id, B>,
-): Worker<B> {
+export function $worker<
+  const Id extends string,
+  B extends Bindings = {},
+  E = undefined,
+>(config: WorkerDeclarationConfig<Id, B, E>): Worker<B, E> {
   assertWorkerId("$worker", config.id);
   assertCompatibilityDate(`$worker({ id: "${config.id}" })`, config);
-  const declaration = { id: config.id } as unknown as Worker<B>;
+  const declaration = { id: config.id } as unknown as Worker<B, E>;
   registerWorker(config, {
     declaration,
     describe: () => {
@@ -304,19 +340,22 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
 
 /**
  * Declares a Cloudflare Worker whose code is a prebuilt file or a bundle
- * from `bundle()`. It takes the options of `$worker`,
- * and binds the same values. It hosts a Durable Object namespace that it
- * binds when the file or bundle's entry exports the namespace's class by name.
+ * from `bundle()`. It takes the options of `$worker`, and binds the same
+ * values. Its `entrypoint` takes `entrypointType()`, as infra code can't load
+ * the class. It hosts a Durable Object namespace that it binds when the file
+ * or bundle's entry exports the namespace's class by name.
  * @resource
  */
-export function worker<const Id extends string, B extends Bindings = {}>(
-  config: WorkerConfig<Id, B>,
-): Worker<B> {
+export function worker<
+  const Id extends string,
+  B extends Bindings = {},
+  E = undefined,
+>(config: WorkerConfig<Id, B, E>): Worker<B, E> {
   assertWorkerId("worker()", config.id);
   const label = `worker({ id: "${config.id}" })`;
   assertCompatibilityDate(label, config);
   const { code } = config;
-  const declaration = { id: config.id } as unknown as Worker<B>;
+  const declaration = { id: config.id } as unknown as Worker<B, E>;
   if (!isBundle(code)) {
     if (code?.type !== "file" || typeof code.path !== "string" || !code.path) {
       throw new Error(
@@ -387,7 +426,7 @@ const noModuleError = (id: string) =>
  * it.
  */
 function registerWorker(
-  config: WorkerDeclarationConfig<string, Bindings>,
+  config: WorkerDeclarationConfig<string, Bindings, unknown>,
   source: WorkerSource,
 ) {
   let bindings: Bindings | undefined;
@@ -397,8 +436,26 @@ function registerWorker(
   const entry: Entry = {
     ...source,
     id: config.id,
-    // Called once, after all infra modules have loaded.
-    bindings: () => (bindings ??= config.bindings?.() ?? {}),
+    // Called once, after all infra modules have loaded. A name in the
+    // Worker's own bindings is checked here, not in addBindings(), as
+    // `config.bindings` is only called then.
+    bindings: () => {
+      if (bindings) return bindings;
+      const own = config.bindings?.() ?? {};
+      bindings = { ...own };
+      for (const added of entry.added) {
+        for (const [name, value] of Object.entries(added.bindings)) {
+          if (Object.hasOwn(own, name)) {
+            throw new Error(
+              `addBindings() at ${added.caller()} binds ${name} on ${entry.describe()}, which already binds ${name} in its bindings. Give one of the bindings another name.`,
+            );
+          }
+          bindings[name] = value;
+        }
+      }
+      return bindings;
+    },
+    added: [],
     // A Worker that is already in `chain` means the bindings form a cycle.
     build: (chain = []) => {
       if (group) return group;
@@ -487,6 +544,59 @@ function registerWorker(
     workers.push(entry);
     onEvaluationEnd(() => entry.build());
   }
+}
+
+/**
+ * Adds bindings to a Worker from other infra code, such as a library that
+ * adds a feature to a Worker that it didn't declare. The values are the
+ * ones that `bindings` accepts, and the Worker resolves them together with
+ * its own bindings. `WorkerEnv` doesn't include them in its type.
+ *
+ * Call it while the infra modules load, from an infra module. It fails from
+ * an `onEvaluationEnd` callback, as the Workers read their bindings once the
+ * modules have loaded. A call in the module of a `$worker` fails the build,
+ * as the infra build only keeps the declaration of such a module.
+ * @resource
+ */
+export function addBindings(
+  worker: Worker<any>,
+  bindings: Bindings,
+): void {
+  const caller = captureCallSiteLazily(addBindings, { skipLibraryFrames: true });
+  const at = () => caller() ?? "an unknown location";
+  const entry = registeredWorker(worker);
+  if (!entry) {
+    throw new Error(
+      `addBindings() at ${at()} takes a Worker from $worker or worker() as its first argument.`,
+    );
+  }
+  const workers = declaredWorkers();
+  if (!workers) {
+    throw new Error(
+      `addBindings() at ${at()} was called for ${entry.describe()} while no resource graph is being collected. Call it from an infra module, while the infra modules load.`,
+    );
+  }
+  if (!workers.includes(entry)) {
+    throw new Error(
+      `addBindings() at ${at()} was called for ${entry.describe()}, which was declared in another resource graph. Pass a Worker that is declared in the resource graph being collected.`,
+    );
+  }
+  if (evaluationEnded()) {
+    throw new Error(
+      `addBindings() was called for ${entry.describe()} from an onEvaluationEnd callback, at ${at()}. Bindings are read once the infra modules have loaded, so addBindings() must be called while they load, such as in the function that declares what it binds.`,
+    );
+  }
+  for (const name of Object.keys(bindings)) {
+    const earlier = entry.added.find((added) =>
+      Object.hasOwn(added.bindings, name),
+    );
+    if (earlier) {
+      throw new Error(
+        `addBindings() at ${at()} binds ${name} on ${entry.describe()}, which addBindings() already bound at ${earlier.caller()}. Give one of the bindings another name.`,
+      );
+    }
+  }
+  entry.added.push({ bindings: { ...bindings }, caller: at });
 }
 
 // Workers are built from onEvaluationEnd, when a collection is always

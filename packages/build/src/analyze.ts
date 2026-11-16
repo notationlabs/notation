@@ -1,4 +1,6 @@
+import path from "node:path";
 import {
+  declaredBy,
   freeReferences,
   isFunction,
   location,
@@ -90,6 +92,8 @@ export function analyzeModule(
     );
   }
 
+  if (declarations[0]) checkEntryOption(declarations[0], table, fail);
+
   return {
     table,
     references,
@@ -97,6 +101,76 @@ export function analyzeModule(
     declaration: declarations[0],
     resourceCall,
   };
+}
+
+// The check is static, so it doesn't follow imports or re-exports. The value
+// must be declared in the module and exported from it as the entry.
+function checkEntryOption(
+  declaration: Declaration,
+  table: ModuleTable,
+  fail: (node: Node, message: string) => never,
+) {
+  const { entryOption: option, entry } = declaration.mark;
+  const property = option && declaration.properties.get(option);
+  if (!option || !entry || !property) return;
+  const file = path.basename(table.module.file);
+  const asEntry = entry === "default" ? "its default" : `\`${entry}\``;
+  const target = table.exports.get(entry);
+  if (target && !("local" in target)) {
+    return fail(
+      property.value,
+      `${option} must name a class that ${file} declares, but ${file} re-exports ${asEntry} from ${target.source}. Declare the class in ${file} and export it as ${asEntry}.`,
+    );
+  }
+  const exported =
+    target && target.local !== "*default*" ? target.local : undefined;
+  const value = unwrap(property.value);
+  const name =
+    !property.method && value.type === "Identifier"
+      ? (value.name as string)
+      : undefined;
+  const imported = name !== undefined && table.imports.get(name);
+  if (name !== undefined && name === exported && !imported) {
+    // TypeScript reports TS2449 for this, but the build may run without a
+    // type check, and the runtime bundle would read the class in its
+    // temporal dead zone.
+    const holder = table.module.body.find((statement) =>
+      declaredBy(statement).includes(name),
+    );
+    if (holder && holder.start > declaration.statement.start) {
+      return fail(
+        value,
+        `${option} is ${name}, which ${file} declares after ${declaration.name}. Declare the class before ${declaration.name}.`,
+      );
+    }
+    return;
+  }
+  if (imported && (!exported || exported === name)) {
+    return fail(
+      value,
+      `${option} is ${name}, which ${file} imports from ${imported.source}. Declare it in ${file} and export it as ${asEntry}.`,
+    );
+  }
+  const hint =
+    exported && declaresClass(table.module.body, exported)
+      ? `. Pass ${option}: ${exported}`
+      : "";
+  return fail(
+    property.value,
+    `${option} must name the class that ${file} declares and exports as ${asEntry}${hint}.`,
+  );
+}
+
+// Whether a top-level statement declares `name` as a class.
+function declaresClass(body: Node[], name: string): boolean {
+  return body.some((statement) => {
+    const node =
+      statement.type === "ExportNamedDeclaration" ||
+      statement.type === "ExportDefaultDeclaration"
+        ? statement.declaration
+        : statement;
+    return node?.type === "ClassDeclaration" && node.id?.name === name;
+  });
 }
 
 function markOf(

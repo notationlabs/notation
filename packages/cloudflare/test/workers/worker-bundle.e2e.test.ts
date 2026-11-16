@@ -7,7 +7,9 @@ describeE2e("worker()", () => {
   // A library in node_modules generates a router Worker from a route table.
   // The router hosts the rooms namespace, whose class the template exports.
   // It binds the counters namespace on the api Worker, and the api Worker
-  // binds the router as a service.
+  // binds the router as a service. The library also declares a channel
+  // Worker with a WorkerEntrypoint class, and adds it to the router with
+  // addBindings(), so the router calls it over RPC.
   function writeProject(routes: Record<string, string>) {
     project.write(
       "node_modules/acme-router/package.json",
@@ -22,7 +24,11 @@ describeE2e("worker()", () => {
       `
       import { fileURLToPath } from "node:url";
       import { bundle } from "@notation/build/resources";
-      import { worker } from "@notation/cloudflare/workers";
+      import {
+        addBindings,
+        entrypointType,
+        worker,
+      } from "@notation/cloudflare/workers";
 
       export function router({ id, routes, bindings }) {
         const code = bundle({
@@ -34,6 +40,36 @@ describeE2e("worker()", () => {
           },
         });
         return worker({ id, code, compatibilityDate: "2026-10-12", bindings });
+      }
+
+      export function channel({ id, into }) {
+        const code = bundle({
+          id,
+          platform: "workerd",
+          entry: fileURLToPath(new URL("./channel.js", import.meta.url)),
+        });
+        const channel = worker({
+          id,
+          code,
+          compatibilityDate: "2026-10-12",
+          bindings: () => ({ NAME: id }),
+          entrypoint: entrypointType(),
+          url: false,
+        });
+        addBindings(into, { CHANNEL: channel });
+        return channel;
+      }
+      `,
+    );
+    project.write(
+      "node_modules/acme-router/channel.js",
+      `
+      import { WorkerEntrypoint } from "cloudflare:workers";
+
+      export default class Channel extends WorkerEntrypoint {
+        async receive(body) {
+          return { from: this.env.NAME, length: body.length };
+        }
       }
       `,
     );
@@ -56,6 +92,9 @@ describeE2e("worker()", () => {
           const { pathname } = new URL(request.url);
           if (pathname === "/count") {
             return new Response(String(await env.COUNTERS.getByName("one").increment()));
+          }
+          if (pathname === "/channel") {
+            return Response.json(await env.CHANNEL.receive("hello"));
           }
           if (pathname === "/room") {
             return new Response(String(await env.ROOMS.getByName("lobby").join()));
@@ -99,7 +138,7 @@ describeE2e("worker()", () => {
     project.write(
       "infra/router.ts",
       `
-      import { router as declareRouter } from "acme-router";
+      import { channel, router as declareRouter } from "acme-router";
       import { counters } from "../runtime/counter";
       import { rooms } from "../runtime/room";
 
@@ -108,6 +147,8 @@ describeE2e("worker()", () => {
         routes: ${JSON.stringify(routes)},
         bindings: () => ({ COUNTERS: counters, ROOMS: rooms }),
       });
+
+      channel({ id: "channel", into: router });
       `,
     );
     project.write(
@@ -136,7 +177,7 @@ describeE2e("worker()", () => {
 
   let names: Record<"api" | "router", string>;
 
-  it("deploys a Worker whose code a library generates, which hosts a namespace and binds one on another Worker", async () => {
+  it("deploys a Worker whose code a library generates, which hosts a namespace, binds one on another Worker, and calls a channel Worker over RPC", async () => {
     writeProject({ "/": "home" });
     await project.notation("deploy");
     const all = await project.workerNames();
@@ -155,6 +196,12 @@ describeE2e("worker()", () => {
     expect(await poll(`${project.url(names.router)}/room`)).toMatchObject({
       ok: true,
       body: "1",
+    });
+    const called = await poll(`${project.url(names.router)}/channel`);
+    expect(called.ok).toBe(true);
+    expect(JSON.parse(called.body ?? "")).toEqual({
+      from: "channel",
+      length: 5,
     });
     // The api Worker calls the router through its service binding.
     expect(await poll(`${project.url(names.api)}/`)).toMatchObject({

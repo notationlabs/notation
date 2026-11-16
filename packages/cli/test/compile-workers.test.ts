@@ -65,7 +65,7 @@ function writeCloudflarePackage() {
       `  (globalThis.namespaces ??= []).push(namespace);`,
       `  return namespace;`,
       `}`,
-      `/** @declaration shared: id, bindings; keys: bindings; entry: default; platform: workerd */`,
+      `/** @declaration shared: id, bindings; runtime: entrypoint; entryOption: entrypoint; keys: bindings; entry: default; platform: workerd */`,
       `export function $worker(config) {`,
       `  const worker = { kind: "INFRA_WORKER", id: config.id, bindings: config.bindings, check: () => checkExports(worker, config) };`,
       `  (globalThis.workers ??= []).push(worker);`,
@@ -80,6 +80,10 @@ function writeCloudflarePackage() {
       `      return \`\${record.path} doesn't export \${namespace.className}, the class of the Durable Object namespace \${namespace.id}. Cloudflare finds the class by its export name.\${star}\`;`,
       `    });`,
       `}`,
+      `/** @resource */`,
+      `export function addBindings(worker, bindings) {}`,
+      `/** @resource */`,
+      `export function worker(config) { return { id: config.id }; }`,
     ].join("\n"),
   );
   write(
@@ -87,6 +91,10 @@ function writeCloudflarePackage() {
     [
       `export function $durableObject(config) { return { id: config.id }; }`,
       `export function $worker(config) { return { id: config.id, bindingNames: Object.keys(config.bindings()) }; }`,
+      `/** @resource */`,
+      `export function addBindings() { throw new Error("addBindings() declares infrastructure"); }`,
+      `/** @resource */`,
+      `export function worker() { throw new Error("worker() declares infrastructure"); }`,
     ].join("\n"),
   );
 }
@@ -265,6 +273,112 @@ it("builds a worker that exports a type without the type keyword", async () => {
   await build();
   expect(recordedExports()).toEqual(["Counter"]);
   expect(read(apiBundle)).not.toContain("Local");
+});
+
+describe("a Worker with an entrypoint class", () => {
+  const githubModule = (entrypoint = "Github") => `
+import { WorkerEntrypoint } from "cloudflare:workers";
+import { $worker } from "@notation/cloudflare/workers";
+
+export type Input = { body: string };
+
+export default class Github extends WorkerEntrypoint {
+  async receive(input) {
+    return { from: "GITHUB_CODE", length: input.body.length };
+  }
+}
+
+export class Admin extends WorkerEntrypoint {}
+
+export const github = $worker({
+  id: "github",
+  entrypoint: ${entrypoint},
+});
+`;
+
+  const routerModule = `
+import { $worker } from "@notation/cloudflare/workers";
+import { github, type Input } from "./github";
+
+export const router = $worker({
+  id: "router",
+  bindings: () => ({ GITHUB: github }),
+});
+
+export default {
+  async fetch(request, env) {
+    const input: Input = { body: await request.text() };
+    return Response.json(await env.GITHUB.receive(input));
+  },
+};
+`;
+
+  function writeRpcProject(entrypoint?: string) {
+    writeCloudflarePackage();
+    write("infra/main.ts", `export {};`);
+    write("runtime/github.ts", githubModule(entrypoint));
+    write("runtime/router.ts", routerModule);
+  }
+
+  it("leaves the bound Worker's code out of the runtime bundle of the Worker that binds it", async () => {
+    writeRpcProject();
+    await build();
+
+    const router = read("dist/runtime/router/index.mjs");
+    expect(router).not.toContain("GITHUB_CODE");
+    expect(router).not.toContain("WorkerEntrypoint");
+    expect(router).toContain("GITHUB");
+    expect(read("dist/runtime/github/index.mjs")).toContain("GITHUB_CODE");
+  });
+
+  it("leaves the class and cloudflare:workers out of the infra bundle", async () => {
+    writeRpcProject();
+    await build();
+
+    const infraFiles = readdirSync(path.join(root, "dist"), { recursive: true })
+      .map(String)
+      .filter((file) => file.endsWith(".mjs") && !file.startsWith("runtime"));
+    for (const file of infraFiles) {
+      const code = read(path.join("dist", file));
+      expect(code).not.toContain("cloudflare:workers");
+      expect(code).not.toContain("GITHUB_CODE");
+    }
+  });
+
+  it("fails the build for an entrypoint that isn't the default export", async () => {
+    writeRpcProject("Admin");
+    await expect(build()).rejects.toThrow(
+      "entrypoint must name the class that github.ts declares and exports as its default. Pass entrypoint: Github.",
+    );
+  });
+
+  it("fails the build for a call to addBindings() in the module of a $worker", async () => {
+    writeRpcProject();
+    write(
+      "runtime/router.ts",
+      routerModule.replace(
+        `import { $worker } from "@notation/cloudflare/workers";`,
+        `import { $worker, addBindings } from "@notation/cloudflare/workers";`,
+      ) + `\naddBindings(github, { ADMIN: github });\n`,
+    );
+    await expect(build()).rejects.toThrow(
+      "runtime/router.ts calls addBindings at its top level, and it holds a declaration, so it can't be an infra module. Move the call to addBindings to an infra module.",
+    );
+  });
+
+  it("fails the build for a call to worker() in the module of a $worker", async () => {
+    writeRpcProject();
+    write(
+      "runtime/router.ts",
+      routerModule.replace(
+        `import { $worker } from "@notation/cloudflare/workers";`,
+        `import { $worker, worker } from "@notation/cloudflare/workers";`,
+      ) + `\nexport const admin = worker({ id: "admin" });\n`,
+    );
+    await expect(build()).rejects.toThrow(
+      "runtime/router.ts calls worker at its top level, and it holds a declaration, so it can't be an infra module. Move the call to worker to an infra module.",
+    );
+  });
 });
 
 it("defines NODE_ENV and imports a bare Node built-in as its node: module, over an installed polyfill", async () => {
