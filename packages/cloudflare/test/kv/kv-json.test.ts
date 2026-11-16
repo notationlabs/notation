@@ -372,6 +372,7 @@ describe("kvJson()", () => {
     const dates = {} as StandardSchemaV1<{ at: Date }, { at: Date }>;
     const declare = (namespace: InstanceType<typeof KVNamespace>) => {
       kvJson({ id: "limits", namespace, key: "limits", schema: limits });
+      kvJson({ id: "any", namespace, key: "any", schema: v.unknown() });
       // @ts-expect-error A Date isn't JSON.
       kvJson({ id: "dates", namespace, key: "dates", schema: dates });
     };

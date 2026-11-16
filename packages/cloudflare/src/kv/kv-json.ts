@@ -28,14 +28,18 @@ type JsonInputSchema = StandardSchemaV1<unknown, unknown>;
 type Input<S extends JsonInputSchema> = StandardSchemaV1.InferInput<S>;
 
 /**
- * `S` when the input type of the schema `S` is JSON, and an error otherwise.
- * It uses `JsonValue` rather than `Json`, so an input typed as an interface
- * passes. Its output type can be any type.
+ * `S` when the input type of the schema `S` is JSON or `unknown`, and an
+ * error otherwise. It uses `JsonValue` rather than `Json`, so an input typed as
+ * an interface passes. `JsonValue<unknown>` is `never`, so `unknown` is let
+ * through first; the class's validator still checks what deploy writes. Its
+ * output type can be any type.
  */
 type JsonSchemaCheck<S extends JsonInputSchema> =
-  Input<S> extends JsonValue<Input<S>>
+  unknown extends Input<S>
     ? S
-    : S & { "~error": "The input type of the schema must be JSON" };
+    : Input<S> extends JsonValue<Input<S>>
+      ? S
+      : S & { "~error": "The input type of the schema must be JSON" };
 
 export type KVJsonConfig<S extends JsonInputSchema = JsonInputSchema> = {
   /**

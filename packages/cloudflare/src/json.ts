@@ -71,6 +71,11 @@ function collectIssues(value: unknown, path: string[], issues: Issue[]): void {
   }
   if (value === null) return;
   if (Array.isArray(value)) {
+    if (Object.keys(value).length > value.length) {
+      fail(
+        "An array with keys that aren't indexes isn't JSON. JSON.stringify drops them",
+      );
+    }
     for (let index = 0; index < value.length; index++) {
       const entryPath = [...path, String(index)];
       if (!(index in value)) {

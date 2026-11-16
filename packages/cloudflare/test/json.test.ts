@@ -52,6 +52,12 @@ describe("jsonSchema", () => {
     ]);
   });
 
+  it("refuses an array with keys that aren't indexes", () => {
+    expect(issuesOf({ a: Object.assign([1], { tag: "x" }) })).toEqual([
+      "a: An array with keys that aren't indexes isn't JSON. JSON.stringify drops them",
+    ]);
+  });
+
   it("refuses an object that isn't plain, such as a Date with toJSON", () => {
     class Point {
       x = 1;

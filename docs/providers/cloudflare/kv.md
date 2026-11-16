@@ -156,7 +156,7 @@ Deploy also refuses a value that `JSON.stringify` would change, such as `NaN`, a
 
 ### Drift
 
-Plan reads the key and compares the parsed document with the merged document. When the key holds text that is not JSON, or JSON that deploy would refuse, such as `[1e999]`, plan reads it as a JSON string. That string differs from the document, so plan shows an update and deploy writes the key again.
+Plan reads the key and compares the parsed document with the merged document. When the key holds text that is not JSON, or JSON that deploy would refuse, such as `[1e999]`, plan reads it as a JSON string. Text too long to hold as a JSON string within 25 MiB reads as a short string that gives its length. That string differs from the document, so plan shows an update and deploy writes the key again.
 
 ## Reading the document in a Worker
 
