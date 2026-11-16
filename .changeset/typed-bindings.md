@@ -10,3 +10,4 @@
 - `addBindings(worker, bindings)` adds bindings to a Worker from `$worker` or `worker()` from other infra code. The Worker resolves them with its own bindings. `WorkerEnv` doesn't include them. It fails for a name that is bound twice, and when it is called from an `onEvaluationEnd` callback.
 - A `@declaration` mark takes an `entryOption` clause, which names the option whose value must be the module's `entry` export.
 - `@notation/resource` exports `evaluationEnded()`, which is `true` once the collection has started to run its `onEvaluationEnd` callbacks, and `captureCallSiteLazily()`.
+- The build reads the name of a default-exported declaration, such as `export default function greeting() {}`. The infra build of a declaration module keeps such a function or class when the declaration uses it, where it dropped it before. The check for type-only exports counts the name as a value.

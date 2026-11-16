@@ -249,6 +249,20 @@ describe("stripForInfra", () => {
     expect(recordedExports(code)).toEqual([]);
   });
 
+  it("keeps a default-exported function that the declaration's bindings call", () => {
+    const source = `
+      /** @declaration shared: id, bindings; entry: default; platform: workerd */
+      function $worker(config) { return config; }
+      export default function greeting() { return "hello"; }
+      export const worker = $worker({ id: "api", bindings: () => ({ GREETING: greeting() }) });
+    `;
+    const { code } = infra(source);
+    expect(code).toContain(
+      `export default function greeting() { return "hello"; }`,
+    );
+    expect(recordedExports(code)).toEqual([]);
+  });
+
   it('gives a class expression in a runtime-only option the name ""', () => {
     const source = `
       /** @declaration runtime: class */
