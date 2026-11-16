@@ -28,6 +28,25 @@ const held = new Map<string, unknown>();
 // this process. An operation that is replayed from the journal receives none.
 const given = new WeakMap<BaseResource, Set<string>>();
 
+// The error that an operation of each resource throws when it reveals a
+// credential that deploy cannot get, by the credential's resource and name.
+const unobtainable = new WeakMap<BaseResource, Map<string, Error>>();
+
+/**
+ * Sets the error that `revealCredentials` throws when an operation of
+ * `taker` receives the credential `name` of `resource` and deploy holds no
+ * value for it.
+ */
+export function deferUnobtainable(
+  taker: BaseResource,
+  resource: string,
+  name: string,
+  error: Error,
+): void {
+  if (!unobtainable.has(taker)) unobtainable.set(taker, new Map());
+  unobtainable.get(taker)!.set(`${resource}.${name}`, error);
+}
+
 /**
  * Keeps a credential's value in memory, and returns the version that names
  * it: `version`, or a new one. Every string in the value is removed from
@@ -183,8 +202,9 @@ export async function holdCreated(
 
 /**
  * Copies a value, with the held value in place of each credential marker.
- * Throws for a marker whose value is not held. `taker` is the resource whose
- * operation receives the copy.
+ * Throws for a marker whose value is not held: the error that
+ * `deferUnobtainable` set, if any. `taker` is the resource whose operation
+ * receives the copy.
  *
  * With `recorded`, a marker that `recorded` holds at the same path is
  * `undefined` in the copy: the record of `taker` shows that it already has
@@ -198,8 +218,11 @@ export function revealCredentials<T>(
   return mapChangedCredentials(value, recorded, (marker) => {
     const { resource, name, version } = marker.$credential;
     if (!holdsCredential(version)) {
-      throw new Error(
-        `Deploy holds no value for the credential ${name} of ${resource}`,
+      throw (
+        unobtainable.get(taker)?.get(`${resource}.${name}`) ??
+        new Error(
+          `Deploy holds no value for the credential ${name} of ${resource}`,
+        )
       );
     }
     if (!given.has(taker)) given.set(taker, new Set());
@@ -271,6 +294,8 @@ function sameMarker(a: CredentialMarker, b: CredentialMarker): boolean {
  * received in this process. The credentials of the sources among
  * `resources` are left out: a source gives the same value for the same
  * version, so an operation replayed from the journal received that value.
+ * The credentials without `rotate` are left out too: the resource received
+ * their value when the operation first ran.
  */
 export function ungivenCredentials(
   taker: BaseResource,
@@ -280,6 +305,8 @@ export function ungivenCredentials(
   return markers.filter(({ $credential }) => {
     const producer = resources.find(({ id }) => id === $credential.resource);
     if (producer && isCredentialSource(producer)) return false;
+    // Deploy cannot give the value of a credential without `rotate` again.
+    if (producer && !producer.rotate?.[$credential.name]) return false;
     return !(given.get(taker)?.has($credential.version ?? "") ?? false);
   });
 }

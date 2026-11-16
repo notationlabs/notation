@@ -11,6 +11,7 @@ import {
   credentialConsumers,
   credentialsToMint,
   credentialVersion,
+  deferUnobtainable,
   holdCredential,
   holdsCredential,
   operationState,
@@ -147,7 +148,8 @@ export async function* mintNeededCredentials(
  *    the credential and that deploy has already reconciled is reconciled
  *    again, so that it is updated with the new value.
  *
- * Any other credential fails the deploy.
+ * Any other credential fails the operation that receives it, when the
+ * operation runs. See `deferUnobtainable`.
  *
  * Returns true when a credential was rotated, so `markers` name
  * a version that is no longer the current one.
@@ -174,18 +176,27 @@ export async function* obtainCredentials(
     }
     const version = credentialVersion(producer, name);
     if (!producer.rotate?.[name]) {
+      // The operation throws this error when it reveals the credential. An
+      // operation replayed from the journal reveals nothing, so a resumed
+      // deploy does not fail for a value that it no longer needs.
       const session = yield* openStateSession(base, opts, producer);
-      throw new UnobtainableCredentialError(
-        unobtainableCredential({
-          consumer,
-          producer,
-          name,
-          record: session.node,
-          version,
-          deploymentId: opts.state.deploymentId,
-        }),
-        opts.requested,
+      deferUnobtainable(
+        consumer,
+        id,
+        name,
+        new UnobtainableCredentialError(
+          unobtainableCredential({
+            consumer,
+            producer,
+            name,
+            record: session.node,
+            version,
+            deploymentId: opts.state.deploymentId,
+          }),
+          opts.requested,
+        ),
       );
+      continue;
     }
 
     rotated = true;

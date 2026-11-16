@@ -1,5 +1,6 @@
 import * as v from "valibot";
 import { resource, type BaseResource } from "@notation/resource";
+import { isCreatingRecord } from "@notation/state";
 import { clearSecretValues } from "@notation/utils";
 import { beforeEach, describe, expect, it } from "vitest";
 import { clearHeldCredentials } from "../src/credentials";
@@ -717,6 +718,28 @@ describe("a deploy that is resumed after a resource took a credential", () => {
       declare(types, { secrets: ["a", "b"] }),
     );
     expect(provider.calls).toEqual([]);
+    runtime.close();
+  });
+});
+
+describe("a deploy that is resumed after a resource took a credential without rotate", () => {
+  it("completes, as the replayed create does not need the value", async () => {
+    const provider = createProvider();
+    const types = defineResources(provider, { rotate: false });
+    const runtime = createRuntime({
+      crashAfterStep: "notation:deploy:secret%3Aa:create:remote:effect:0",
+    });
+    await expect(
+      runtime.deploy("first", declare(types, { secrets: ["a"] })),
+    ).rejects.toThrow("simulated process crash");
+
+    await runtime.nextProcess("first", declare(types, { secrets: ["a"] }));
+
+    expect(provider.calls).toEqual(["create token-0", "create a"]);
+    expect(provider.secrets.get("a")).toBe("token-value-1");
+    const record = await runtime.state.get("secret:a");
+    expect(record).toBeDefined();
+    expect(isCreatingRecord(record!)).toBe(false);
     runtime.close();
   });
 });
