@@ -186,11 +186,34 @@ const creatingDecisions = new Set<PlanNode["decision"]>([
   "drift-recreate",
 ]);
 
+type ValueFrom = { Source?: unknown } | undefined;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object";
+
 // A secret without a source has `ValueFrom: { Source: PROMPT_SOURCE }`. Plan
-// never asks for the value, so it says that deploy will.
+// never asks for the value, so it says that deploy will. For a Worker's
+// `Secrets`, an update flags only an entry that is new or whose `Source`
+// changed. The read leaves out a secret deleted from the Worker, so drift
+// shows it as new.
 function promptsForValue(node: PlanNode): boolean {
-  const valueFrom = node.params.ValueFrom as { Source?: unknown } | undefined;
-  return (
-    creatingDecisions.has(node.decision) && valueFrom?.Source === PROMPT_SOURCE
+  const secrets = node.params.Secrets as Record<string, ValueFrom> | undefined;
+  const prompted = Object.entries(secrets ?? {})
+    .filter(([, valueFrom]) => valueFrom?.Source === PROMPT_SOURCE)
+    .map(([name]) => name);
+  if (creatingDecisions.has(node.decision)) {
+    return (
+      (node.params.ValueFrom as ValueFrom)?.Source === PROMPT_SOURCE ||
+      prompted.length > 0
+    );
+  }
+  const added = node.diff?.added.Secrets;
+  const updated = node.diff?.updated.Secrets;
+  return prompted.some(
+    (name) =>
+      (isRecord(added) && name in added) ||
+      (isRecord(updated) &&
+        isRecord(updated[name]) &&
+        "Source" in updated[name]),
   );
 }

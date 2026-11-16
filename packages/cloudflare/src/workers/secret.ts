@@ -143,10 +143,10 @@ export const isWorkerSecret = (value: unknown): value is WorkerSecretGroup =>
 /**
  * Declares a secret that a Worker binds as a `secret_text` binding. In the
  * Worker, the binding is a string. Each Worker that binds it has its own
- * copy of the secret, which deploy writes with Cloudflare's secrets API for
- * the Worker. Deploy writes the value from `source`, or asks for it when
- * there is no source. Notation records where the value comes from, and
- * never the value.
+ * copy of the secret, which deploy sends in the upload of the Worker's code.
+ * Deploy reads the value from `source`. Without a source, deploy asks for
+ * the value if the Worker doesn't have the secret. Notation records where
+ * the value comes from, and never the value.
  * @resource
  */
 export function workerSecret(config: WorkerSecretConfig): WorkerSecretGroup {

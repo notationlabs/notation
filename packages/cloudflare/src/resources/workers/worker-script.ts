@@ -2,6 +2,7 @@ import * as v from "valibot";
 import crypto from "node:crypto";
 import * as nodeFs from "node:fs/promises";
 import path from "node:path";
+import { PROMPT_SOURCE } from "@notation/core";
 import { fromProjectRoot } from "@notation/core/paths";
 import {
   isUnknownAfterApply,
@@ -12,24 +13,29 @@ import {
   type ResourceDeletion,
 } from "@notation/resource";
 import type { fs } from "@notation/std/resources";
+import { getValue } from "@notation/std/sources";
 import { accountId, cloudflareCreate } from "src/api/client";
 import { matchesWorkerNames, workerNameRule } from "src/id";
 import {
   bindingSchema,
   deleteScript,
+  deleteScriptSecret,
   getScriptReferences,
   getScriptSettings,
   isNotFound,
-  isPlaceholderScript,
   isReferenced,
   listAccountNamespaces,
+  listScriptSecretNames,
+  latestDeployment,
   patchScriptExports,
   putScript,
   type AccountNamespace,
   type DurableObjectExport,
   type ScriptBinding,
   type ScriptUpload,
+  type SecretTextBinding,
 } from "src/api/workers";
+import { secretValueFromSchema, type SecretValueFrom } from "src/secrets/value";
 
 export type { DurableObjectExport };
 
@@ -84,11 +90,13 @@ type WorkerScriptParams = {
   CodeSha256: string;
   CompatibilityDate: string;
   CompatibilityFlags?: string[];
-  /**
-   * An upload keeps the Worker's secrets, which `WorkerSecret` sets. A
-   * binding here with the name of a secret replaces the secret.
-   */
   Bindings?: WorkerBinding[];
+  /**
+   * The `secret_text` bindings by name, with the source of each value. Each
+   * upload sends the values, except a prompted value that the Worker already
+   * has. An update deletes a secret that is no longer listed here.
+   */
+  Secrets?: Record<string, SecretValueFrom>;
   DurableObjectNamespaces?: HostedNamespace[];
   /**
    * The ids of hosted namespaces that set `protect: false`. A later plan
@@ -130,12 +138,36 @@ const READABLE_RETRY_MS = 250;
 // Cloudflare sometimes reports a Worker as not found for about a second
 // after the upload that created it. The reconciler reads the Worker straight
 // after create, and fails on not found, so create waits until it can read it.
-export async function waitUntilReadable(account: string, scriptName: string) {
+async function waitUntilReadable(account: string, scriptName: string) {
   const deadline = Date.now() + READABLE_WITHIN_MS;
   while (!(await getScriptSettings(account, scriptName))) {
     if (Date.now() >= deadline) {
       throw new Error(
         `Cloudflare accepted the upload of the Worker ${scriptName}, but still reported it as not found ${READABLE_WITHIN_MS / 1_000} seconds later`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, READABLE_RETRY_MS));
+  }
+}
+
+// Cloudflare's list of a Worker's secrets can lag behind the upload. The read
+// after the upload records only listed secrets, so an unlisted secret would
+// be lost from state and never deleted when it leaves config.
+async function waitUntilSecretsListed(
+  account: string,
+  scriptName: string,
+  secrets: SecretTextBinding[],
+) {
+  if (secrets.length === 0) return;
+  const deadline = Date.now() + READABLE_WITHIN_MS;
+  for (;;) {
+    const listed = await listScriptSecretNames(account, scriptName);
+    const missing = secrets.filter((secret) => !listed.has(secret.name));
+    if (missing.length === 0) return;
+    if (Date.now() >= deadline) {
+      const names = missing.map((secret) => secret.name).join(", ");
+      throw new Error(
+        `Cloudflare accepted the upload of the Worker ${scriptName}, but still left the secrets ${names} out of its list ${READABLE_WITHIN_MS / 1_000} seconds later`,
       );
     }
     await new Promise((resolve) => setTimeout(resolve, READABLE_RETRY_MS));
@@ -205,17 +237,13 @@ const workerScriptSchema = workerScript.defineSchema({
       `CLOUDFLARE_ACCOUNT_ID is ${desired}, but this Worker was deployed to the account ${previous}. A Worker can't move to another account, and replacing it would delete the objects of the Durable Object namespaces that it hosts. Set CLOUDFLARE_ACCOUNT_ID back to ${previous}. To deploy to the other account, first run \`notation destroy\` with the old account, or deploy to another stage.`,
     value: v.string(),
   },
-  // A Worker that binds a Worker secret takes the name of its
-  // `WorkerScriptPlaceholder`. A replace that creates first would collide
-  // with that name, but only an AccountId change replaces the Worker, and
-  // rejectReplace refuses it.
   ScriptName: {
     propertyType: "param",
     presence: "required",
     immutable: true,
     primaryKey: true,
     value: v.string(),
-    physicalName: { ...workerNameRule, suppliable: true },
+    physicalName: workerNameRule,
   },
   MainModule: {
     propertyType: "param",
@@ -249,6 +277,11 @@ const workerScriptSchema = workerScript.defineSchema({
     value: v.array(bindingSchema),
     collect: (items: unknown[]) => items.flat() as WorkerBinding[],
   },
+  Secrets: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.record(v.string(), secretValueFromSchema),
+  },
   DurableObjectNamespaces: {
     propertyType: "param",
     presence: "optional",
@@ -278,14 +311,8 @@ export const WorkerScript = workerScriptSchema
   .defineOperations({
     // An upload replaces a Worker with the same name, so check first. The
     // check is outside `cloudflareCreate`: if it throws, nothing was created.
-    // A Worker that `WorkerScriptPlaceholder` uploaded is replaced, and the
-    // upload removes its tag.
     create: async (params) => {
-      const existing = await getScriptSettings(
-        params.AccountId,
-        params.ScriptName,
-      );
-      if (existing && !isPlaceholderScript(existing)) {
+      if (await getScriptSettings(params.AccountId, params.ScriptName)) {
         throw new ResourceAlreadyExistsError(
           `A Worker named ${params.ScriptName} already exists in the Cloudflare account ${params.AccountId}`,
         );
@@ -294,13 +321,23 @@ export const WorkerScript = workerScriptSchema
       if (found.transfers.length > 0) {
         throw new Error(newHostError(params, found.transfers));
       }
+      const secrets = await secretBindings(params, false);
       await cloudflareCreate(async () => {
-        await upload(params, [], found, { tags: [] });
+        await upload(params, [], found, secrets);
         await waitUntilReadable(params.AccountId, params.ScriptName);
+        await waitUntilSecretsListed(
+          params.AccountId,
+          params.ScriptName,
+          secrets,
+        );
       })();
     },
 
-    read: async (key) => {
+    // Returns only the entries of `Secrets` that the Worker still has, so a
+    // secret deleted outside notation shows as drift and the update sends it
+    // again. Cloudflare never returns secret values, so a changed value is
+    // not detected.
+    read: async (key, _context, params) => {
       const settings = await getScriptSettings(key.AccountId, key.ScriptName);
       if (!settings) {
         throw new ResourceNotFoundError("Worker was not found");
@@ -312,15 +349,37 @@ export const WorkerScript = workerScriptSchema
         CompatibilityFlags: settings.compatibility_flags
           ? sortedFlags(settings.compatibility_flags)
           : undefined,
+        ...(params?.Secrets
+          ? { Secrets: await presentSecrets(key, params.Secrets) }
+          : {}),
       };
     },
 
     // An upload sets the whole Worker, so the patch is not used. The upload
     // compares the namespaces in state with the new ones, to rename, delete
-    // or move those that changed.
+    // or move those that changed. An upload keeps a secret that it leaves
+    // out, so a removed secret is deleted after the upload. A name that the
+    // upload binds another way is not deleted, as Cloudflare's delete might
+    // remove that binding too.
     update: async (_key, _patch, params, state) => {
+      await assertNoRollout(params);
       const previous = state.DurableObjectNamespaces ?? [];
-      await upload(params, previous, await findTransfers(params, previous));
+      const found = await findTransfers(params, previous);
+      const secrets = await secretBindings(params, true);
+      await upload(params, previous, found, secrets);
+      await waitUntilSecretsListed(
+        params.AccountId,
+        params.ScriptName,
+        secrets,
+      );
+      const bound = new Set([
+        ...Object.keys(params.Secrets ?? {}),
+        ...(params.Bindings ?? []).map((binding) => binding.name),
+      ]);
+      for (const name of Object.keys(state.Secrets ?? {})) {
+        if (bound.has(name)) continue;
+        await deleteScriptSecret(params.AccountId, params.ScriptName, name);
+      }
     },
 
     delete: async (key, _state, _context, deletion) => {
@@ -354,15 +413,71 @@ export function sortedFlags(flags: string[]): string[] {
 }
 
 /**
- * Uploads the Worker, and first moves the namespaces of `found` to it.
- * `rejectNamespaceLoss` fails a move in the deploy that renames or deletes
- * a namespace of the Worker, so the exports of a move have no such entries.
+ * Throws when the Worker is in a gradual rollout, because Cloudflare deploys
+ * an upload to all traffic and so ends the rollout. A version at 0% doesn't
+ * count, as it serves no traffic.
+ */
+async function assertNoRollout(params: WorkerScriptParams): Promise<void> {
+  const latest = await latestDeployment(params.AccountId, params.ScriptName);
+  const serving = (latest?.versions ?? []).filter(
+    (version) => version.percentage > 0,
+  );
+  if (serving.length < 2) return;
+  const split = serving
+    .map((version) => `${version.percentage}% on version ${version.version_id}`)
+    .join(", ");
+  throw new Error(
+    `The Worker ${params.ScriptName} is in a gradual rollout: ${split}. An upload would end the rollout. Finish or cancel it in Cloudflare, then deploy again.`,
+  );
+}
+
+/** The entries of `secrets` whose secret the Worker has. */
+async function presentSecrets(
+  key: { AccountId: string; ScriptName: string },
+  secrets: Record<string, SecretValueFrom>,
+): Promise<Record<string, SecretValueFrom>> {
+  const names = await listScriptSecretNames(key.AccountId, key.ScriptName);
+  return Object.fromEntries(
+    Object.entries(secrets).filter(([name]) => names.has(name)),
+  );
+}
+
+/**
+ * Reads the value of each secret in `Secrets` from its source. Skips a
+ * prompted secret that the Worker already has, so that a value given at an
+ * earlier prompt is kept.
+ */
+async function secretBindings(
+  params: WorkerScriptParams,
+  // False for the create of a new Worker, which has no secrets to keep.
+  exists: boolean,
+): Promise<SecretTextBinding[]> {
+  const entries = Object.entries(params.Secrets ?? {});
+  const kept =
+    exists &&
+    entries.some(([, valueFrom]) => valueFrom.Source === PROMPT_SOURCE)
+      ? await listScriptSecretNames(params.AccountId, params.ScriptName)
+      : new Set<string>();
+  const bindings: SecretTextBinding[] = [];
+  for (const [name, valueFrom] of entries) {
+    if (valueFrom.Source === PROMPT_SOURCE && kept.has(name)) continue;
+    const value = (await getValue(valueFrom.Secret)).unwrap();
+    bindings.push({ type: "secret_text", name, text: value });
+  }
+  return bindings;
+}
+
+/**
+ * Uploads the Worker with `secrets`, and first moves the namespaces of
+ * `found` to it. `rejectNamespaceLoss` fails a move in the deploy that
+ * renames or deletes a namespace of the Worker, so the exports of a move
+ * have no such entries.
  */
 async function upload(
   params: WorkerScriptParams,
   previous: HostedNamespace[],
   found: FoundTransfers,
-  options: Pick<ScriptUpload, "tags"> = {},
+  secrets: SecretTextBinding[],
 ): Promise<void> {
   const code = await readCode(params.CodeFilePath, params.CodeSha256);
   const hosted = params.DurableObjectNamespaces ?? [];
@@ -376,12 +491,11 @@ async function upload(
     code,
     compatibilityDate: params.CompatibilityDate,
     compatibilityFlags: params.CompatibilityFlags ?? [],
-    bindings: params.Bindings ?? [],
+    bindings: [...(params.Bindings ?? []), ...secrets],
     exports,
     containers: hosted
       .filter((namespace) => namespace.container)
       .map((namespace) => ({ class_name: namespace.className })),
-    ...options,
   };
   if (found.transfers.length > 0) {
     await transferNamespaces(params, upload, found.transfers, found.account);

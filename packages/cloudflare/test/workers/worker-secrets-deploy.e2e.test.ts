@@ -18,10 +18,9 @@ const SECRET_KEY = "NOTATION_E2E_ORDER_SECRET";
 describeE2e("$worker with a Worker secret, during deploy", () => {
   const project = useProject();
   const secret = `token-${crypto.randomBytes(8).toString("hex")}`;
-  const ciSecret = `ci-${crypto.randomBytes(8).toString("hex")}`;
 
   // The Worker answers `<version>:<TOKEN>`, or `<version>:missing` when it
-  // has no TOKEN. The placeholder answers 503.
+  // has no TOKEN.
   const writeWorker = (
     id: string,
     { version, bind }: { version: string; bind?: string },
@@ -101,7 +100,7 @@ describeE2e("$worker with a Worker secret, during deploy", () => {
   }
 
   // The bindings of each version of the Worker that runs the code of its
-  // latest version. Each secret write deploys a version with the code of the
+  // latest version. A secret write deploys a version with the code of the
   // one before it, so a version that runs the latest code without TOKEN
   // means that code went live before its secret was set.
   async function bindingsOfLatestCode(name: string) {
@@ -119,22 +118,13 @@ describeE2e("$worker with a Worker secret, during deploy", () => {
       .map((version) => version.bindings.map((binding) => binding.name));
   }
 
-  const tagsOf = async (name: string) =>
-    (
-      await api<{ tags?: string[] | null }>(
-        "GET",
-        `/workers/scripts/${name}/settings`,
-      )
-    ).result.tags ?? [];
-
   // Deploys while watching the Worker, then waits until it serves `expected`.
   // workers.dev can serve an earlier version for a while after an upload,
   // and serves a new Worker only once deploy has turned on its workers.dev
   // URL, after the upload of its code. So the responses can miss a
   // version, and bindingsOfLatestCode is the check that covers each one.
-  // Every earlier version is a placeholder, or code that has its secret or
-  // doesn't read it, so a late response can't show the new code without
-  // the secret.
+  // Every earlier version is code that has its secret or doesn't read it, so
+  // a late response can't show the new code without the secret.
   async function deployWatching(id: string, expected: string) {
     const watcher = watch(id);
     try {
@@ -157,9 +147,6 @@ describeE2e("$worker with a Worker secret, during deploy", () => {
 
     expect(seen.filter((fetched) => fetched.body === "v1:missing")).toEqual([]);
     expect(await bindingsOfLatestCode(name)).toEqual([["TOKEN"]]);
-    // The code upload removes the tag, so the placeholder's delete leaves
-    // the Worker when the Worker stops binding its last secret.
-    expect(await tagsOf(name)).not.toContain("notation-placeholder");
 
     writeWorker("fresh", { version: "v2" });
     const after = await deployWatching("fresh", "v2:missing");
@@ -175,30 +162,30 @@ describeE2e("$worker with a Worker secret, during deploy", () => {
 
     expect(seen.filter((fetched) => fetched.body === "v2:missing")).toEqual([]);
     expect(await bindingsOfLatestCode(name)).toEqual([["TOKEN"]]);
-    // The placeholder adopts the live Worker instead of uploading over it.
     expect(name).toBe(before.name);
-    expect(seen.filter((fetched) => fetched.status === 503)).toEqual([]);
   });
 
-  it("leaves only the placeholder when deploy stops at a secret without a source, and deploys after notation secret set", async () => {
-    writeWorker("ci", { version: "v1", bind: "ciToken" });
+  it("creates no Worker when deploy stops at a secret without a source", async () => {
+    writeWorker("new-ci", { version: "v1", bind: "ciToken" });
 
     // There is no terminal for the prompt.
     await expect(project.notation("deploy")).rejects.toThrow();
-    const name = await workerName("ci");
-    expect(name).toBeDefined();
-    expect(await tagsOf(name!)).toContain("notation-placeholder");
 
-    await project.notation(["secret", "set", "ci-token"], {
-      input: `${ciSecret}\n`,
-    });
-    const deployed = await deployWatching("ci", `v1:${ciSecret}`);
+    expect(await workerName("new-ci")).toBeUndefined();
+    // Deploy covers every Worker of the project, so the next tests need this
+    // one to deploy without a prompt.
+    writeWorker("new-ci", { version: "v1" });
+  });
 
+  it("uploads nothing when a live Worker gains a secret without a source", async () => {
+    writeWorker("ci", { version: "v1" });
+    const before = await deployWatching("ci", "v1:missing");
+
+    writeWorker("ci", { version: "v2", bind: "ciToken" });
+    // There is no terminal for the prompt.
+    await expect(project.notation("deploy")).rejects.toThrow();
     expect(
-      deployed.seen.filter((fetched) => fetched.body === "v1:missing"),
-    ).toEqual([]);
-    expect(await bindingsOfLatestCode(name!)).toEqual([["TOKEN"]]);
-    expect(deployed.name).toBe(name);
-    expect(await tagsOf(name!)).not.toContain("notation-placeholder");
+      (await poll(project.url(before.name), { done: () => true })).body,
+    ).toBe("v1:missing");
   });
 });

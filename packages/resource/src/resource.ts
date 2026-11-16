@@ -112,28 +112,19 @@ export type InferResourceTypes<S extends ResolvedSchema> = {
 
 /**
  * The config a resource takes: its params less `Omitted` and less the params
- * with `physicalName` that deploy always generates. Collected params and
- * params with a suppliable `physicalName` are optional, because
- * contributions can supply the first and deploy can generate the second.
+ * with `physicalName`, which deploy generates. Collected params are
+ * optional, because contributions can supply them.
  */
 export type ConfigParams<
   T extends ResourceTypes,
   Omitted extends PropertyKey = never,
-> = Omit<T["params"], Omitted | keyof T["collected"] | keyof T["named"]> &
+> = Omit<T["params"], Omitted | keyof T["collected"] | T["named"]> &
   Partial<
     Pick<
       T["params"],
-      Exclude<
-        keyof T["collected"] | NamesOfKind<T["named"], "suppliable">,
-        Omitted | NamesOfKind<T["named"], "generated">
-      > &
-        keyof T["params"]
+      Exclude<keyof T["collected"], Omitted | T["named"]> & keyof T["params"]
     >
   >;
-
-type NamesOfKind<N, Kind> = {
-  [K in keyof N]: N[K] extends Kind ? K : never;
-}[keyof N];
 
 /**
  * Identifies the group a resource belongs to. A group's ID is unique among
@@ -165,7 +156,11 @@ export interface BaseResource {
     string,
     ((key: any, state: any) => Promise<unknown>) | undefined
   >;
-  read?: (key: any, context?: ResourceOperationContext) => Promise<{}>;
+  read?: (
+    key: any,
+    context?: ResourceOperationContext,
+    params?: any,
+  ) => Promise<{}>;
   update?: (
     key: any,
     patch: any,
@@ -301,6 +296,7 @@ export abstract class Resource<
   abstract read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
+    params?: T["params"],
   ) => Promise<T["result"]>;
   abstract update?: (
     key: T["compoundKey"],
@@ -995,6 +991,15 @@ export type ResourceOperationsOptions<
   read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
+    /**
+     * The desired params, or the state record's params in the drift read of
+     * a cycle's placeholder. A value can be unknown at plan. The read uses
+     * them to choose what to observe, such as parts that the key doesn't
+     * name. It may return a value from `params` only for a part that it saw
+     * exists and whose value the provider never returns, such as a Worker
+     * secret's source.
+     */
+    params?: T["params"],
   ) => Promise<T["result"]>;
   /**
    * A param that takes a credential of another resource holds the value in

@@ -218,12 +218,8 @@ export async function createPlan({
       // so its dependents plan against unknown params, as they would for a
       // resource with no state.
       resource.setOutput(null as any);
-      // Deploy generates a new name for the resource that it creates again,
-      // unless the params supply one.
-      params = fillPhysicalNames(
-        known.unnamed,
-        unknownNames(resource, known.unnamed),
-      );
+      // Deploy generates a new name for the resource that it creates again.
+      params = fillPhysicalNames(known.unnamed, unknownNames(resource));
     }
     if (rotates.length > 0) {
       // The new version is unknown until deploy rotates the credential, so
@@ -485,8 +481,7 @@ async function loadOutput(
  *
  * A `physicalName` param takes its value from the state record, as in
  * deploy, and so does a ref to it from another of the resource's params.
- * Without a record, deploy generates the name, so it is unknown here,
- * unless the params supply a name for a suppliable `physicalName` param.
+ * Without a record, deploy generates the name, so it is unknown here.
  * `unnamed` holds the params before the names are filled in.
  */
 export async function planKnownParams(
@@ -505,7 +500,7 @@ export async function planKnownParams(
   const unnamed = await resource.planParams({ recordedOutputs });
   assertNamesNotSupplied(resource, names, unnamed);
   const params = fillPhysicalNames(unnamed, {
-    ...unknownNames(resource, unnamed),
+    ...unknownNames(resource),
     ...recordedNames(names, stateNode),
   });
   await validateParams(resource, params, point);

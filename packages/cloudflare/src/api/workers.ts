@@ -88,14 +88,17 @@ export type DurableObjectExport =
 export type ScriptSettings = {
   compatibility_date?: string;
   compatibility_flags?: string[];
-  tags?: string[] | null;
 };
 
-/** The tag of a Worker that `WorkerScriptPlaceholder` uploaded. */
-export const PLACEHOLDER_TAG = "notation-placeholder";
-
-export const isPlaceholderScript = (settings: ScriptSettings): boolean =>
-  settings.tags?.includes(PLACEHOLDER_TAG) ?? false;
+/**
+ * A secret's binding in an upload. It holds the value, so it is never kept
+ * in params or state.
+ */
+export type SecretTextBinding = {
+  type: "secret_text";
+  name: string;
+  text: string;
+};
 
 export type ScriptUpload = {
   /** The uploaded file name of the main module. */
@@ -103,15 +106,10 @@ export type ScriptUpload = {
   code: Buffer;
   compatibilityDate: string;
   compatibilityFlags: string[];
-  bindings: ScriptBinding[];
+  bindings: (ScriptBinding | SecretTextBinding)[];
   exports: Record<string, DurableObjectExport>;
   /** The Durable Object classes whose namespaces run containers. */
   containers: { class_name: string }[];
-  /**
-   * Replaces the Worker's tags. `[]` removes them. Without it, the upload
-   * keeps the tags that the Worker has.
-   */
-  tags?: string[];
 };
 
 /**
@@ -147,15 +145,13 @@ export async function putScript(
     compatibility_date: upload.compatibilityDate,
     compatibility_flags: upload.compatibilityFlags,
     bindings: upload.bindings,
-    // The Worker's secrets are set one at a time, with `putScriptSecret`, so
-    // an upload doesn't need their values. A binding in `bindings` with the
-    // name of a kept secret replaces the secret.
+    // Cloudflare keeps a secret that the upload leaves out. A `secret_text`
+    // binding in `bindings` replaces the secret of the same name.
     keep_bindings: ["secret_text"],
     ...(Object.keys(upload.exports).length > 0
       ? { exports: upload.exports }
       : {}),
     ...(upload.containers.length > 0 ? { containers: upload.containers } : {}),
-    ...(upload.tags ? { tags: upload.tags } : {}),
   };
   const form = new FormData();
   form.set("metadata", JSON.stringify(metadata));
@@ -168,6 +164,23 @@ export async function putScript(
   await cloudflare("PUT", scriptPath(account, scriptName), form);
 }
 
+/** The versions that serve a Worker's traffic. */
+export type ScriptDeployment = {
+  versions: { version_id: string; percentage: number }[];
+};
+
+export async function latestDeployment(
+  account: string,
+  scriptName: string,
+): Promise<ScriptDeployment | undefined> {
+  const result = await cloudflare<{ deployments?: ScriptDeployment[] }>(
+    "GET",
+    `${scriptPath(account, scriptName)}/deployments`,
+  );
+  // Cloudflare's API reference says that the first deployment is the latest.
+  return result?.deployments?.[0];
+}
+
 /** Cloudflare's error code for a binding that the Worker doesn't have. */
 const BINDING_NOT_FOUND = 10056;
 
@@ -177,26 +190,20 @@ const isBindingNotFound = (error: unknown): boolean =>
 const secretPath = (account: string, scriptName: string, name: string) =>
   `${scriptPath(account, scriptName)}/secrets/${encodeURIComponent(name)}`;
 
-/**
- * True if the Worker has a `secret_text` binding named `name`. False if it
- * doesn't, or if the Worker doesn't exist.
- */
-export async function hasScriptSecret(
+/** The names of the Worker's `secret_text` bindings. */
+export async function listScriptSecretNames(
   account: string,
   scriptName: string,
-  name: string,
-): Promise<boolean> {
-  try {
-    // The endpoint also returns a binding of another type with the name.
-    const binding = await cloudflare<{ type: string }>(
-      "GET",
-      secretPath(account, scriptName, name),
-    );
-    return binding.type === "secret_text";
-  } catch (error) {
-    if (isNotFound(error) || isBindingNotFound(error)) return false;
-    throw error;
-  }
+): Promise<Set<string>> {
+  const secrets = await cloudflare<{ name: string; type: string }[]>(
+    "GET",
+    `${scriptPath(account, scriptName)}/secrets`,
+  );
+  return new Set(
+    (secrets ?? [])
+      .filter((secret) => secret.type === "secret_text")
+      .map((secret) => secret.name),
+  );
 }
 
 /**
@@ -218,7 +225,6 @@ export async function putScriptSecret(
 
 /**
  * Deletes the Worker's secret. Succeeds if the Worker or the secret is gone.
- * Cloudflare leaves a binding of another type with the name.
  */
 export async function deleteScriptSecret(
   account: string,

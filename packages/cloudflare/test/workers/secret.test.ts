@@ -61,27 +61,27 @@ const collect = (evaluate: () => unknown) =>
   collectResourceGraph(evaluate, { scope: { app: "shop", stage: "dev" } });
 
 describe("workerSecret", () => {
-  it("adds a WorkerSecret to the Worker for each binding, after its placeholder and before its script", async () => {
+  it("puts each binding in the script's Secrets", async () => {
     const graph = await collect(infra);
     const api = worker(graph, "api");
     const jobs = worker(graph, "jobs");
 
     expect(api.script.config.Bindings).toEqual([]);
-    expect(api.secrets.map((secret) => secret.id)).toEqual([
-      "worker:api:secret:ADMIN",
-    ]);
-    expect(api.placeholder!.id).toBe("worker:api:placeholder");
-    expect(api.secrets[0]!.getDependencies()).toContain(api.placeholder);
-    expect(api.secrets[0]!.getDependencies()).not.toContain(api.script);
-    expect(api.script.getDependencies()).toEqual(
-      expect.arrayContaining([api.placeholder, api.secrets[0]]),
-    );
-    expect(api.placeholder!.getDependencies()).toEqual([]);
-    expect(api.secrets[0]!.config).toEqual({
-      Name: "ADMIN",
-      ValueFrom: { Secret: "admin", Source: PROMPT_SOURCE },
+    expect(api.script.config.Secrets).toEqual({
+      ADMIN: { Secret: "admin", Source: PROMPT_SOURCE },
     });
-    expect(jobs.secrets[0]!.config.Name).toBe("ADMIN_PASSWORD");
+    expect(jobs.script.config.Secrets).toEqual({
+      ADMIN_PASSWORD: { Secret: "admin", Source: PROMPT_SOURCE },
+    });
+    expect(api.script.config).not.toHaveProperty("ScriptName");
+  });
+
+  it("leaves Secrets out of a Worker that binds no secret", async () => {
+    const graph = await collect(() =>
+      inWorker($worker({ id: "api", compatibilityDate }), "runtime/api.ts"),
+    );
+
+    expect(worker(graph, "api").script.config.Secrets).toBeUndefined();
   });
 
   it("takes the version of a sourced secret from its SourceValue", async () => {
@@ -98,19 +98,16 @@ describe("workerSecret", () => {
         "runtime/api.ts",
       );
     });
-    const [secret] = worker(graph, "api").secrets;
+    const { script } = worker(graph, "api");
 
-    expect(secret!.getDependencies()).toContain(apiKey.value);
+    expect(script.getDependencies()).toContain(apiKey.value);
     apiKey.value!.setOutput({ Version: "run-1" } as any);
-    worker(graph, "api").placeholder!.setOutput({
-      AccountId: "acc",
-      ScriptName: "shop--dev--api-1a2b3c4d",
+    script.dependencies.code.setOutput({
+      filePath: "dist/runtime/api/index.mjs",
+      fileSha256: "sha",
     } as any);
-    expect(await secret!.getParams()).toEqual({
-      AccountId: "acc",
-      ScriptName: "shop--dev--api-1a2b3c4d",
-      Name: "API_KEY",
-      ValueFrom: {
+    expect((await script.getParams()).Secrets).toEqual({
+      API_KEY: {
         Secret: "api-key",
         Source: "env",
         Key: "API_KEY",
