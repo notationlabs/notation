@@ -114,50 +114,32 @@ function checkEntryOption(
   if (!option || !entry || !property) return;
   const file = path.basename(table.module.file);
   const asEntry = entry === "default" ? "its default" : `\`${entry}\``;
-  const value = unwrap(property.value);
   const target = table.exports.get(entry);
-  const exported =
-    target && "local" in target && target.local !== "*default*"
-      ? target.local
-      : undefined;
-  if (property.method || value.type !== "Identifier") {
+  if (target && !("local" in target)) {
     return fail(
       property.value,
-      `${option} must be the name of the value that ${file} exports as ${asEntry}${exported ? `. Pass ${option}: ${exported}` : ""}.`,
+      `${option} must name a class that ${file} declares, but ${file} re-exports ${asEntry} from ${target.source}. Declare the class in ${file} and export it as ${asEntry}.`,
     );
   }
-  const name: string = value.name;
-  const imported = table.imports.get(name);
+  const exported =
+    target && target.local !== "*default*" ? target.local : undefined;
+  const value = unwrap(property.value);
+  const name =
+    !property.method && value.type === "Identifier"
+      ? (value.name as string)
+      : undefined;
+  const imported = name !== undefined && table.imports.get(name);
+  if (name !== undefined && name === exported && !imported) return;
   if (imported && (!exported || exported === name)) {
     return fail(
       value,
       `${option} is ${name}, which ${file} imports from ${imported.source}. Declare it in ${file} and export it as ${asEntry}.`,
     );
   }
-  if (target && !("local" in target)) {
-    return fail(
-      value,
-      `${option} is ${name}, but ${file} re-exports ${asEntry} from ${target.source}. Declare ${name} in ${file} and export it as ${asEntry}.`,
-    );
-  }
-  if (!target) {
-    return fail(
-      value,
-      `${option} is ${name}, but ${file} has no export ${entry}. Export ${name} as ${asEntry}.`,
-    );
-  }
-  if (!exported) {
-    return fail(
-      value,
-      `${option} is ${name}, but the ${entry} export of ${file} has no name. Give it the name ${name}, such as \`export default class ${name}\`.`,
-    );
-  }
-  if (exported !== name) {
-    return fail(
-      value,
-      `${option} is ${name}, but ${file} exports ${exported} as ${asEntry}. The platform calls that export, so ${option} must name it. Pass ${option}: ${exported}.`,
-    );
-  }
+  return fail(
+    property.value,
+    `${option} must name the class that ${file} declares and exports as ${asEntry}${exported ? `. Pass ${option}: ${exported}` : ""}.`,
+  );
 }
 
 function markOf(

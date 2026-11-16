@@ -148,7 +148,7 @@ export function $worker(config) { return config; }`;
     [
       "a class that isn't the default export",
       `export default class Github {}\nexport class Admin {}\n${declare("Admin")}`,
-      "/project/runtime/github.ts:4:59: entrypoint is Admin, but github.ts exports Github as its default. The platform calls that export, so entrypoint must name it. Pass entrypoint: Github.",
+      "/project/runtime/github.ts:4:59: entrypoint must name the class that github.ts declares and exports as its default. Pass entrypoint: Github.",
     ],
     [
       "an imported class",
@@ -158,17 +158,17 @@ export function $worker(config) { return config; }`;
     [
       "a re-exported default",
       `export { default } from "./github-impl";\nclass Github {}\n${declare("Github")}`,
-      "entrypoint is Github, but github.ts re-exports its default from ./github-impl.",
+      "entrypoint must name a class that github.ts declares, but github.ts re-exports its default from ./github-impl.",
     ],
     [
       "an anonymous default export",
       `class Github {}\nexport default class {}\n${declare("Github")}`,
-      "entrypoint is Github, but the default export of github.ts has no name.",
+      "entrypoint must name the class that github.ts declares and exports as its default.",
     ],
     [
       "a value that isn't a name",
       `export default class Github {}\n${declare("class {}")}`,
-      "entrypoint must be the name of the value that github.ts exports as its default. Pass entrypoint: Github.",
+      "entrypoint must name the class that github.ts declares and exports as its default. Pass entrypoint: Github.",
     ],
   ])("fails for %s", (_, source, message) => {
     expect(() => runWorker(source)).toThrow(message);

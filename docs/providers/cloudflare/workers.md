@@ -197,7 +197,7 @@ Set `url: false` when the class has no `fetch` method. The Worker then has no wo
 The build fails when `entrypoint` is not the class that the module exports as its default:
 
 ```text
-runtime/github.ts:17:15: entrypoint is Admin, but github.ts exports Github as its default. The platform calls that export, so entrypoint must name it. Pass entrypoint: Github.
+runtime/github.ts:17:15: entrypoint must name the class that github.ts declares and exports as its default. Pass entrypoint: Github.
 ```
 
 - The class must have a name, and be declared before `$worker`. TypeScript fails with `TS2449` for a class declared after it.

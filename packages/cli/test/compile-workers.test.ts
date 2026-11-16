@@ -344,7 +344,7 @@ export default {
   it("fails the build for an entrypoint that isn't the default export", async () => {
     writeRpcProject("Admin");
     await expect(build()).rejects.toThrow(
-      "entrypoint is Admin, but github.ts exports Github as its default. The platform calls that export, so entrypoint must name it. Pass entrypoint: Github.",
+      "entrypoint must name the class that github.ts declares and exports as its default. Pass entrypoint: Github.",
     );
   });
 
