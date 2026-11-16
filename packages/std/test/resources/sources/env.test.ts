@@ -140,6 +140,21 @@ describe("Env", () => {
       ).rejects.toThrow("NOTATION_TRACK_KEY");
     });
 
+    it("fails with hmac when NOTATION_TRACK_KEY and the variable are not set, even with a revision in state", async () => {
+      vi.stubEnv("NOTATION_TRACK_KEY", undefined);
+      vi.stubEnv("STRIPE_KEY", undefined);
+      const params = { key: "STRIPE_KEY", track: "hmac" as const };
+      const source = await declare("stripe-key", params);
+      const { context, warnings } = readContext("stripe-key", {
+        revision: "hmac:recorded",
+      });
+
+      await expect(source.readSource(params, context)).rejects.toThrow(
+        "NOTATION_TRACK_KEY",
+      );
+      expect(warnings).toEqual([]);
+    });
+
     it("keeps the revision in state, and warns, when the variable is not set", async () => {
       vi.stubEnv("NOTATION_TRACK_KEY", "track-key");
       vi.stubEnv("STRIPE_KEY", undefined);

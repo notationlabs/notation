@@ -192,6 +192,8 @@ With `track`, `read` reads the value, so plan needs the variable. When the varia
 
 So a machine without the variable can plan and deploy other changes, but it cannot detect a change of the value.
 
+With `track: "hmac"`, plan and deploy need `NOTATION_TRACK_KEY` even when the variable is not set. Without it, they fail and name `NOTATION_TRACK_KEY`.
+
 ## A value that depends on the stage
 
 A resource's config becomes its params, which state records and plan compares, so config cannot hold a function of the stage. To pick a value by stage, call `deployment()` from `@notation/core`. It returns the app and the stage that the infra code is being evaluated for:

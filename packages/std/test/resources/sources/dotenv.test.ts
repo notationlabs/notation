@@ -103,4 +103,28 @@ describe("Dotenv", () => {
       "WEBHOOK_SECRET is not set in .env.local. Its value was not checked for a change.",
     ]);
   });
+
+  it("with track, fails to load a value that changed after read", async () => {
+    vi.stubEnv("NOTATION_TRACK_KEY", "track-key");
+    const file = path.join(directory, ".env.local");
+    await writeFile(file, "WEBHOOK_SECRET=whsec_1\n");
+    const params = {
+      path: ".env.local",
+      key: "WEBHOOK_SECRET",
+      track: "hmac" as const,
+    };
+    const source = await declare(params);
+    const { revision } = (await source.readSource(params, {
+      ...loadContext,
+      state: undefined,
+      warn: () => {},
+    })) as { revision: string };
+
+    await writeFile(file, "WEBHOOK_SECRET=whsec_2\n");
+    await expect(
+      source.loadCredential({ ...params, revision }, loadContext),
+    ).rejects.toThrow(
+      "The value of webhook-secret changed after deploy read it. Run deploy again.",
+    );
+  });
 });
