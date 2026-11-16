@@ -135,24 +135,11 @@ const WORKER_SCRIPT_TYPE = "cloudflare/workers/WorkerScript";
 const READABLE_WITHIN_MS = 15_000;
 const READABLE_RETRY_MS = 250;
 
-// Cloudflare sometimes reports a Worker as not found for about a second
-// after the upload that created it. The reconciler reads the Worker straight
-// after create, and fails on not found, so create waits until it can read it.
-async function waitUntilReadable(account: string, scriptName: string) {
-  const deadline = Date.now() + READABLE_WITHIN_MS;
-  while (!(await getScriptSettings(account, scriptName))) {
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `Cloudflare accepted the upload of the Worker ${scriptName}, but still reported it as not found ${READABLE_WITHIN_MS / 1_000} seconds later`,
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, READABLE_RETRY_MS));
-  }
-}
-
 // Cloudflare's list of a Worker's secrets can lag behind the upload. The read
 // after the upload records only listed secrets, so an unlisted secret would
-// be lost from state and never deleted when it leaves config.
+// be lost from state and never deleted when it leaves config. For a while
+// after the upload that creates a Worker, the list can also fail with not
+// found, which counts as listing no secrets.
 async function waitUntilSecretsListed(
   account: string,
   scriptName: string,
@@ -161,7 +148,12 @@ async function waitUntilSecretsListed(
   if (secrets.length === 0) return;
   const deadline = Date.now() + READABLE_WITHIN_MS;
   for (;;) {
-    const listed = await listScriptSecretNames(account, scriptName);
+    const listed = await listScriptSecretNames(account, scriptName).catch(
+      (error: unknown) => {
+        if (isNotFound(error)) return new Set<string>();
+        throw error;
+      },
+    );
     const missing = secrets.filter((secret) => !listed.has(secret.name));
     if (missing.length === 0) return;
     if (Date.now() >= deadline) {
@@ -178,6 +170,9 @@ const workerScript = resource<WorkerScriptSchema>({
   type: WORKER_SCRIPT_TYPE,
   provider: "@notation/cloudflare/resources",
   deleteTakesDependents: true,
+  // Under load, Cloudflare can report a new Worker as not found even after
+  // a read that found it.
+  readLagsCreate: true,
 });
 
 /**
@@ -325,7 +320,6 @@ export const WorkerScript = workerScriptSchema
       const secrets = secretBindings(params.Secrets);
       await cloudflareCreate(async () => {
         await upload(params, [], found, secrets);
-        await waitUntilReadable(params.AccountId, params.ScriptName);
         await waitUntilSecretsListed(
           params.AccountId,
           params.ScriptName,

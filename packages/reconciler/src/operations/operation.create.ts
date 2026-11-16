@@ -54,6 +54,9 @@ const CREATE_LOOKUP_RETRY_MS = 1_000;
  */
 const MAX_CREATE_LOOKUP_ATTEMPTS = 10;
 
+/** The wait between reads of a new resource whose class sets `readLagsCreate`. */
+const READ_AFTER_CREATE_RETRY_MS = 2_000;
+
 /**
  * Creates the resource and records it. Before the create, it writes a
  * "creating" record, so that a later deploy can tell that this one tried.
@@ -186,13 +189,19 @@ export async function* createResourceOperation(
         await validateValues(resource, computedPrimaryKey, "create");
       },
       async function* () {
-        const readResult = yield* readResourceOperation(step, {
-          resource,
-          resourceParams,
-          persistedOutput: params.persistedOutput,
-          emit: params.emit,
-          maxOperationAttempts: params.maxOperationAttempts,
-        });
+        const readResult = yield* readResourceOperation(
+          step,
+          {
+            resource,
+            resourceParams,
+            persistedOutput: params.persistedOutput,
+            emit: params.emit,
+            maxOperationAttempts: params.maxOperationAttempts,
+          },
+          resource.readLagsCreate
+            ? { retryNotFoundMs: READ_AFTER_CREATE_RETRY_MS }
+            : undefined,
+        );
         resource.setOutput({ ...resource.output, ...readResult });
       },
       async function* () {

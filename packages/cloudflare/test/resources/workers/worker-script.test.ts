@@ -759,61 +759,10 @@ describe("WorkerScript", () => {
     expect(requests()[0]!.url).toMatch(/\/scripts\/app--dev--api\/settings$/);
   });
 
-  describe("read after the upload that creates a Worker", () => {
-    const isSettings = ({ method, url }: Call) =>
-      method === "GET" && url.endsWith("/settings");
-
-    beforeEach(() => {
-      vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
-    });
-
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-
-    // Moves the fake clock on until `promise` settles, and returns the fake
-    // time that passed. `setImmediate` is real, so the file read and the
-    // fetch mock can finish between steps.
-    async function elapsedUntilSettled(promise: Promise<unknown>) {
-      const start = Date.now();
-      let settled = false;
-      promise.finally(() => (settled = true)).catch(() => {});
-      for (let step = 0; !settled && step < 1_000; step++) {
-        await new Promise((resolve) => setImmediate(resolve));
-        await vi.advanceTimersByTimeAsync(50);
-      }
-      return Date.now() - start;
-    }
-
-    it("waits until Cloudflare stops reporting the new Worker as not found", async () => {
-      let reads = 0;
-      mockFetch((call) => {
-        if (!isSettings(call)) return ok({});
-        reads += 1;
-        return reads <= 3 ? fail(404, 10007, "not found") : ok({});
-      });
-
-      const created = script.create(params);
-
-      expect(await elapsedUntilSettled(created)).toBeLessThan(1_000);
-      await expect(created).resolves.toBeUndefined();
-      expect(requests().filter(isSettings)).toHaveLength(4);
-    });
-
-    it("fails when Cloudflare still reports the new Worker as not found 15 seconds after the upload", async () => {
-      mockFetch((call) =>
-        isSettings(call) ? fail(404, 10007, "not found") : ok({}),
-      );
-
-      const created = script.create(params).catch((e) => e);
-
-      expect(await elapsedUntilSettled(created)).toBeGreaterThanOrEqual(15_000);
-      const error = await created;
-      expect(error).not.toBeInstanceOf(ResourceCreationUnknownError);
-      expect(error.message).toBe(
-        "Cloudflare accepted the upload of the Worker app--dev--api, but still reported it as not found 15 seconds later",
-      );
-    });
+  // Under load, Cloudflare can report a new Worker as not found after a read
+  // that found it, so a wait in create can't cover the read after it.
+  it("has deploy retry a not-found read straight after a create", () => {
+    expect(script.readLagsCreate).toBe(true);
   });
 
   it("reads a missing Worker as not found, and deletes it without an error", async () => {
@@ -1415,6 +1364,26 @@ describe("WorkerScript secrets", () => {
 
       await expect(updated).resolves.toBeUndefined();
       expect(calls.filter(isSecretsList)).toHaveLength(2);
+    });
+
+    it("waits through a list that fails with not found after the upload that creates the Worker", async () => {
+      let lists = 0;
+      mockFetch(
+        untilUploaded((call) => {
+          if (!isSecretsList(call)) return ok({});
+          lists += 1;
+          if (lists <= 2) return fail(404, 10007, "not found");
+          return ok(
+            ["API_KEY", "ADMIN"].map((name) => ({ name, type: "secret_text" })),
+          );
+        }),
+      );
+
+      const created = script.create(withSecrets);
+      await settle(created);
+
+      await expect(created).resolves.toBeUndefined();
+      expect(calls.filter(isSecretsList)).toHaveLength(3);
     });
 
     it("fails when the list still lacks a sent secret 15 seconds after the upload", async () => {

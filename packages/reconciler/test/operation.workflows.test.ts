@@ -276,6 +276,91 @@ describe("operation workflows", () => {
     );
   });
 
+  it("reads a new resource again while it reads as not found, when its class sets readLagsCreate", async () => {
+    const step = createStepRunnerDouble();
+    const persist = vi.fn(async function* () {});
+    let reads = 0;
+    const TestResource = resource<{
+      Key: {};
+      CreateParams: {};
+      UpdateParams: {};
+      ReadResult: { status: string };
+    }>({
+      type: "test/service/lagging",
+      provider: "test",
+      readLagsCreate: true,
+    })
+      .defineSchema({
+        status: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.string(),
+        },
+      })
+      .defineOperations({
+        create: (async () => ({})) as any,
+        read: async () => {
+          reads += 1;
+          if (reads < 3) throw new ResourceNotFoundError("resource is absent");
+          return { status: "ready" } as const;
+        },
+        delete: async () => undefined,
+      });
+    const testResource = new TestResource("lagging");
+
+    await runOperation(
+      createResourceOperation(step, {
+        executionId: "test-execution",
+        resource: testResource,
+        resourceParams: {},
+        dependsOn: [],
+        persist,
+        emit: toEmitStep(),
+      }),
+    );
+
+    expect(reads).toBe(3);
+    expect(step.delay).toHaveBeenCalledTimes(2);
+    expect(step.delay).toHaveBeenCalledWith("read:remote:retry-delay:0", 2_000);
+    expect(testResource.output).toEqual({ status: "ready" });
+    expect(persist).toHaveBeenLastCalledWith(
+      expect.objectContaining({ lastOperation: "create" }),
+    );
+  });
+
+  it("fails the create of a resource whose class sets readLagsCreate when it reads as not found at every attempt", async () => {
+    const step = createStepRunnerDouble();
+    const read = vi.fn(async () => {
+      throw new ResourceNotFoundError("resource is absent");
+    });
+    const TestResource = resource({
+      type: "test/service/never-visible",
+      provider: "test",
+      readLagsCreate: true,
+    })
+      .defineSchema({})
+      .defineOperations({
+        create: (async () => ({})) as any,
+        read,
+        delete: async () => undefined,
+      });
+
+    await expect(
+      runOperation(
+        createResourceOperation(step, {
+          executionId: "test-execution",
+          resource: new TestResource("never-visible"),
+          resourceParams: {},
+          dependsOn: [],
+          persist: vi.fn(async function* () {}),
+          emit: toEmitStep(),
+          maxOperationAttempts: 3,
+        }),
+      ),
+    ).rejects.toThrowError("resource is absent after 3 attempts");
+    expect(read).toHaveBeenCalledTimes(3);
+  });
+
   it("delete treats an already-absent remote as success through its idempotent resource contract", async () => {
     const step = createStepRunnerDouble();
     const events: OperationLifecycleEvent[] = [];
