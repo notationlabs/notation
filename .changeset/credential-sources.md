@@ -11,4 +11,4 @@
 
 Deploy no longer replaces a resource to get a credential that has no `rotate`. Plan and deploy fail instead, and print two commands: `notation deploy --replace <id>@<hash>`, and `notation deploy --credential <id>.<credential>@<version>=<variable>`, which gives deploy a value that the user holds, from an environment variable. The version is the one in state, so a command copied from another stage fails. `notation plan --credential` plans it and prints the deploy command with the version, and `plan --json` adds `credentialVersions` to each node with a record. The `unheldCredentials` field of a plan node and the `credential` field of a replace field are removed.
 
-`deployment()` in `@notation/core` returns the app and the stage while infra code is evaluated. `notation viz` takes `--stage` and evaluates the infra for it.
+`deployment()` in `@notation/core` returns the app and the stage while infra code is evaluated. `notation viz` takes `--stage` and evaluates the infra for it. Without `--stage` or `defaultStage`, it fails with "No stage given".

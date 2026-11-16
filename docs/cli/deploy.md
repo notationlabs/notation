@@ -79,7 +79,7 @@ With the flag, the replace of a KV namespace deletes its keys. The replace of an
 Notation saves the `--replace`, `--override-loss-protection` and `--credential` flags with the execution. A resume with `--execution-id` reads them from there, so you can leave them out. If you pass them, they must be the flags that the execution started with:
 
 ```text
-✗ Execution 1f3e… was started with --replace lambda:orders:role@3c1f9a02. Leave out --replace, or pass the same flags.
+✗ Execution 1f3e… was started with --replace lambda:orders:role@3c1f9a02. Leave out --replace and --credential, or pass the same flags.
 ```
 
 A resume does not check the hash again, because a create-first replace has already changed the key.

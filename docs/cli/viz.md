@@ -11,6 +11,12 @@ notation viz [--config <path>] [--stage <stage>]
 
 Generates a graph of the entry file's resources and their dependencies. Outputs a Mermaid Live Editor URL. The infra code is evaluated for the stage, as deploy evaluates it, so [`deployment()`](../manual/secrets.md#a-value-that-depends-on-the-stage) returns the app and the stage.
 
+Without `--stage` and without `defaultStage` in the config, `notation viz` fails:
+
+```text
+No stage given. Pass --stage, or set defaultStage in notation.config.ts
+```
+
 ```sh
 notation viz
 ```

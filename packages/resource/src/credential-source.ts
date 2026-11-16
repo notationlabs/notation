@@ -65,7 +65,8 @@ export type CredentialSourceOperations<T extends ResourceTypes> = {
   ) => Promise<CredentialSourceReadResult<T>>;
   /**
    * Returns the value for the revision in `state`, and the same value each
-   * time for the same revision. `state` holds the params and the outputs
+   * time for the same revision, unless the revision names no fixed value,
+   * as for an Infisical secret with a reference. `state` holds the params and the outputs
    * that `read` returned. Deploy calls it only when a resource that takes the
    * value is created or updated, and deploy holds no value.
    */
