@@ -22,6 +22,9 @@ export type WorkerSubdomainDependencies = {
 const workerSubdomain = resource<WorkerSubdomainSchema>({
   type: "cloudflare/workers/WorkerSubdomain",
   provider: "@notation/cloudflare/resources",
+  // Cloudflare can report the subdomain as off for a while after the create
+  // turns it on.
+  readLagsCreate: true,
 });
 
 const workerSubdomainSchema = workerSubdomain.defineSchema({

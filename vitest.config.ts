@@ -8,7 +8,7 @@ export default defineConfig({
     // Opt in to the workspace source dirs so stray trees (e.g. .claude/worktrees) are ignored.
     include: ["{packages,examples}/**/*.{test,spec}.?(c|m)[jt]s?(x)"],
     // End-to-end tests deploy to real provider accounts. `pok test e2e` and
-    // `pok test e2e-containers` run them.
+    // `pok test e2e-slow` run them.
     exclude: [...configDefaults.exclude, "**/*.e2e.test.ts"],
     // The AWS provider requires a region to construct its clients, which the
     // unit tests mock. Some tests expect ARNs in this region.

@@ -28,7 +28,7 @@
       ],
       "outputs": []
     },
-    "test:e2e-containers": {
+    "test:e2e-slow": {
       "dependsOn": ["build", "^build", "transit"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.e2e.config.ts"],
       "env": ["CLOUDFLARE_ACCOUNT_ID", "AWS_REGION", "NOTATION_E2E_DOCKER"],
