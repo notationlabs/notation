@@ -158,10 +158,7 @@ export function validateValues(
   return validateWithChecks(subject, values, point, isUnknown, true);
 }
 
-/**
- * `validateValues`, which also runs the subject's checks after the class's
- * validator when `runChecks` is set and `point` is one that checks run at.
- */
+// `validateValues`. With `runChecks` unset, the subject's checks do not run.
 function validateWithChecks(
   subject: ValidationSubject,
   values: Record<string, unknown>,
