@@ -6,10 +6,12 @@ import { isPlainObject } from "./output-ref";
  * Deploy holds the value in memory, and puts it in place of the marker only
  * for the call to an operation.
  *
- * `version` names one value. A create or a rotate gives the credential a new
- * version, so the params of each resource that takes the credential change,
- * and deploy updates it. A null version means that deploy holds no value and
- * has to get a new one before a resource can take it.
+ * `version` names one value. A create, a rotate or `--credential` gives the
+ * credential a new version, so the params of each resource that takes the
+ * credential change, and deploy updates it. A source's version is made from
+ * its params and its revision. A null version, as after a takeover, means
+ * that deploy holds no value and has to get a new one before a resource can
+ * take it.
  */
 export type CredentialMarker = {
   $credential: { resource: string; name: string; version: string | null };
