@@ -988,18 +988,17 @@ export type ResourceOperationsOptions<
    * "creating" record.
    */
   find?: (params: T["params"]) => Promise<T["primaryKey"] & {}>;
-  /**
-   * `params` lets a read choose what to observe, such as the declared parts
-   * of the resource that the key doesn't name. A read may return a value
-   * from `params` only for a part whose presence it has observed and whose
-   * value the provider never returns, such as a Worker secret's source. A
-   * value in `params` can be
-   * unknown at plan. They are the desired params, except for the drift read
-   * of a cycle's placeholder, which gets the params in its state record.
-   */
   read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
+    /**
+     * The desired params, or the state record's params in the drift read of
+     * a cycle's placeholder. A value can be unknown at plan. The read uses
+     * them to choose what to observe, such as parts that the key doesn't
+     * name. It may return a value from `params` only for a part that it saw
+     * exists and whose value the provider never returns, such as a Worker
+     * secret's source.
+     */
     params?: T["params"],
   ) => Promise<T["result"]>;
   /**

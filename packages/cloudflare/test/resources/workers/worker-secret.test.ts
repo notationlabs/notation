@@ -65,7 +65,7 @@ describe("WorkerSecret", () => {
     await expect(resource.read!(key)).resolves.toEqual(key);
   });
 
-  // The upload of the Worker has set the same secret through `Secrets`.
+  // The Worker's upload has set the same secret through `Secrets`.
   it("deletes only the record, and leaves the secret on the Worker", async () => {
     mockFetch(() => ok(null));
 

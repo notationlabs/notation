@@ -55,8 +55,8 @@ const script = new WorkerScript("worker:api", {
 const isDeploymentsRead = (call: Call) =>
   call.method === "GET" && call.url.endsWith("/deployments");
 
-// The requests other than the read of the deployments before an upload,
-// which the tests under "gradual rollout" check.
+// Leaves out the read of the deployments before an upload, which the tests
+// under "gradual rollout" check.
 const requests = () => calls.filter((call) => !isDeploymentsRead(call));
 
 async function uploadedMetadata(call: Call) {
@@ -1358,8 +1358,6 @@ describe("WorkerScript secrets", () => {
   const withSecrets = { ...params, Secrets: secrets };
   const isSecretsList = (call: Call) =>
     call.method === "GET" && call.url.endsWith("/app--dev--api/secrets");
-  // Answers the list of the Worker's secrets with `names`, and every other
-  // call with `ok({})`.
   const withSecretList =
     (names: string[], respond: (call: Call) => Response = () => ok({})) =>
     (call: Call) =>

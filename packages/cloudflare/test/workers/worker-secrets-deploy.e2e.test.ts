@@ -173,8 +173,8 @@ describeE2e("$worker with a Worker secret, during deploy", () => {
     await expect(project.notation("deploy")).rejects.toThrow();
 
     expect(await workerName("new-ci")).toBeUndefined();
-    // Each deploy deploys every Worker of the project, so the next tests
-    // need this one to deploy without a terminal.
+    // Deploy covers every Worker of the project, so the next tests need this
+    // one to deploy without a prompt.
     writeWorker("new-ci", { version: "v1" });
   });
 

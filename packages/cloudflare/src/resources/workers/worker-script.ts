@@ -93,10 +93,9 @@ type WorkerScriptParams = {
   CompatibilityFlags?: string[];
   Bindings?: WorkerBinding[];
   /**
-   * The `secret_text` bindings, by binding name, with where each value
-   * comes from. Each upload reads the values and sends them, except that a
-   * value from the prompt is sent only when the Worker doesn't have the
-   * secret. An update deletes a secret whose name is no longer here.
+   * The `secret_text` bindings by name, with the source of each value. Each
+   * upload sends the values, except a prompted value that the Worker already
+   * has. An update deletes a secret that is no longer listed here.
    */
   Secrets?: Record<string, SecretValueFrom>;
   DurableObjectNamespaces?: HostedNamespace[];
@@ -152,10 +151,9 @@ async function waitUntilReadable(account: string, scriptName: string) {
   }
 }
 
-// Cloudflare's list of a Worker's secrets can lag behind the upload that
-// sets them. The read after the upload records only the listed secrets, so a
-// name missing from the list would be lost from state, and a later removal of
-// it from config would never delete it.
+// Cloudflare's list of a Worker's secrets can lag behind the upload. The read
+// after the upload records only listed secrets, so an unlisted secret would
+// be lost from state and never deleted when it leaves config.
 async function waitUntilSecretsListed(
   account: string,
   scriptName: string,
@@ -314,9 +312,8 @@ export const WorkerScript = workerScriptSchema
   .defineOperations({
     // An upload replaces a Worker with the same name, so check first. The
     // check is outside `cloudflareCreate`: if it throws, nothing was created.
-    // The upload may replace a placeholder that an earlier version of
-    // notation left with the deprecated `WorkerScriptPlaceholder`, and it
-    // removes the placeholder's tag.
+    // The upload may replace a Worker left by the deprecated
+    // `WorkerScriptPlaceholder`, and removes its placeholder tag.
     create: async (params) => {
       const existing = await getScriptSettings(
         params.AccountId,
@@ -343,10 +340,10 @@ export const WorkerScript = workerScriptSchema
       })();
     },
 
-    // Returns the entries of `Secrets` whose secret the Worker still has, so
-    // that a secret deleted outside notation shows as drift, and the update
-    // sends it again. Cloudflare never returns a secret's value, so only a
-    // missing name is detected, not a changed value.
+    // Returns only the entries of `Secrets` that the Worker still has, so a
+    // secret deleted outside notation shows as drift and the update sends it
+    // again. Cloudflare never returns secret values, so a changed value is
+    // not detected.
     read: async (key, _context, params) => {
       const settings = await getScriptSettings(key.AccountId, key.ScriptName);
       if (!settings) {
@@ -368,9 +365,9 @@ export const WorkerScript = workerScriptSchema
     // An upload sets the whole Worker, so the patch is not used. The upload
     // compares the namespaces in state with the new ones, to rename, delete
     // or move those that changed. An upload keeps a secret that it leaves
-    // out, so a removed secret is deleted after it. A name that the upload
-    // binds another way is not deleted, because it is not known whether
-    // Cloudflare's delete would leave that binding.
+    // out, so a removed secret is deleted after the upload. A name that the
+    // upload binds another way is not deleted, as Cloudflare's delete might
+    // remove that binding too.
     update: async (_key, _patch, params, state) => {
       await assertNoRollout(params);
       const previous = state.DurableObjectNamespaces ?? [];
@@ -423,9 +420,9 @@ export function sortedFlags(flags: string[]): string[] {
 }
 
 /**
- * Throws when the Worker is in a gradual rollout. Cloudflare deploys every
- * upload to all traffic, which ends the rollout. A version at 0% serves no
- * traffic, so a deployment that lists one is not a rollout.
+ * Throws when the Worker is in a gradual rollout, because Cloudflare deploys
+ * an upload to all traffic and so ends the rollout. A version at 0% doesn't
+ * count, as it serves no traffic.
  */
 async function assertNoRollout(params: WorkerScriptParams): Promise<void> {
   const latest = await latestDeployment(params.AccountId, params.ScriptName);
@@ -453,9 +450,9 @@ async function presentSecrets(
 }
 
 /**
- * Reads the value of each secret in `Secrets` from its source. A secret
- * whose value comes from the prompt is left out if the Worker has it, so
- * that a value set with `notation secret set` is kept.
+ * Reads the value of each secret in `Secrets` from its source. Skips a
+ * prompted secret that the Worker already has, so that a value set with
+ * `notation secret set` is kept.
  */
 async function secretBindings(
   params: WorkerScriptParams,

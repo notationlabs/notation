@@ -159,7 +159,7 @@ export async function putScript(
     bindings: upload.bindings,
     // Cloudflare keeps a secret that the upload leaves out, such as one set
     // with `notation secret set`. A `secret_text` binding in `bindings`
-    // replaces the secret with its name.
+    // replaces the secret of the same name.
     keep_bindings: ["secret_text"],
     ...(Object.keys(upload.exports).length > 0
       ? { exports: upload.exports }
@@ -178,12 +178,11 @@ export async function putScript(
   await cloudflare("PUT", scriptPath(account, scriptName), form);
 }
 
-/** A deployment of a Worker: the versions that serve its traffic. */
+/** The versions that serve a Worker's traffic. */
 export type ScriptDeployment = {
   versions: { version_id: string; percentage: number }[];
 };
 
-/** The Worker's latest deployment. */
 export async function latestDeployment(
   account: string,
   scriptName: string,
@@ -192,8 +191,7 @@ export async function latestDeployment(
     "GET",
     `${scriptPath(account, scriptName)}/deployments`,
   );
-  // Cloudflare's API reference for this list says that the first deployment
-  // is the latest, the one that serves traffic.
+  // Cloudflare's API reference says that the first deployment is the latest.
   return result?.deployments?.[0];
 }
 
@@ -233,7 +231,6 @@ export async function listScriptSecretNames(
   account: string,
   scriptName: string,
 ): Promise<Set<string>> {
-  // The endpoint also lists bindings of other types, such as `secret_key`.
   const secrets = await cloudflare<{ name: string; type: string }[]>(
     "GET",
     `${scriptPath(account, scriptName)}/secrets`,

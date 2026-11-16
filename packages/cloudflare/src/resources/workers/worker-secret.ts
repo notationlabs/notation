@@ -71,9 +71,8 @@ export const WorkerSecret = workerSecretSchema.defineOperations({
     return key;
   },
 
-  // Removes only the record. The upload of the Worker has set the same
-  // secret through the script's `Secrets`, and deleting the secret would
-  // undo that.
+  // Removes only the record. The Worker's upload has set the same secret
+  // through `Secrets`, and deleting it would undo that.
   delete: async () => {},
 });
 

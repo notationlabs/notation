@@ -180,11 +180,11 @@ const declareWorker = () => {
   );
 };
 
-// The graph that `$worker` declared before `WorkerScript` took `Secrets`:
-// one `WorkerSecret` for each secret. The placeholder is left out, as its
-// name would differ from the script's. Each secret takes the script's name
-// from the script's output. `WorkerSecret` can no longer create, so each
-// create sets the secret on the fake Worker, as the previous version did.
+// The graph that `$worker` declared before `WorkerScript` took `Secrets`,
+// with one `WorkerSecret` for each secret. The placeholder is left out, as
+// its name would differ from the script's. `WorkerSecret` can no longer
+// create, so each create sets the secret on the fake Worker, as the previous
+// version did.
 const declareLegacyWorker = () => {
   workerSecret({ id: "api-key", source: vault, key: "API_KEY" });
   workerSecret({ id: "admin" });
