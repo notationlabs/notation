@@ -118,10 +118,11 @@ export class KVJsonGroup<
 }
 
 /**
- * Declares a JSON document in a KV key. `id` must be a name-safe string
- * literal; see `NameSafe`. The document is `value`, if given, merged with
- * every contribution. Plan and deploy check it against `schema` before they
- * write it. A Worker reads it with `readKVJson()`.
+ * Declares a JSON document in a KV key. `id` must be name-safe; see
+ * `NameSafe`. An id built from another, such as `${id}-config`, is checked
+ * when the document is declared. The document is `value`, if given, merged
+ * with every contribution. Plan and deploy check it against `schema` before
+ * they write it. A Worker reads it with `readKVJson()`.
  * @resource runtime: schema
  */
 export function kvJson<

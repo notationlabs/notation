@@ -26,7 +26,7 @@ type ApiConfig = {
 };
 ```
 
-`id` keys the API in state, so changing it replaces the API. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the API's AWS name when it first creates the API, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--todo-api-1a2b3c4d`, where the instance is 8 random hex characters.
+`id` keys the API in state, so changing it replaces the API. Use 1 to 64 letters, digits, hyphens and underscores. See [IDs](lambda.md#ids) for how TypeScript checks an ID. Deploy generates the API's AWS name when it first creates the API, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--todo-api-1a2b3c4d`, where the instance is 8 random hex characters.
 
 You can't set the API's AWS name. See [AWS names](../../manual/project-config.md#aws-names).
 
@@ -339,7 +339,7 @@ type JwtAuthorizerConfig = {
 };
 ```
 
-`id` keys the authorizer in state, together with its API's `id`. The state key is `api-authorizer:<api id>:<id>`, such as `api-authorizer:todo-api:user-auth`. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Two authorizers of one API can't share an `id`, but two APIs can each have an authorizer with the same `id`.
+`id` keys the authorizer in state, together with its API's `id`. The state key is `api-authorizer:<api id>:<id>`, such as `api-authorizer:todo-api:user-auth`. Use 1 to 64 letters, digits, hyphens and underscores. See [IDs](lambda.md#ids) for how TypeScript checks an ID. Two authorizers of one API can't share an `id`, but two APIs can each have an authorizer with the same `id`.
 
 **The `issuer` and `audience` don't affect the state key.** Changing them updates the authorizer in place, and the routes keep pointing at it. Two authorizers on one API can have the same `issuer` and `audience` if their IDs differ. An HTTP API allows 10 authorizers.
 

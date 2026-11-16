@@ -33,7 +33,7 @@ type EventBusConfig = {
 };
 ```
 
-`id` keys the bus in state, so changing it replaces the bus. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the bus's AWS name when it first creates the bus, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--orders-1a2b3c4d`, where the instance is 8 random hex characters.
+`id` keys the bus in state, so changing it replaces the bus. Use 1 to 64 letters, digits, hyphens and underscores. See [IDs](lambda.md#ids) for how TypeScript checks an ID. Deploy generates the bus's AWS name when it first creates the bus, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--orders-1a2b3c4d`, where the instance is 8 random hex characters.
 
 You can't set the bus's AWS name. See [AWS names](../../manual/project-config.md#aws-names).
 
@@ -147,7 +147,7 @@ type RetryOptions = {
 };
 ```
 
-`id` keys the rule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the rule's AWS name when it first creates the rule, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--order-placed-1a2b3c4d`, where the instance is 8 random hex characters. You can't set the rule's AWS name.
+`id` keys the rule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores. See [IDs](lambda.md#ids) for how TypeScript checks an ID. Deploy generates the rule's AWS name when it first creates the rule, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--order-placed-1a2b3c4d`, where the instance is 8 random hex characters. You can't set the rule's AWS name.
 
 `pattern` is the [event pattern](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns.html) that the rule matches. Each field holds a list of values, and the field matches when the event's field has one of them. A value can also be a content filter, such as `{ prefix: "order-" }` or `{ numeric: [">", 100] }`. `detail` holds a pattern for the event's detail, field by field:
 
@@ -344,7 +344,7 @@ type ScheduleConfig = {
 
 The rule sends the EventBridge event to the function as it is.
 
-`id` keys the schedule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the AWS name of the EventBridge rule when it first creates the rule, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--log-every-minute-1a2b3c4d`, where the instance is 8 random hex characters.
+`id` keys the schedule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores. See [IDs](lambda.md#ids) for how TypeScript checks an ID. Deploy generates the AWS name of the EventBridge rule when it first creates the rule, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--log-every-minute-1a2b3c4d`, where the instance is 8 random hex characters.
 
 You can't set the rule's AWS name. See [AWS names](../../manual/project-config.md#aws-names).
 

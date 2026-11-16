@@ -154,9 +154,17 @@ test("NameSafe accepts name-safe literals and rejects the rest", () => {
     }),
   ).toThrow();
 
+  // A template id passes when its fixed parts are name-safe, and a plain
+  // string passes. Both are checked at runtime.
   const id: string = "fn";
-  // @ts-expect-error a plain string can't be checked
-  lambda({ id, code });
+  expect(lambda({ id, code }).id).toBe("fn");
+  expect(lambda({ id: `${id}-worker`, code }).id).toBe("fn-worker");
+  // @ts-expect-error dots are not name-safe
+  expect(() => lambda({ id: `${id}.worker`, code })).toThrow();
+  const bad: string = "bad id";
+  expect(() => lambda({ id: bad, code })).toThrow(
+    'Invalid lambda() id "bad id"',
+  );
 });
 
 test("resources declared by the helper are reported at the caller's line", () => {

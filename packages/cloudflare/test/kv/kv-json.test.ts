@@ -327,6 +327,25 @@ describe("kvJson()", () => {
     },
   );
 
+  it("takes an id built from its caller's id", async () => {
+    const id: string = "router";
+    let group!: ReturnType<typeof kvJson>;
+    await collect((namespace) => {
+      group = kvJson({
+        id: `${id}-config`,
+        namespace,
+        key: "config",
+        schema: Flags,
+      });
+      kvJson({ id, namespace, key: "plain", schema: Flags });
+      expect(() =>
+        // @ts-expect-error a dot is not name-safe
+        kvJson({ id: `${id}.config`, namespace, key: "k", schema: Flags }),
+      ).toThrow(`Invalid kvJson() id "router.config"`);
+    });
+    expect(group.value.id).toBe("kv-json:router-config");
+  });
+
   it("keeps the schema on the group", async () => {
     let schema: unknown;
     await collect((namespace) => {
@@ -351,6 +370,12 @@ describe("kvJson()", () => {
         });
       }),
     ).rejects.toThrow(`Invalid kvJson() id "flags:v2"`);
+    const base: string = "bad id";
+    await expect(
+      collect((namespace) => {
+        kvJson({ id: `${base}-config`, namespace, key: "k", schema: Flags });
+      }),
+    ).rejects.toThrow(`Invalid kvJson() id "bad id-config"`);
     await expect(
       collect((namespace) => {
         kvJson({

@@ -247,3 +247,18 @@ test("an id that is not name-safe throws", () => {
     }),
   ).toThrow('Invalid schedule() id "every day"');
 });
+
+test("an id built from another id is checked at runtime", () => {
+  const base: string = "orders";
+  expect(queue({ id: `${base}-dlq`, schema: Unknown }).id).toBe("orders-dlq");
+  expect(api({ id: `${base}-api` }).id).toBe("orders-api");
+  expect(eventBus({ id: base }).id).toBe("orders");
+  // @ts-expect-error dots are not name-safe
+  expect(() => api({ id: `${base}.api` })).toThrow(
+    'Invalid api() id "orders.api"',
+  );
+  const bad: string = "bad id";
+  expect(() => queue({ id: `${bad}-dlq`, schema: Unknown })).toThrow(
+    'Invalid queue() id "bad id-dlq"',
+  );
+});

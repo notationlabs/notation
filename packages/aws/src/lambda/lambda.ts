@@ -93,8 +93,8 @@ export function isLambdaGroup(value: unknown): value is LambdaGroup {
 
 /**
  * Declares a Lambda function that runs code built outside notation, such as
- * a zip file. `id` must be a name-safe string literal; see `NameSafe`. Use
- * `$lambda` for a function whose code is in the project.
+ * a zip file. `id` must be name-safe; see `NameSafe`. Use `$lambda` for a
+ * function whose code is in the project.
  * @resource
  */
 export function lambda<const Id extends string>(

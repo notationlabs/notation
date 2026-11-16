@@ -34,8 +34,8 @@ export type RuleTarget<S extends StandardSchemaV1 | null = StandardSchemaV1> =
 /**
  * Sends the events on a bus that match a pattern to a Lambda. The rule is
  * made when infra has finished loading. A declaration can make its own rule,
- * with `event: () => eventBridge.bind(bus).defineRule(options)`. `id` must be
- * a name-safe string literal; see `NameSafe`.
+ * with `event: () => eventBridge.bind(bus).defineRule(options)`. `id` must
+ * be name-safe; see `NameSafe`.
  * @resource
  */
 export function rule<const Id extends string>(

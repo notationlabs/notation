@@ -61,8 +61,7 @@ export class ApiGroup extends AwsResourceGroup<ApiConfig> implements ApiSource {
 
 /**
  * Declares an HTTP API, with a default stage that deploys each change. `id`
- * must be a name-safe string literal; see `NameSafe`. In a function, the API
- * is `{}`.
+ * must be name-safe; see `NameSafe`. In a function, the API is `{}`.
  * @resource runtime:
  */
 export function api<const Id extends string>(

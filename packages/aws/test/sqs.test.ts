@@ -797,8 +797,10 @@ test("queue() takes the schema type explicitly", () => {
   // @ts-expect-error dots are not name-safe
   expect(() => queue({ id: "bad.id", schema: Order })).toThrow();
   const id: string = "orders";
-  // @ts-expect-error a plain string can't be checked
-  queue({ id, schema: Order });
+  expect(queue({ id, schema: Order }).id).toBe("orders");
+  expect(queue({ id: `${id}-dlq`, schema: Order }).id).toBe("orders-dlq");
+  // @ts-expect-error dots are not name-safe
+  expect(() => queue({ id: `${id}.fifo`, schema: Order })).toThrow();
 });
 
 test("sqs.bind() rejects a schema in place of a queue", () => {
