@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { clearHeldCredentials } from "../src/credentials";
 import { createPlan } from "../src/planner";
 import { instanceHash } from "../src/deploy-request";
-import { UnobtainableCredentialError } from "../src/unobtainable-credential";
+import {
+  UnobtainableCredentialError,
+  credentialVariable,
+} from "../src/unobtainable-credential";
 import { createRuntime } from "./credentials-runtime";
 
 type Runtime = ReturnType<typeof createRuntime>;
@@ -1084,5 +1087,17 @@ describe("--credential", () => {
       "--credential token.Value reads TEST_TOKEN_VALUE, which is not set.",
     );
     runtime.close();
+  });
+});
+
+describe("credentialVariable", () => {
+  it("names a variable from the resource ID and credential name", () => {
+    expect(credentialVariable("api-token", "Value")).toBe("API_TOKEN_VALUE");
+  });
+
+  it("starts with an underscore when the name would start with a digit", () => {
+    expect(credentialVariable("1password:token", "Value")).toBe(
+      "_1PASSWORD_TOKEN_VALUE",
+    );
   });
 });

@@ -47,12 +47,14 @@ export class UnobtainableCredentialError extends Error {
     credential: UnobtainableCredential,
     request?: DeployRequest,
     deployCommand = "notation deploy",
+    options?: ErrorOptions,
   ) {
     super(
       unobtainableCredentialMessage(
         credential,
         [deployCommand, formatRequest(request)].filter(Boolean).join(" "),
       ),
+      options,
     );
     this.name = "UnobtainableCredentialError";
     this.credential = credential;
@@ -192,9 +194,11 @@ export function rotatesForCreate(opts: {
 
 /** A variable name for the plan error, such as `APP_PRIVATE_KEY`. */
 export function credentialVariable(id: string, name: string): string {
-  return `${id}_${name}`
+  const variable = `${id}_${name}`
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .replace(/[^A-Za-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .toUpperCase();
+  // A shell variable name cannot start with a digit.
+  return /^[0-9]/.test(variable) ? `_${variable}` : variable;
 }
