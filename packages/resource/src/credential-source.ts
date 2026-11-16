@@ -169,6 +169,18 @@ export function credentialSourceResource<
 }): CredentialSourceBuilder<Api> {
   return {
     defineSchema(schema) {
+      // Deploy loads only `value`, with `loadCredential`.
+      const others = Object.entries(schema as Schema)
+        .filter(
+          ([name, item]) =>
+            item.propertyType === "credential" && name !== "value",
+        )
+        .map(([name]) => name);
+      if (others.length > 0) {
+        throw new Error(
+          `${meta.type} is a source, and has one credential, value. Its schema also declares ${others.join(", ")}.`,
+        );
+      }
       return {
         defineOperations(opts) {
           type T = InferResourceTypes<ResolveSchema<typeof schema>>;

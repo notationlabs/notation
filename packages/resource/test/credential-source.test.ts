@@ -62,6 +62,26 @@ describe("credentialSourceResource", () => {
     );
   });
 
+  it("fails for a schema with a credential other than value", () => {
+    expect(() =>
+      credentialSourceResource<{ Params: { key: string }; Value: string }>({
+        type: "test/sources/Pair",
+        provider: "test",
+      }).defineSchema({
+        key: { propertyType: "param", presence: "required", value: string() },
+        revision: {
+          propertyType: "computed",
+          presence: "required",
+          value: string(),
+        },
+        value: { propertyType: "credential", value: string() },
+        secret: { propertyType: "credential", value: string() },
+      } as const),
+    ).toThrow(
+      "test/sources/Pair is a source, and has one credential, value. Its schema also declares secret.",
+    );
+  });
+
   it("checks config when the source is declared", async () => {
     await expect(
       collectResourceGraph(() => {
