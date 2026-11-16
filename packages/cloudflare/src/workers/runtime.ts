@@ -35,6 +35,10 @@ export function $durableObject<
 const infraOnly = (name: string) =>
   new Error(`${name} declares infrastructure, so it can't run in a Worker.`);
 
+/**
+ * The mark fails the runtime build of a Worker that calls it.
+ * @resource
+ */
 export function worker(): never {
   throw infraOnly("worker()");
 }

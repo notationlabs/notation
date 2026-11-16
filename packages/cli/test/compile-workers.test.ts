@@ -82,6 +82,8 @@ function writeCloudflarePackage() {
       `}`,
       `/** @resource */`,
       `export function addBindings(worker, bindings) {}`,
+      `/** @resource */`,
+      `export function worker(config) { return { id: config.id }; }`,
     ].join("\n"),
   );
   write(
@@ -91,6 +93,8 @@ function writeCloudflarePackage() {
       `export function $worker(config) { return { id: config.id, bindingNames: Object.keys(config.bindings()) }; }`,
       `/** @resource */`,
       `export function addBindings() { throw new Error("addBindings() declares infrastructure"); }`,
+      `/** @resource */`,
+      `export function worker() { throw new Error("worker() declares infrastructure"); }`,
     ].join("\n"),
   );
 }
@@ -359,6 +363,20 @@ export default {
     );
     await expect(build()).rejects.toThrow(
       "runtime/router.ts calls addBindings at its top level, and it holds a declaration, so it can't be an infra module. Move the call to addBindings to an infra module.",
+    );
+  });
+
+  it("fails the build for a call to worker() in the module of a $worker", async () => {
+    writeRpcProject();
+    write(
+      "runtime/router.ts",
+      routerModule.replace(
+        `import { $worker } from "@notation/cloudflare/workers";`,
+        `import { $worker, worker } from "@notation/cloudflare/workers";`,
+      ) + `\nexport const admin = worker({ id: "admin" });\n`,
+    );
+    await expect(build()).rejects.toThrow(
+      "runtime/router.ts calls worker at its top level, and it holds a declaration, so it can't be an infra module. Move the call to worker to an infra module.",
     );
   });
 });
