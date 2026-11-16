@@ -18,9 +18,10 @@ it("fails when another copy is loaded", () => {
 });
 
 it("recognises an output ref made by another copy", () => {
-  class OtherOutputRef {
-    readonly [Symbol.for("@notation/resource/OutputRef")] = true;
-  }
-  expect(isOutputRef(new OtherOutputRef())).toBe(true);
+  class OtherOutputRef {}
+  const ref = Object.assign(new OtherOutputRef(), {
+    [Symbol.for("@notation/resource/OutputRef")]: true,
+  });
+  expect(isOutputRef(ref)).toBe(true);
   expect(isOutputRef({})).toBe(false);
 });
