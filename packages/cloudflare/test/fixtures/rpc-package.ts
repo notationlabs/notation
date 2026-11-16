@@ -1,9 +1,10 @@
 // Only type-checked, as rpc-workers.ts. It stands in for the infra code of
 // a package, which imports its Worker's class as a type only.
-import { entrypointType, worker, type WorkerBundle } from "src/workers";
+import type { BundleLike } from "@notation/build/resources";
+import { entrypointType, worker } from "src/workers";
 import type Channel from "./rpc-package-worker";
 
-declare const code: WorkerBundle;
+declare const code: BundleLike;
 
 export const channel = worker({
   id: "channel",

@@ -42,7 +42,7 @@ const NODEJS_COMPAT = "nodejs_compat";
 export type WorkerDeclarationConfig<
   Id extends string,
   B extends Bindings,
-  E = undefined,
+  E,
 > = {
   /**
    * Keys the Worker in state. Deploy names the Worker in Cloudflare
@@ -70,27 +70,25 @@ export type WorkerDeclarationConfig<
    * gets `Service<Api>` in `env`, so its RPC calls are typed. The class
    * must be declared in the module, before `$worker`. Deploy doesn't read
    * the value.
+   *
+   * `worker()` takes `entrypointType<typeof Api>()` here, for the class that
+   * its code file or bundle entry exports as its default. The build doesn't
+   * check that the entry exports the class.
    */
   entrypoint?: E;
 };
 
+/** The options of `worker()`: the options of `$worker`, and `code`. */
 export type WorkerConfig<
   Id extends string,
   B extends Bindings,
-  E = undefined,
-> = Omit<WorkerDeclarationConfig<Id, B>, "entrypoint"> & {
+  E,
+> = WorkerDeclarationConfig<Id, B, EntrypointType<E>> & {
   /**
    * A prebuilt JavaScript module, uploaded as-is, or a bundle from `bundle()`
    * with `platform: "workerd"`. File paths are relative to the project root.
    */
   code: { type: "file"; path: string } | BundleLike;
-  /**
-   * The type of the class that the code exports as its default, from
-   * `entrypointType<typeof Api>()`. A Worker that binds this Worker gets
-   * `Service<Api>` in `env`. The build doesn't check that the entry exports
-   * the class.
-   */
-  entrypoint?: EntrypointType<E>;
 };
 
 /** The module that a Worker uploads: a file, or code declared elsewhere. */
@@ -255,7 +253,7 @@ type WorkerExports = {
 
 /** How a Worker was declared, and where its code comes from. */
 type WorkerSource = {
-  declaration: Worker<any, unknown>;
+  declaration: Worker<any>;
   /** Names the Worker in errors, with its module if known. */
   describe: () => string;
   /** Undefined when the module is not known. */
@@ -544,7 +542,7 @@ function registerWorker(
  * @resource
  */
 export function addBindings(
-  worker: Worker<any, unknown>,
+  worker: Worker<any>,
   bindings: Bindings,
 ): void {
   const caller = captureCallSiteLazily(addBindings);

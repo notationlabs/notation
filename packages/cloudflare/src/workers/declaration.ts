@@ -87,12 +87,10 @@ export interface EntrypointType<E> {
 
 // A Worker whose entrypoint is a `WorkerEntrypoint` class gets RPC types.
 // Any other Worker, or one with no entrypoint, gets a plain `Fetcher`.
-type ServiceOf<W> = W extends {
-  readonly "~worker": { entrypoint: infer E };
-}
-  ? E extends new (...args: any[]) => cf.Rpc.WorkerEntrypointBranded
-    ? cf.Service<E>
-    : cf.Fetcher
+type ServiceOf<E> = E extends new (
+  ...args: any[]
+) => cf.Rpc.WorkerEntrypointBranded
+  ? cf.Service<E>
   : cf.Fetcher;
 
 type NamespaceOf<C> = C extends abstract new (...args: any[]) => infer I
@@ -106,8 +104,8 @@ type ClassOf<V> = V extends DurableObjectDeclaration<infer C> ? C : never;
 type BindingType<V> =
   V extends DurableObjectDeclaration<any>
     ? NamespaceOf<ClassOf<V>>
-    : V extends { readonly "~worker": unknown }
-      ? ServiceOf<V>
+    : V extends { readonly "~worker": { entrypoint: infer E } }
+      ? ServiceOf<E>
       : V extends JsonBinding<infer T>
         ? T
         : V extends R2BucketInstance
