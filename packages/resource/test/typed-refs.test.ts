@@ -8,6 +8,7 @@ import {
   type Derived,
   type Input,
   OutputRef,
+  type Resolved,
   type StateRef,
 } from "src";
 import { number, object, string } from "./validators";
@@ -94,9 +95,7 @@ const url = source.outputRef("Arn");
 const port = source.outputRef("Size");
 const optional = source.outputRef("Alias");
 const flag = new OutputRef<boolean>(source, ["Versioned"]);
-const credential = new OutputRef<string>(source, ["Token"], {
-  credential: true,
-});
+const credential = new OutputRef<string>(source, ["Token"], "credential");
 const recorded = source["~state"].outputRef("Name");
 
 describe("output ref types", () => {
@@ -182,6 +181,17 @@ describe("output ref types", () => {
       Derived<number>
     >();
     expectTypeOf(all([url, port])).toEqualTypeOf<Derived<[string, number]>>();
+  });
+
+  it("gives the value of a ref, a credential and a derived value as Resolved", () => {
+    expectTypeOf<Resolved<typeof url>>().toEqualTypeOf<string>();
+    expectTypeOf<Resolved<typeof optional>>().toEqualTypeOf<
+      string | undefined
+    >();
+    expectTypeOf<Resolved<typeof credential>>().toEqualTypeOf<string>();
+    expectTypeOf<Resolved<Derived<number>>>().toEqualTypeOf<number>();
+    expectTypeOf<Resolved<string>>().toEqualTypeOf<string>();
+    expectTypeOf<Resolved<typeof recorded>>().toEqualTypeOf<typeof recorded>();
   });
 
   it("types config and contributions as DeepInput", () => {

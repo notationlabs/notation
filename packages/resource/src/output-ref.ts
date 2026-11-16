@@ -26,11 +26,14 @@ const outputRefBrand: unique symbol = Symbol.for(
 );
 const derivedBrand: unique symbol = Symbol.for("@notation/resource/Derived");
 
+type RefKind = "output" | "credential" | "state";
+
 // The members of every kind of ref. `~value` holds `T` for the type checker
 // only. Without it, nothing in a `CredentialRef` or a `StateRef` reads `T`,
 // and a ref of one type would fit a ref of any other.
-interface RefMembers<T> {
+interface RefMembers<T, K extends RefKind> {
   readonly [outputRefBrand]: true;
+  readonly kind: K;
   readonly "~value"?: () => T;
   readonly resource: BaseResource;
   readonly path: readonly string[];
@@ -42,9 +45,7 @@ interface RefMembers<T> {
  * `map`. Turning it into a string throws, because the string would not hold
  * the value.
  */
-export interface OutputRef<T = unknown> extends RefMembers<T> {
-  readonly credential: false;
-  readonly state: false;
+export interface OutputRef<T = unknown> extends RefMembers<T, "output"> {
   /**
    * Computes a value from the output. Plan calls `fn` when the output is
    * known, and deploy calls it with the output. `fn` must depend only on its
@@ -58,20 +59,20 @@ export interface OutputRef<T = unknown> extends RefMembers<T> {
  * Stands for a credential of a resource. It can only be placed whole: a value
  * computed from it would be recorded in state as a plain param.
  */
-export interface CredentialRef<T = unknown> extends RefMembers<T> {
-  readonly credential: true;
-  readonly state: false;
-}
+export interface CredentialRef<T = unknown> extends RefMembers<
+  T,
+  "credential"
+> {}
 
 /**
  * Stands for an output in the state record of a resource, which is
  * undefined when there is no record. Made by `resource["~state"].outputRef`.
  * It adds no dependency, and it can only be placed whole in a contribution.
  */
-export interface StateRef<T = unknown> extends RefMembers<T | undefined> {
-  readonly credential: false;
-  readonly state: true;
-}
+export interface StateRef<T = unknown> extends RefMembers<
+  T | undefined,
+  "state"
+> {}
 
 export type AnyOutputRef = OutputRef | CredentialRef | StateRef;
 
@@ -79,14 +80,10 @@ export type AnyOutputRef = OutputRef | CredentialRef | StateRef;
  * The value that deploy fills in for `T`: the value of a ref, a credential or
  * a derived value, and `T` itself otherwise. It doesn't recurse into objects.
  */
-export type Resolved<T> =
-  T extends OutputRef<infer V>
-    ? V
-    : T extends CredentialRef<infer V>
-      ? V
-      : T extends Derived<infer V>
-        ? V
-        : T;
+export type Resolved<T> = T extends
+  OutputRef<infer V> | CredentialRef<infer V> | Derived<infer V>
+  ? V
+  : T;
 
 /** A value, or a ref or a derived value that deploy fills in with one. */
 export type Input<T> = T | OutputRef<T> | Derived<T>;
@@ -125,17 +122,33 @@ type DeepInputMembers<
       ? { [K in keyof T]: DeepInputWith<T[K], Also> }
       : T;
 
-class OutputRefClass {
+// Turning a ref or a derived value into a string throws, because the string
+// would not hold the value.
+abstract class Unstringable {
+  protected abstract stringError(): OutputRefStringError;
+
+  [Symbol.toPrimitive](): never {
+    throw this.stringError();
+  }
+
+  toString(): never {
+    throw this.stringError();
+  }
+
+  toJSON(): never {
+    throw this.stringError();
+  }
+}
+
+class OutputRefClass extends Unstringable {
   readonly [outputRefBrand] = true as const;
-  readonly credential: boolean;
-  readonly state: boolean = false;
 
   constructor(
     readonly resource: BaseResource,
     readonly path: readonly string[],
-    options: { credential?: boolean } = {},
+    readonly kind: RefKind = "output",
   ) {
-    this.credential = options.credential ?? false;
+    super();
   }
 
   map(fn: (value: unknown) => unknown): Derived {
@@ -146,46 +159,33 @@ class OutputRefClass {
     return mapDerived(this as AnyOutputRef, fn, callSite);
   }
 
-  [Symbol.toPrimitive](): never {
-    throw new OutputRefStringError(`Output ${describeOutputRef(this)}`);
-  }
-
-  toString(): never {
-    throw new OutputRefStringError(`Output ${describeOutputRef(this)}`);
-  }
-
-  toJSON(): never {
-    throw new OutputRefStringError(`Output ${describeOutputRef(this)}`);
+  protected stringError(): OutputRefStringError {
+    return new OutputRefStringError(`Output ${describeOutputRef(this)}`);
   }
 }
 
 /**
- * The class of every ref. `credentials` sets `credential`, so that a
- * `CredentialRef` is told apart without reading its resource.
+ * The class of every ref. `kind` tells an output, a credential and a
+ * `~state` ref apart, without reading the resource.
  */
 export const OutputRef = OutputRefClass as {
   new <T = unknown>(
     resource: BaseResource,
     path: readonly string[],
-    options?: { credential?: false },
+    kind?: "output",
   ): OutputRef<T>;
   new <T = unknown>(
     resource: BaseResource,
     path: readonly string[],
-    options: { credential: true },
+    kind: "credential",
   ): CredentialRef<T>;
+  new <T = unknown>(
+    resource: BaseResource,
+    path: readonly string[],
+    kind: "state",
+  ): StateRef<T>;
   readonly prototype: AnyOutputRef;
 };
-
-/**
- * Stands for an output in the target's state record at the start of the
- * deploy or plan. Made by `resource["~state"].outputRef`. Unlike an output
- * ref, it adds no dependency, and it resolves to undefined when the target
- * has no record.
- */
-export class StateOutputRef extends OutputRefClass {
-  override readonly state = true;
-}
 
 /**
  * The outputs of the targets of `~state` refs, from their state records at
@@ -202,10 +202,10 @@ export type RecordedOutputs = { [id: string]: DurableObject | null };
  * deploy late, with no error. Also throws for a `hidden` param, which the
  * state record does not hold, so the ref would always resolve to undefined.
  */
-export function stateOutputRef(
+export function stateOutputRef<T = unknown>(
   resource: BaseResource,
   key: string,
-): StateOutputRef {
+): StateRef<T> {
   const item = resource.schema[key];
   if (item?.propertyType === "param" && item.hidden) {
     throw new Error(
@@ -223,7 +223,7 @@ export function stateOutputRef(
       `Cannot read ${key} of ${resource.id} from state: ~state can read only an output that only a replace changes, which is a param that is immutable, primaryKey or secondaryKey, or that has physicalName`,
     );
   }
-  return new StateOutputRef(resource, [key]);
+  return new OutputRef<T>(resource, [key], "state");
 }
 
 /**
@@ -262,7 +262,7 @@ export function isDependencyRef(
   holder: BaseResource,
   token: AnyOutputRef,
 ): boolean {
-  return !(token instanceof StateOutputRef) && !isOwnNameRef(holder, token);
+  return token.kind !== "state" && !isOwnNameRef(holder, token);
 }
 
 /**
@@ -483,7 +483,7 @@ export function toCanonicalOutputRefs(value: unknown): unknown {
   return mapRefs(
     value,
     (token) => `<output ${describeOutputRef(token)}>`,
-    describeDerived,
+    (derived) => derived["~describe"](),
   );
 }
 
@@ -526,7 +526,7 @@ export function createPlanViews() {
     of<Deps extends Record<string, BaseResource | void>>(deps: Deps): Deps {
       const viewed: Record<string, BaseResource | void> = {};
       for (const [name, dep] of Object.entries(deps)) {
-        viewed[name] = dep && dependencyView(dep);
+        viewed[name] = dep && planView(dep);
       }
       return viewed as Deps;
     },
@@ -550,7 +550,7 @@ export function createPlanViews() {
     throw new PendingOutput(dep);
   };
 
-  const dependencyView = (dep: BaseResource): BaseResource => {
+  const planView = (dep: BaseResource): BaseResource => {
     const pending = hasPendingOutput(dep);
     const resolvesConfig = containsRefOrDerived(dep.config);
     if (!pending && !resolvesConfig) return dep;
@@ -570,7 +570,7 @@ export function createPlanViews() {
           ]),
         ),
       );
-    return dependencyProxy(dep, {
+    return dependencyView(dep, {
       output: pending ? () => viewedOutput ?? throwPending(dep) : undefined,
       config: resolvesConfig
         ? () => views.config(resolveOutputRefs(dep.config, planLookup))
@@ -592,7 +592,7 @@ export function deployViews<Deps extends Record<string, BaseResource | void>>(
   for (const [name, dep] of Object.entries(deps)) {
     viewed[name] =
       dep && containsRefOrDerived(dep.config)
-        ? dependencyProxy(dep, {
+        ? dependencyView(dep, {
             config: () => resolveOutputRefs(dep.config, deployLookup),
           })
         : dep;
@@ -600,37 +600,28 @@ export function deployViews<Deps extends Record<string, BaseResource | void>>(
   return viewed as Deps;
 }
 
-// The getters that make refs, or that read private fields, run on the
-// dependency itself, so that a ref names the dependency and not the view.
-const gettersOnTarget: ReadonlySet<PropertyKey> = new Set([
-  "credentials",
-  "~state",
-]);
-
-// Methods run on the dependency itself, because a view has none of its
-// private fields. Other getters run on the view, so that `key` reads the
-// view's output. Config is filled in on its first read, so code that doesn't
-// read it doesn't run the functions of its derived values.
-function dependencyProxy(
+// A view has none of the dependency's private fields, so `outputRef`,
+// `credentials` and `~state` run on the dependency, which also makes a ref
+// name the dependency and not the view. Other getters run on the view, so
+// that `key` reads the view's output. Config is filled in on its first read,
+// so code that doesn't read it doesn't run the functions of its derived
+// values.
+function dependencyView(
   dep: BaseResource,
   replaced: { output?: () => unknown; config?: () => unknown },
 ): BaseResource {
-  let config: { value: unknown } | undefined;
-  return new Proxy(dep, {
-    get(target, key, receiver) {
-      if (key === "output" && replaced.output) return replaced.output();
-      if (key === "config" && replaced.config) {
-        config ??= { value: replaced.config() };
-        return config.value;
-      }
-      const value = Reflect.get(
-        target,
-        key,
-        gettersOnTarget.has(key) ? target : receiver,
-      );
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
+  const view: PropertyDescriptorMap = {
+    outputRef: { value: dep.outputRef.bind(dep) },
+    credentials: { get: () => dep.credentials },
+    "~state": { get: () => dep["~state"] },
+  };
+  if (replaced.output) view.output = { get: replaced.output };
+  const fillConfig = replaced.config;
+  if (fillConfig) {
+    let config: { value: unknown } | undefined;
+    view.config = { get: () => (config ??= { value: fillConfig() }).value };
+  }
+  return Object.create(dep, view);
 }
 
 // Copies the objects and arrays that hold a ref or a derived value, with a
@@ -671,7 +662,7 @@ type DerivedOptions<T> = {
  * the function when every ref it reads is known, and deploy runs it with the
  * values.
  */
-export class Derived<T = unknown> {
+export class Derived<T = unknown> extends Unstringable {
   readonly [derivedBrand] = true as const;
   declare readonly "~value"?: () => T;
   /** The refs, derived values and plain values that the function reads. */
@@ -680,6 +671,7 @@ export class Derived<T = unknown> {
   readonly "~describe": () => string;
 
   constructor(options: DerivedOptions<T>) {
+    super();
     this["~inputs"] = options.inputs;
     this["~compute"] = options.compute;
     this["~describe"] = options.describe;
@@ -693,24 +685,12 @@ export class Derived<T = unknown> {
     return mapDerived(this, fn as (value: unknown) => U, callSite);
   }
 
-  [Symbol.toPrimitive](): never {
-    throw derivedStringError(this);
+  protected stringError(): OutputRefStringError {
+    return new OutputRefStringError(
+      `Derived value ${this["~describe"]()}`,
+      "a derived value",
+    );
   }
-
-  toString(): never {
-    throw derivedStringError(this);
-  }
-
-  toJSON(): never {
-    throw derivedStringError(this);
-  }
-}
-
-function derivedStringError(derived: Derived): OutputRefStringError {
-  return new OutputRefStringError(
-    `Derived value ${describeDerived(derived)}`,
-    "a derived value",
-  );
 }
 
 /**
@@ -765,11 +745,14 @@ export function text(
 export function all<const R extends readonly (OutputRef<any> | Derived<any>)[]>(
   refs: R,
 ): Derived<{ -readonly [K in keyof R]: Resolved<R[K]> }> {
-  const where = () => "all()";
+  const callSite = captureCallSiteLazily(all, { skipLibraryFrames: true });
+  const where = () => `all() at ${site(callSite)}`;
   for (const ref of refs) assertDerivable(ref, where);
   return new Derived({
     inputs: [...refs],
     compute: (values) => values as { -readonly [K in keyof R]: Resolved<R[K]> },
+    // The canonical form leaves out the call site, as `text` does, so that
+    // moving the call doesn't reorder a collected list.
     describe: () =>
       `<all of ${refs.map((ref) => describeInput(ref)).join(", ")}>`,
   });
@@ -806,12 +789,12 @@ function site(callSite: () => string | undefined): string {
 // param. A `~state` ref can only be placed whole in a contribution.
 function assertDerivable(value: unknown, where: () => string): void {
   if (!isOutputRef(value)) return;
-  if (value.credential) {
+  if (value.kind === "credential") {
     throw new Error(
       `${where()} reads the credential ${describeOutputRef(value)}. A credential can only be placed whole, because a value computed from it would be recorded in state as a plain param.`,
     );
   }
-  if (value.state) {
+  if (value.kind === "state") {
     throw new Error(
       `${where()} reads the ~state ref ${describeOutputRef(value)}. A ~state ref can only be placed whole in a contribution.`,
     );
@@ -839,7 +822,7 @@ function assertRecordable(value: unknown, where: () => string): void {
 
 function describeInput(input: unknown): string {
   if (isOutputRef(input)) return describeOutputRef(input);
-  if (isDerived(input)) return describeDerived(input);
+  if (isDerived(input)) return input["~describe"]();
   return JSON.stringify(input) ?? String(input);
 }
 
@@ -849,10 +832,6 @@ function describeType(value: unknown): string {
   if (typeof value === "object") return "an object";
   if (typeof value === "undefined") return "undefined";
   return `a ${typeof value}`;
-}
-
-function describeDerived(derived: Derived): string {
-  return derived["~describe"]();
 }
 
 /**
@@ -871,7 +850,7 @@ function resolveDerived(
       found = lookup(input);
       if (found.known && isOwnPhysicalName(found.value)) {
         throw new Error(
-          `${describeDerived(derived)} reads ${describeOutputRef(input)}, the physical name of ${input.resource.id} itself. Deploy decides the name after the params, so it can only be placed whole.`,
+          `${derived["~describe"]()} reads ${describeOutputRef(input)}, the physical name of ${input.resource.id} itself. Deploy decides the name after the params, so it can only be placed whole.`,
         );
       }
     } else if (isDerived(input)) {

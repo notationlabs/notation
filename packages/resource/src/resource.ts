@@ -49,7 +49,6 @@ import {
   planLookup,
   resolveOutputRefs,
   recordedLookup,
-  StateOutputRef,
   stateOutputRef,
   type AnyOutputRef,
   type CredentialRef,
@@ -96,12 +95,16 @@ export type ContributionInput<V> = {
  * filled in.
  */
 export type ResolvedDependencies<D> = {
-  [K in keyof D]: D[K] extends {
-    deriveParams(opts: { config: infer C }): unknown;
-  }
-    ? Omit<D[K], "config"> & { readonly config: C }
-    : D[K];
+  [K in keyof D]: ResolvedDependency<D[K]>;
 };
+
+// Distributes over a union, so that an optional dependency has its config
+// filled in too.
+type ResolvedDependency<R> = R extends {
+  deriveParams(opts: { config: infer C }): unknown;
+}
+  ? Omit<R, "config"> & { readonly config: C }
+  : R;
 
 /** The options a resource takes after its ID. */
 export type ResourceOpts<C, D> = OptionalIfAllPropertiesOptional<
@@ -538,7 +541,7 @@ export abstract class Resource<
     const refs: Record<string, CredentialRef> = {};
     for (const [key, item] of Object.entries(this.schema)) {
       if (item.propertyType === "credential") {
-        refs[key] = new OutputRef(this, [key], { credential: true });
+        refs[key] = new OutputRef(this, [key], "credential");
       }
     }
     return refs as any;
@@ -578,7 +581,7 @@ export abstract class Resource<
       outputRef: (key) => {
         const token = stateOutputRef(this, key);
         this.#stateRefTarget = true;
-        return token as unknown as StateRef<any>;
+        return token;
       },
     };
   }
@@ -647,7 +650,7 @@ export abstract class Resource<
     forEachOutputRef(this.config, (token) => {
       // Create and update resolve config with the live output of each ref,
       // which a `~state` ref's target may not have yet.
-      if (token instanceof StateOutputRef) {
+      if (token.kind === "state") {
         throw new Error(
           `The config of ${this.id} holds a ~state ref to ${token.resource.id}. A ~state ref can only be placed in a contribution.`,
         );
@@ -815,7 +818,7 @@ export abstract class Resource<
     const lookup: OutputLookup = plan ? planLookup : deployLookup;
     const lookupRecorded = recordedLookup(recordedOutputs);
     return resolveOutputRefs(value, (token) =>
-      token instanceof StateOutputRef
+      token.kind === "state"
         ? lookupRecorded(token)
         : isOwnNameRef(this, token)
           ? { known: true, value: ownPhysicalName(token.path[0]!) }
@@ -1296,15 +1299,14 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
               this.checkDeclaration();
             }
 
-            // Called with no argument, it reads config as it was declared.
-            async deriveParams(input?: {
+            async deriveParams(input: {
               id: string;
               config: C;
               deps: ResolvedDependencies<D>;
             }) {
               if (!opts.deriveParams) return {};
               return await opts.deriveParams({
-                config: (input?.config ?? this.config) as Partial<T["params"]>,
+                config: input.config as Partial<T["params"]>,
               });
             }
 
@@ -1326,7 +1328,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
                       keyof DepAwareParams | keyof IntrinsicParams
                     >
                   > {
-                    async deriveParams(input?: {
+                    async deriveParams(input: {
                       id: string;
                       config: ConfigParams<
                         T,
@@ -1339,11 +1341,8 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
                         ...superParams,
                         ...(await deriveParams({
                           id: this.id,
-                          config: (input?.config ?? this.config) as T["params"],
-                          deps:
-                            input?.deps ??
-                            (this
-                              .dependencies as ResolvedDependencies<Dependencies>),
+                          config: input.config as T["params"],
+                          deps: input.deps,
                         })),
                       };
                     }

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   ContributionConflictError,
   OutputRefStringError,
@@ -409,7 +409,7 @@ describe("text, map and all", () => {
       /^text`…` at packages\/resource\/test\/derived\.test\.ts:\d+ reads the credential token\.Value\. A credential can only be placed whole/,
     );
     expect(() => all([credential as any])).toThrow(
-      "all() reads the credential token.Value",
+      /^all\(\) at packages\/resource\/test\/derived\.test\.ts:\d+ reads the credential token\.Value/,
     );
     expect(() => (credential as any).map((value: string) => value)).toThrow(
       /^map\(\) at .+ reads the credential token\.Value/,
@@ -423,7 +423,7 @@ describe("text, map and all", () => {
       "reads the ~state ref orders.QueueName. A ~state ref can only be placed whole in a contribution.",
     );
     expect(() => all([recorded as any])).toThrow(
-      "all() reads the ~state ref orders.QueueName",
+      /^all\(\) at .+ reads the ~state ref orders\.QueueName/,
     );
     expect(() => (recorded as any).map((value: string) => value)).toThrow(
       "reads the ~state ref orders.QueueName",
@@ -551,10 +551,16 @@ describe("deriveParams", () => {
     });
     const Watcher = Plain.requireDependencies<{
       target: InstanceType<typeof Alarm>;
-    }>().deriveParams(({ deps }) => ({
-      Target: deps.target.config.Target,
-      Host: hostOf(deps.target.config.Target),
-    }));
+      other?: InstanceType<typeof Alarm>;
+    }>().deriveParams(({ deps }) => {
+      expectTypeOf(deps.other?.config.Target).toEqualTypeOf<
+        string | undefined
+      >();
+      return {
+        Target: deps.target.config.Target,
+        Host: hostOf(deps.target.config.Target),
+      };
+    });
     const watcher = new Watcher("watcher", {
       config: { AlarmName: "w" },
       dependencies: { target },

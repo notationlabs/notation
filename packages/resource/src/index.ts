@@ -43,7 +43,6 @@ export {
   OutputRef,
   OutputRefStringError,
   PendingOutput,
-  StateOutputRef,
   all,
   containsOutputRef,
   forEachOutputRef,
