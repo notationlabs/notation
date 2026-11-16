@@ -155,7 +155,13 @@ export function useProject({
       if (project.root) rmSync(project.root, { recursive: true, force: true });
     }
     expect(await scriptsWithPrefix(runPrefix)).toEqual([]);
-    expect(await namespacesWithPrefix(runPrefix)).toEqual([]);
+    // The list can show a deleted Worker's namespaces for a short while.
+    await expect
+      .poll(() => namespacesWithPrefix(runPrefix), {
+        timeout: 60_000,
+        interval: 3_000,
+      })
+      .toEqual([]);
     expect(await bucketsWithPrefix(runPrefix)).toEqual([]);
     expect(await kvNamespacesWithPrefix(runPrefix)).toEqual([]);
     expect(await containerApplicationsWithPrefix(runPrefix)).toEqual([]);
