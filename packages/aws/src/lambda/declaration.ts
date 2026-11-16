@@ -1,4 +1,4 @@
-import type { Input, Resolved, StandardSchemaV1 } from "@notation/resource";
+import type { Input, StandardSchemaV1 } from "@notation/resource";
 import type {
   APIGatewayEventRequestContextJWTAuthorizer,
   APIGatewayProxyEventV2,
@@ -493,7 +493,7 @@ export interface Lambda<
    * The variables that the declaration binds, read from the function's
    * environment. Throws when one of them is not set.
    */
-  env(): Readonly<EnvValues<Env>>;
+  env(): Readonly<Env>;
   /**
    * Decodes one item that the function received, and returns the item with
    * its decoded parts in place of the raw ones. For SQS the item is a record,
@@ -515,11 +515,6 @@ export interface Lambda<
  * a derived value that deploy fills in.
  */
 export type EnvVars = Record<string, Input<string>>;
-
-/** The values of `Env` as the function reads them. */
-export type EnvValues<Env extends EnvVars> = {
-  [K in keyof Env]: Resolved<Env[K]>;
-};
 
 type HttpHandler<Event> = (
   event: Event,
@@ -561,12 +556,9 @@ export type LambdaHandler<
   L extends { readonly "~lambda"?: { event: LambdaEvent | undefined } },
 > = HandlerFor<NonNullable<L["~lambda"]>["event"]>;
 
-/**
- * The variables that a Lambda's declaration binds, as the function reads
- * them. An output ref or a derived value gives its value.
- */
+/** The variables that a Lambda's declaration binds. */
 export type LambdaEnv<L extends { readonly "~lambda"?: { env: EnvVars } }> =
-  Readonly<EnvValues<NonNullable<L["~lambda"]>["env"]>>;
+  Readonly<NonNullable<L["~lambda"]>["env"]>;
 
 /** Thrown by `decode()` when an item is not valid. */
 export class DecodeError extends Error {
