@@ -78,13 +78,19 @@ export function unobtainableCredentialMessage(
   const replace = credential.instanceHash
     ? `${producer}@${credential.instanceHash}`
     : producer;
-  const lines = [
-    `${consumer} needs ${producer}.${name}, and deploy cannot get it. ${producerType} issues ${name} once, at create.`,
+  const first = `${consumer} needs ${producer}.${name}, and deploy cannot get it. ${producerType} issues ${name} once, at create.`;
+  const replaceCommand = [
     "",
     `  Replace ${producer}, to issue a new value:`,
     `    ${deployCommand} --replace ${shellQuote(replace)}`,
   ];
-  if (version === undefined) return lines.join("\n");
+  if (version === undefined) {
+    return [
+      first,
+      `Replace the resource \`${producer}\`.`,
+      ...replaceCommand,
+    ].join("\n");
+  }
   const passed = formatCredential({
     id: producer,
     name,
@@ -92,7 +98,9 @@ export function unobtainableCredentialMessage(
     variable: credentialVariable(producer, name),
   });
   return [
-    ...lines,
+    first,
+    `Either replace the resource \`${producer}\`, or provide the credential \`${producer}.${name}\`.`,
+    ...replaceCommand,
     "",
     "  Or pass a value that you hold:",
     `    ${deployCommand} --credential ${shellQuote(passed)}`,

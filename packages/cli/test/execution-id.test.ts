@@ -236,6 +236,7 @@ describe("replace flags", () => {
     expect((error as Error).message).toBe(
       [
         "app-key-secret needs app.privateKey, and deploy cannot get it. github/App issues privateKey once, at create.",
+        "Replace the resource `app`.",
         "",
         "  Replace app, to issue a new value:",
         "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --replace app@5d2e8b17",

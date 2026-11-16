@@ -464,6 +464,7 @@ it("fails for a credential that deploy cannot get, with deploy commands for the 
   expect((error as Error).message).toBe(
     [
       "app-key-secret needs app.privateKey, and deploy cannot get it. github/App issues privateKey once, at create.",
+      "Either replace the resource `app`, or provide the credential `app.privateKey`.",
       "",
       "  Replace app, to issue a new value:",
       "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --replace app@5d2e8b17",

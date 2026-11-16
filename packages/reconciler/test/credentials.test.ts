@@ -284,6 +284,7 @@ describe("a resource that takes a credential in a later deploy", () => {
     expect((error as Error).message).toBe(
       [
         "secret:b needs token.Value, and deploy cannot get it. test/credentials/Token issues Value once, at create.",
+        "Either replace the resource `token`, or provide the credential `token.Value`.",
         "",
         "  Replace token, to issue a new value:",
         `    notation deploy --replace token@${hash}`,

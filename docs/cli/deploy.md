@@ -98,6 +98,7 @@ Some providers issue a value once, at create, and have no API to issue another. 
 
 ```text
 ✗ app-key-secret needs app.privateKey, and deploy cannot get it. github/App issues privateKey once, at create.
+Either replace the resource `app`, or provide the credential `app.privateKey`.
 
   Replace app, to issue a new value:
     notation deploy --stage prod --replace app@5d2e8b17
@@ -111,7 +112,7 @@ This happens when the deploy that created the app failed before it created the s
 - **`--replace`** replaces the resource, as in [Replacing a resource](#replacing-a-resource). The new app has a new ID and a new key.
 - **`--credential`** gives deploy a value that you hold. The app keeps its ID.
 
-When state has no version of the credential, the error prints the `--replace` command only.
+When state has no version of the credential, the error says ``Replace the resource `app`.`` and prints the `--replace` command only.
 
 `--credential` reads the value from the environment variable that it names, so the value is never an argument on the command line:
 
