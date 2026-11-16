@@ -5,7 +5,6 @@ import {
   resolveOutputRefs,
   resource,
   ResourceNotFoundError,
-  type PhysicalNameRule,
 } from "@notation/resource";
 import { sortedJson } from "@notation/utils";
 import { accountId, cloudflareCreate } from "src/api/client";
@@ -22,12 +21,7 @@ import {
   type TokenResources,
 } from "src/api/tokens";
 
-export const TOKEN_NAME_MAX_LENGTH = 120;
-
-/** The rule of a token's generated name, `<app>--<stage>--<id>-<instance>`. */
-export const tokenNameRule: PhysicalNameRule = {
-  maxLength: TOKEN_NAME_MAX_LENGTH,
-};
+const TOKEN_NAME_MAX_LENGTH = 120;
 
 const policySchema = v.strictObject({
   effect: v.picklist(["allow", "deny"]),
@@ -126,7 +120,7 @@ const accountTokenSchema = accountToken.defineSchema({
       v.minLength(1),
       v.maxLength(TOKEN_NAME_MAX_LENGTH),
     ),
-    physicalName: tokenNameRule,
+    physicalName: { maxLength: TOKEN_NAME_MAX_LENGTH },
   },
   Policies: {
     propertyType: "param",
@@ -203,9 +197,9 @@ export const AccountToken = accountTokenSchema.defineOperations({
 
   // Runs when a create may have made a token and its outcome is unknown.
   // A token made then can't be used, as its value is lost, so every token
-  // with the name is deleted and the create runs again. Replace deletes
-  // the old token before it creates the new one, so no tracked token has
-  // the name.
+  // with the name is deleted and the create runs again. Only a change to
+  // Name or AccountId replaces a token, so a replacement's name is not the
+  // name of a tracked token in its account.
   find: async (params) => {
     const ids = await findTokensByName(params.AccountId, params.Name);
     await Promise.all(ids.map((id) => deleteToken(params.AccountId, id)));

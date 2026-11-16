@@ -5,7 +5,6 @@ import {
   ResourceNotFoundError,
 } from "@notation/resource";
 import { SecretsStore, SecretsStoreSecret } from "src/resources/secrets-store";
-import { secretNameRule } from "src/resources/secrets-store/secrets-store-secret";
 
 type Call = { method: string; url: URL; body: unknown };
 let calls: Call[];
@@ -155,7 +154,7 @@ describe("SecretsStoreSecret", () => {
         scope,
         "stripe-key-secret",
         "3fa91c02",
-        secretNameRule,
+        { maxLength: 255 },
         {},
       ),
     ).toBe("shop--dev--stripe-key-secret-3fa91c02");
@@ -164,7 +163,7 @@ describe("SecretsStoreSecret", () => {
       scope,
       "s".repeat(300),
       "3fa91c02",
-      secretNameRule,
+      { maxLength: 255 },
       {},
     );
     expect(long).toHaveLength(255);

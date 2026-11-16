@@ -1,24 +1,11 @@
 import * as v from "valibot";
-import {
-  resource,
-  ResourceNotFoundError,
-  type PhysicalNameRule,
-} from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import {
   deleteSecret,
   findSecretByName,
   writeSecret,
 } from "src/api/secrets-store";
 import type { SecretsStoreInstance } from "./secrets-store";
-
-// Cloudflare rejects a name of more than 255 characters with
-// `secret_name_too_long`.
-export const SECRET_NAME_MAX_LENGTH = 255;
-
-/** The rule of a secret's generated name, `<app>--<stage>--<id>-<instance>`. */
-export const secretNameRule: PhysicalNameRule = {
-  maxLength: SECRET_NAME_MAX_LENGTH,
-};
 
 type SecretsStoreSecretParams = {
   AccountId: string;
@@ -68,7 +55,9 @@ const secretsStoreSecretSchema = secretsStoreSecret.defineSchema({
     immutable: true,
     primaryKey: true,
     value: v.pipe(v.string(), v.nonEmpty()),
-    physicalName: secretNameRule,
+    // Cloudflare rejects a name of more than 255 characters with
+    // `secret_name_too_long`.
+    physicalName: { maxLength: 255 },
   },
   Value: {
     propertyType: "param",
