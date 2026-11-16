@@ -1,5 +1,14 @@
 # @notation/std
 
+## 0.25.0
+
+### Patch Changes
+
+- Updated dependencies [cf72708]
+  - @notation/resource@0.25.0
+  - @notation/core@0.25.0
+  - @notation/utils@0.25.0
+
 ## 0.24.1
 
 ### Patch Changes

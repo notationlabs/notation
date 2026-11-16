@@ -1,5 +1,30 @@
 # @notation/build
 
+## 0.25.0
+
+### Minor Changes
+
+- a54a8a4: `@notation/build/resources` exports `bundle()` and the `Bundle` resource. A bundle takes an entry and generated modules, and deploy builds it with Rolldown, with the build options of a `$lambda` or `$worker` bundle. Its params hold the hash of the file that it writes, and its outputs have the shape of a `std.fs.File`. `BundleLike` and `isBundle()` describe and recognise a bundle, including one from another installed copy of the package. Each build writes `dist/.bundles/<id>/inputs.json`, so a plan skips the build when no input has changed.
+
+  - `lambda()` accepts a bundle built for `node` as its `code`, and calls `index.<handler>`. `@notation/aws` and `@notation/cloudflare` now depend on `@notation/build`.
+  - `@notation/cloudflare/workers` exports `worker()`, which declares a Worker whose code is a bundle built for `workerd`. It binds the same values as `$worker`, and hosts a Durable Object namespace whose class the bundle's entry exports.
+  - `notation watch` redeploys when a file that a bundle read changes, outside `node_modules`.
+  - `@notation/build` exports `functionBuildOptions()`, the full Rolldown options of a function's bundle. The runtime builds of `notation compile` now run with the real path of the project root as their `cwd`. In a project whose root path is a symlink, the code of each existing `$worker` and `$lambda` changes once, because Rolldown writes paths in the output relative to `cwd`. The next deploy redeploys each of these functions once.
+
+- cf72708: `$worker` takes `entrypoint`, the class that the module exports as its default. A Worker that binds it gets `Service<Class>` in `env` when the class is a `WorkerEntrypoint`, so its RPC calls are typed, and a `Fetcher` otherwise. `Worker` has a second type parameter for the class. The build fails when `entrypoint` is not the class that the module declares and exports as its default, or when the module declares the class after `$worker`.
+
+  - `worker()` takes `entrypoint` as a marker from `entrypointType<typeof Class>()`, which `@notation/cloudflare/workers` exports. The build doesn't check the marker.
+  - `addBindings(worker, bindings)` adds bindings to a Worker from `$worker` or `worker()` from other infra code. The Worker resolves them with its own bindings. `WorkerEnv` doesn't include them. It fails for a name that is bound twice, when it is called from an `onEvaluationEnd` callback, when no resource graph is being collected, and for a Worker from another resource graph.
+  - A `@declaration` mark takes an `entryOption` clause, which names the option whose value must be the module's `entry` export.
+  - `@notation/resource` exports `evaluationEnded()`, which is `true` once the collection has started to run its `onEvaluationEnd` callbacks, and `captureCallSiteLazily()`.
+  - The build reads the name of a default-exported declaration, such as `export default function greeting() {}`. The infra build of a declaration module keeps such a function or class when the declaration uses it, where it dropped it before. The check for type-only exports counts the name as a value.
+
+### Patch Changes
+
+- Updated dependencies [cf72708]
+  - @notation/resource@0.25.0
+  - @notation/core@0.25.0
+
 ## 0.24.1
 
 ### Patch Changes

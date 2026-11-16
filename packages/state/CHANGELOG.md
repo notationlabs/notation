@@ -1,5 +1,12 @@
 # @notation/state
 
+## 0.25.0
+
+### Patch Changes
+
+- Updated dependencies [cf72708]
+  - @notation/resource@0.25.0
+
 ## 0.24.1
 
 ### Patch Changes
