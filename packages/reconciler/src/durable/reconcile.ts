@@ -199,7 +199,11 @@ export async function* reconcileResource(
     )),
     ...recorded,
   });
-  await validateParams(resource, params, "deploy");
+  // A placeholder's params leave out some contributions, so they can fail a
+  // check that the full params pass.
+  await validateParams(resource, params, "deploy", {
+    partial: Boolean(options.excludeContributionsFrom),
+  });
   // A placeholder's record leaves out the edges to the peers that its params
   // leave out, as those may not exist yet.
   const dependsOn = getDependencyIds(
@@ -631,7 +635,7 @@ async function* withoutContributions(
     }),
   );
   const params = fillPhysicalNames(unnamed, names);
-  await validateParams(resource, params, "deploy");
+  await validateParams(resource, params, "deploy", { partial: true });
   return {
     ...shared,
     unnamedParams: unnamed,

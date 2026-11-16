@@ -5,6 +5,7 @@ import {
   getActiveResourceCollection,
   type PhysicalNameRule,
 } from "@notation/resource";
+import { ID_RULE, isNameSafe } from "@notation/utils";
 
 // A Worker's name is the first label of its workers.dev URL, and a DNS label
 // holds 63 characters. A preview URL puts an 8 character version prefix and
@@ -18,9 +19,6 @@ const WORKER_ID_MAX_LENGTH = 63;
 
 const WORKER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 const WORKER_ID_RULE = `1 to ${WORKER_ID_MAX_LENGTH} lowercase letters, digits or hyphens, not starting or ending with a hyphen`;
-
-const NAMESPACE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-const NAMESPACE_ID_RULE = "1 to 64 letters, digits, hyphens or underscores";
 
 /** The rule of a Worker's generated name, `<app>--<stage>--<id>-<instance>`. */
 export const workerNameRule: PhysicalNameRule = {
@@ -57,9 +55,9 @@ export function assertNamespaceId(
   caller: string,
   value: unknown,
 ): asserts value is string {
-  if (typeof value !== "string" || !NAMESPACE_ID_PATTERN.test(value)) {
+  if (!isNameSafe(value)) {
     throw new Error(
-      `Invalid ${caller} id ${JSON.stringify(value)}: use ${NAMESPACE_ID_RULE}. The id keeps the namespace's objects when its class is renamed, so keep it stable.`,
+      `Invalid ${caller} id ${JSON.stringify(value)}: use ${ID_RULE}. The id keeps the namespace's objects when its class is renamed, so keep it stable.`,
     );
   }
 }

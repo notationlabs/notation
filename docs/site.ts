@@ -104,6 +104,7 @@ export const deploy = {
           links: [
             { label: "Overview", slug: "providers/cloudflare/overview" },
             { label: "Workers", slug: "providers/cloudflare/workers" },
+            { label: "KV", slug: "providers/cloudflare/kv" },
             { label: "Secrets", slug: "providers/cloudflare/secrets" },
             { label: "Containers", slug: "providers/cloudflare/containers" },
           ],

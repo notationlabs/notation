@@ -1,5 +1,15 @@
 # @notation/state
 
+## 0.24.0
+
+### Patch Changes
+
+- Updated dependencies [cfd0daf]
+- Updated dependencies [8e240be]
+- Updated dependencies [cfd0daf]
+- Updated dependencies [386a2a9]
+  - @notation/resource@0.24.0
+
 ## 0.23.0
 
 ### Patch Changes

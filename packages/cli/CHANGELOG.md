@@ -1,5 +1,36 @@
 # @notation/cli
 
+## 0.24.0
+
+### Minor Changes
+
+- cfd0daf: `credentialSourceResource()` in `@notation/resource` builds a source: a value that exists outside notation, such as an environment variable. A source has one credential, `value`, which another resource takes as it takes a token's value. Plan and deploy call the source's `read` for its `revision`, and deploy calls `loadCredential` only when a resource that takes the value is created or updated and deploy holds no value. The credential's version is made from the source's params and its revision, so a new revision updates every resource that takes it. Deploy never replaces a source. `BaseResource` has a `kind` field, `"resource"` or `"credential-source"`.
+
+  `update` receives the value of a credential only when its version differs from the version in the resource's record. Every other credential in `patch` and `params` is `undefined`.
+
+  Deploy no longer replaces a resource to get a credential that has no `rotate`. Plan and deploy fail instead. The error gives the reason that a resource needs the value, and prints two commands: `notation deploy --credential <id>.<credential>@<hash>=<variable>`, which gives deploy a value that the user issues at the provider, from an environment variable, and `notation deploy --replace <id>@<hash>`. The hash of both flags is the instance hash of the resource, so a command copied from another stage fails. `notation plan --credential` plans it and prints the deploy command with the hash. The `unheldCredentials` field of a plan node and the `credential` field of a replace field are removed.
+
+  A resource class can give `rotateManually`, one sentence for each credential without `rotate` that tells the user how to issue a new value at the provider. The error prints it above the `--credential` command.
+
+  `deployment()` in `@notation/core` returns the app and the stage while infra code is evaluated. `notation viz` takes `--stage` and evaluates the infra for it. Without `--stage` or `defaultStage`, it fails with "No stage given".
+
+- cfd0daf: The old secret sources are removed. Declare a source from `@notation/std/resources` (`sources.Env`, `sources.Dotenv`) or `@notation/infisical/resources` (`InfisicalSecret`) in their place, and pass `source.credentials.value` to the resource that takes the value.
+
+  - `@notation/std`: the `@notation/std/sources` entry point, with `env`, `dotenv` and `getValue`, and the `sources.SourceValue` resource are removed.
+  - `@notation/infisical`: the `@notation/infisical/sources` entry point, with `infisical()`, is removed.
+  - `@notation/core`: `Source`, `SourceContext`, `declareSecret`, the secret context (`runWithSecretContext`, `secretContext`), `PROMPT_SOURCE`, `SecretPrompt`, `setSecret`, `deleteSecret` and the `promptSecret` option of `deployApp` are removed. `Redacted` and scrubbing stay.
+  - `@notation/resource`: `scopedPhysicalName` is removed.
+  - CLI: `notation secret set`, `notation secret delete` and `--prompt-secrets` are removed. Deploy no longer asks for a secret's value on the terminal, and `watch` gives its deploys no stdin.
+  - `--replace` refuses only a credential source as a source. A resource with no primary key is no longer treated as one.
+
+### Patch Changes
+
+- Updated dependencies [cfd0daf]
+- Updated dependencies [cfd0daf]
+  - @notation/core@0.24.0
+  - @notation/build@0.24.0
+  - @notation/dashboard@0.24.0
+
 ## 0.23.0
 
 ### Minor Changes

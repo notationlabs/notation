@@ -177,6 +177,25 @@ describe("collected params", () => {
     );
   });
 
+  it("names the user's call site when a library contributes for it", async () => {
+    // A helper whose frames are in node_modules, as a group's `contribute`
+    // in an installed package is.
+    const contributeFor = new Function(
+      "resource",
+      "values",
+      "resource.contribute(values);\n//# sourceURL=/app/node_modules/helper/index.js",
+    ) as (resource: unknown, values: unknown) => void;
+    const fn = new Fn("fn", { config: { FunctionName: "f", Role: "r" } });
+    contributeFor(fn, { Environment: { Variables: { MODE: "a" } } });
+    contributeFor(fn, { Environment: { Variables: { MODE: "b" } } });
+
+    const error = await fn.getParams().catch((caught) => caught);
+    const [, first, second] = error.message.match(
+      /^Conflicting contributions to fn: packages\/resource\/test\/contributions\.test\.ts:(\d+) and packages\/resource\/test\/contributions\.test\.ts:(\d+) both set/,
+    );
+    expect(Number(second) - Number(first)).toBe(1);
+  });
+
   it("accepts the same value from two contributors", async () => {
     const fn = new Fn("fn", { config: { FunctionName: "f", Role: "r" } });
     fn.contribute({ Environment: { Variables: { MODE: "a" } } });

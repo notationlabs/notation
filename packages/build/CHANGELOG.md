@@ -1,5 +1,13 @@
 # @notation/build
 
+## 0.24.0
+
+### Patch Changes
+
+- Updated dependencies [cfd0daf]
+- Updated dependencies [cfd0daf]
+  - @notation/core@0.24.0
+
 ## 0.23.0
 
 ### Patch Changes
