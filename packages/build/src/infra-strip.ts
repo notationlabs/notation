@@ -347,12 +347,8 @@ const defaultLocal = "*default*";
 function ownersOf(analysis: ModuleAnalysis): Map<string, Node> {
   const owners = new Map<string, Node>();
   for (const statement of analysis.table.module.body) {
-    if (statement.type === "ExportDefaultDeclaration") {
+    if (statement.type === "ExportDefaultDeclaration")
       owners.set(defaultLocal, statement);
-      const id = statement.declaration.id;
-      if (id) owners.set(id.name, statement);
-      continue;
-    }
     for (const name of declaredBy(statement)) owners.set(name, statement);
   }
   return owners;
