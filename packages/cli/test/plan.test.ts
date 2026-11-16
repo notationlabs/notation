@@ -17,9 +17,8 @@ vi.mock("@notation/core", async (importOriginal) => ({
     .formatRequest,
   shellQuote: (await importOriginal<typeof import("@notation/core")>())
     .shellQuote,
-  requestedCredential: (
-    await importOriginal<typeof import("@notation/core")>()
-  ).requestedCredential,
+  requestedCredential: (await importOriginal<typeof import("@notation/core")>())
+    .requestedCredential,
   UnobtainableCredentialError: (
     await importOriginal<typeof import("@notation/core")>()
   ).UnobtainableCredentialError,
