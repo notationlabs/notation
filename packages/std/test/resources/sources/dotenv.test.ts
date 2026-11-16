@@ -69,6 +69,10 @@ describe("Dotenv", () => {
     await expect(load()).rejects.toThrow(
       "WEBHOOK_SECRET is not set in .env.local.",
     );
+    await writeFile(path.join(directory, ".env.local"), "WEBHOOK_SECRET=\n");
+    await expect(load()).rejects.toThrow(
+      "WEBHOOK_SECRET is empty in .env.local.",
+    );
   });
 
   it("with track, hashes the value, and warns when the key is not set", async () => {
@@ -102,6 +106,11 @@ describe("Dotenv", () => {
     expect(warnings).toEqual([
       "WEBHOOK_SECRET is not set in .env.local. Its value was not checked for a change.",
     ]);
+
+    await writeFile(path.join(directory, ".env.local"), "WEBHOOK_SECRET=\n");
+    await expect(read({ revision })).rejects.toThrow(
+      "WEBHOOK_SECRET is empty in .env.local.",
+    );
   });
 
   it("with track, fails to load a value that changed after read", async () => {

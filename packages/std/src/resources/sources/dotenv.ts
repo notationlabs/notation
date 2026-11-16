@@ -4,7 +4,7 @@ import * as v from "valibot";
 import { fromProjectRoot } from "@notation/core/paths";
 import { credentialSourceResource } from "@notation/resource";
 import { isErrorWithCode } from "@notation/utils";
-import { loadLocalValue, localRevision, lookup } from "./local-value";
+import { loadLocalValue, localRevision, type Missing } from "./local-value";
 import { trackValidator, type Track } from "../../track";
 
 export type DotenvSchema = {
@@ -21,8 +21,13 @@ const read = (path: string, key: string) => async () => {
     if (!isErrorWithCode(error, "ENOENT")) throw error;
     text = "";
   }
-  return lookup(parseEnv(text)[key]);
+  return parseEnv(text)[key];
 };
+
+const missing = (path: string, key: string): Missing => ({
+  unset: `${key} is not set in ${path}`,
+  empty: `${key} is empty in ${path}`,
+});
 
 /**
  * The value of a key in a `.env` file. Without `track`, it has a new
@@ -58,7 +63,7 @@ export const Dotenv = credentialSourceResource<DotenvSchema>({
       revision: await localRevision(
         params.track,
         read(params.path, params.key),
-        `${params.key} is not set in ${params.path}`,
+        missing(params.path, params.key),
         context,
       ),
     }),
@@ -66,7 +71,7 @@ export const Dotenv = credentialSourceResource<DotenvSchema>({
       loadLocalValue(
         state.track,
         read(state.path, state.key),
-        `${state.key} is not set in ${state.path}`,
+        missing(state.path, state.key),
         state.revision,
         context,
       ),

@@ -70,7 +70,7 @@ describe("Env", () => {
     vi.stubEnv("STRIPE_KEY", undefined);
     await expect(load()).rejects.toThrow("STRIPE_KEY is not set.");
     vi.stubEnv("STRIPE_KEY", "");
-    await expect(load()).rejects.toThrow("STRIPE_KEY is not set.");
+    await expect(load()).rejects.toThrow("STRIPE_KEY is empty.");
   });
 
   describe("with track", () => {
@@ -176,6 +176,21 @@ describe("Env", () => {
           loadContext("stripe-key"),
         ),
       ).rejects.toThrow("STRIPE_KEY is not set.");
+    });
+
+    it("fails when the variable is empty, even with a revision in state", async () => {
+      vi.stubEnv("NOTATION_TRACK_KEY", "track-key");
+      vi.stubEnv("STRIPE_KEY", "");
+      const params = { key: "STRIPE_KEY", track: "hmac" as const };
+      const source = await declare("stripe-key", params);
+      const { context, warnings } = readContext("stripe-key", {
+        revision: "hmac:recorded",
+      });
+
+      await expect(source.readSource(params, context)).rejects.toThrow(
+        "STRIPE_KEY is empty.",
+      );
+      expect(warnings).toEqual([]);
     });
 
     it("fails when the variable is not set and state has no revision", async () => {

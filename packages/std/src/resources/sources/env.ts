@@ -1,6 +1,6 @@
 import * as v from "valibot";
 import { credentialSourceResource } from "@notation/resource";
-import { loadLocalValue, localRevision, lookup } from "./local-value";
+import { loadLocalValue, localRevision, type Missing } from "./local-value";
 import { trackValidator, type Track } from "../../track";
 
 export type EnvSchema = {
@@ -8,7 +8,12 @@ export type EnvSchema = {
   Value: string;
 };
 
-const read = (key: string) => async () => lookup(process.env[key]);
+const read = (key: string) => async () => process.env[key];
+
+const missing = (key: string): Missing => ({
+  unset: `${key} is not set`,
+  empty: `${key} is empty`,
+});
 
 /**
  * The value of an environment variable. Without `track`, it has a new
@@ -43,7 +48,7 @@ export const Env = credentialSourceResource<EnvSchema>({
       revision: await localRevision(
         params.track,
         read(params.key),
-        `${params.key} is not set`,
+        missing(params.key),
         context,
       ),
     }),
@@ -51,7 +56,7 @@ export const Env = credentialSourceResource<EnvSchema>({
       loadLocalValue(
         state.track,
         read(state.key),
-        `${state.key} is not set`,
+        missing(state.key),
         state.revision,
         context,
       ),
