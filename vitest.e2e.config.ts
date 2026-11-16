@@ -2,8 +2,10 @@
 
 import { configDefaults, defineConfig } from "vitest/config";
 
-const containers =
-  "packages/cloudflare/test/resources/containers/*.e2e.test.ts";
+// The tests of container resources, one glob for each provider.
+const containers = [
+  "packages/cloudflare/test/resources/containers/*.e2e.test.ts",
+];
 
 export default defineConfig({
   resolve: { tsconfigPaths: true },
@@ -18,12 +20,12 @@ export default defineConfig({
         test: {
           name: "e2e",
           include: ["{packages,examples}/**/*.e2e.test.ts"],
-          exclude: [...configDefaults.exclude, containers],
+          exclude: [...configDefaults.exclude, ...containers],
         },
       },
       {
         extends: true,
-        test: { name: "containers", include: [containers] },
+        test: { name: "containers", include: containers },
       },
     ],
   },

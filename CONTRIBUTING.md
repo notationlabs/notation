@@ -10,7 +10,7 @@ the commands, or `pok <command> --help` for one of them.
 | `pok test run`            | Run the suite once, as CI and the pre-commit hook do             |
 | `pok test watch`          | Re-run tests on change                                           |
 | `pok test e2e`            | Build, then run the end-to-end tests, except the container tests |
-| `pok test e2e-containers` | Build, then run the Cloudflare container end-to-end tests        |
+| `pok test e2e-containers` | Build, then run the end-to-end tests of container resources      |
 | `pok typecheck`           | Type-check every package                                         |
 | `pok format`              | Format the repository                                            |
 
@@ -40,9 +40,9 @@ variables from the environment:
 
 A Cloudflare test is skipped when its variables are missing. An AWS test fails.
 
-`pok test e2e` leaves out the tests in
-`packages/cloudflare/test/resources/containers`. They build and push images,
-and wait for rollouts that can take several minutes. Run them with
+`pok test e2e` leaves out the tests of container resources, which
+`vitest.e2e.config.ts` lists in `containers`. They build and push images, and
+wait for rollouts that can take several minutes. Run them with
 `pok test e2e-containers` when you change the container resources.
 
 To run one file, build, then pass its path to Vitest:
