@@ -249,7 +249,8 @@ describe("KVNamespace", () => {
     it("fails, and names the flag that allows it", async () => {
       await expect(
         createPlan({
-          nameScope: { app: "app", stage: "test" },
+          app: "app",
+          stage: "test",
           resources: [namespace],
           state: stateWith(namespace, { ...params, ...key }),
           driftDetection: false,
@@ -263,7 +264,8 @@ describe("KVNamespace", () => {
 
     it("is planned with --override-loss-protection", async () => {
       const plan = await createPlan({
-        nameScope: { app: "app", stage: "test" },
+        app: "app",
+        stage: "test",
         resources: [namespace],
         state: stateWith(namespace, { ...params, ...key }),
         driftDetection: false,

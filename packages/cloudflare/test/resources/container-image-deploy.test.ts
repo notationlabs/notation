@@ -152,7 +152,8 @@ async function deploy(executionId: string) {
 async function plan() {
   const { resources } = await collect();
   const planned = await createPlan({
-    nameScope: { app: "app", stage: "test" },
+    app: "app",
+    stage: "test",
     resources,
     state: runtime.state,
   });

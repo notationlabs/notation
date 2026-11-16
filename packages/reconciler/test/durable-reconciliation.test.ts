@@ -2634,7 +2634,8 @@ describe("rejectChange", () => {
 
     resources.splice(0);
     await createPlan({
-      nameScope: { app: "app", stage: "test" },
+      app: "app",
+      stage: "test",
       resources,
       state: runtime.state,
       registry: createResourceRegistry([Guarded]),
@@ -7666,7 +7667,8 @@ describe("create-first replacement", () => {
 
     const retired = (await runtime.state.get("bus"))!.retired![0]!;
     const plan = await createPlan({
-      nameScope: { app: "app", stage: "test" },
+      app: "app",
+      stage: "test",
       resources,
       state: runtime.state,
       driftDetection: false,

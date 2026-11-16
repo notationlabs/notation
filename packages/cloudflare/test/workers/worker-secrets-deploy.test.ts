@@ -210,7 +210,8 @@ async function decisions() {
     resources,
     state: runtime.state,
     registry,
-    nameScope: scope,
+    app: scope.app,
+    stage: scope.stage,
   });
   return Object.fromEntries(
     planned.nodes.map((node) => [node.id, node.decision]),

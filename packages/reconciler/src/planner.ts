@@ -11,7 +11,6 @@ import {
   validateParams,
   type BaseCredentialSource,
   type BaseResource,
-  type NameScope,
   type RecordedOutputs,
 } from "@notation/resource";
 import {
@@ -103,8 +102,10 @@ export type CreatePlanOptions = {
    * `requested`.
    */
   deploymentId?: string;
-  /** The app and stage, for the `read` of each source. */
-  nameScope: NameScope;
+  /** The app, for the `read` of each source. */
+  app: string;
+  /** The stage, for the `read` of each source. */
+  stage: string;
   /** The execution ID that each source's `read` receives. Defaults to a new one. */
   executionId?: string;
 };
@@ -118,7 +119,8 @@ export async function createPlan({
   registry,
   requested,
   deploymentId,
-  nameScope,
+  app,
+  stage,
   executionId = randomUUID(),
 }: CreatePlanOptions): Promise<Plan> {
   const resourceById = new Map(
@@ -204,7 +206,7 @@ export async function createPlan({
         () => emitStep,
         source,
         params,
-        { id: source.id, executionId, ...nameScope },
+        { id: source.id, executionId, app, stage },
         record,
       ),
     );

@@ -384,7 +384,8 @@ describe("a source", () => {
         resources: declare(types),
         state: runtime.state,
         deploymentId: "credentials",
-        nameScope: { app: "shop", stage: "prod" },
+        app: "shop",
+        stage: "prod",
         requested: { replace: [{ id: "stripe-key" }] },
       }),
     ).rejects.toThrow("stripe-key is a source, and a source is never replaced");
@@ -420,7 +421,8 @@ describe("a plan with a source", () => {
     createPlan({
       resources,
       state: runtime.state,
-      nameScope: { app: "shop", stage: "prod" },
+      app: "shop",
+      stage: "prod",
     });
 
   it("reads every source, and shows a new revision as an update of the source and of what takes it", async () => {

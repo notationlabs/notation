@@ -303,7 +303,8 @@ describe("a resource that takes a credential in a later deploy", () => {
     await runtime.deploy("first", declare(rotatable, { secrets: ["a"] }));
 
     const plan = await createPlan({
-      nameScope: { app: "app", stage: "test" },
+      app: "app",
+      stage: "test",
       resources: declare(rotatable, { secrets: ["a", "b"] }),
       state: runtime.state,
     });
@@ -322,7 +323,8 @@ describe("a resource that takes a credential in a later deploy", () => {
 
     await expect(
       createPlan({
-        nameScope: { app: "app", stage: "test" },
+        app: "app",
+        stage: "test",
         resources: declare(types, { secrets: ["a", "b"] }),
         state: runtime.state,
         deploymentId: "credentials",
@@ -345,7 +347,8 @@ describe("a resource that takes a credential in a later deploy", () => {
     );
 
     const error = await createPlan({
-      nameScope: { app: "app", stage: "test" },
+      app: "app",
+      stage: "test",
       resources,
       state: runtime.state,
       deploymentId: "credentials",
@@ -508,7 +511,8 @@ describe("a plan with a resource that is replaced and takes a credential", () =>
     await runtime.deploy("first", declare(types, { secrets: ["a", "b"] }));
 
     const plan = await createPlan({
-      nameScope: { app: "app", stage: "test" },
+      app: "app",
+      stage: "test",
       resources: renamed(types),
       state: runtime.state,
     });
@@ -527,7 +531,8 @@ describe("a plan with a resource that is replaced and takes a credential", () =>
 
     await expect(
       createPlan({
-        nameScope: { app: "app", stage: "test" },
+        app: "app",
+        stage: "test",
         resources: renamed(types),
         state: runtime.state,
       }),
@@ -541,7 +546,8 @@ describe("a plan with a resource that is replaced and takes a credential", () =>
     await runtime.deploy("first", declare(types, { secrets: ["a", "b"] }));
 
     const plan = await createPlan({
-      nameScope: { app: "app", stage: "test" },
+      app: "app",
+      stage: "test",
       resources: renamed(types),
       state: runtime.state,
       deploymentId: "credentials",
@@ -564,7 +570,8 @@ describe("a plan with a resource that is replaced and takes a credential", () =>
     await runtime.deploy("first", declare(types, { secrets: ["a", "b"] }));
 
     const plan = await createPlan({
-      nameScope: { app: "app", stage: "test" },
+      app: "app",
+      stage: "test",
       resources: renamed(types),
       state: runtime.state,
       deploymentId: "credentials",
@@ -617,7 +624,8 @@ describe("a create that returns a credential its validator rejects", () => {
 
     await expect(
       createPlan({
-        nameScope: { app: "app", stage: "test" },
+        app: "app",
+        stage: "test",
         resources: [new Token("token", { config: {} })],
         state: runtime.state,
         deploymentId: "credentials",
@@ -817,7 +825,8 @@ describe("a hidden param that takes a credential", () => {
     const runtime = createRuntime();
     await expect(
       createPlan({
-        nameScope: { app: "app", stage: "test" },
+        app: "app",
+        stage: "test",
         resources,
         state: runtime.state,
       }),
@@ -914,7 +923,8 @@ describe("an update that moves a credential to another binding", () => {
 
   const plan = (resources: BaseResource[], runtime: Runtime) =>
     createPlan({
-      nameScope: { app: "app", stage: "test" },
+      app: "app",
+      stage: "test",
       resources,
       state: runtime.state,
     });
@@ -1084,7 +1094,8 @@ describe("--credential", () => {
 
     await expect(
       createPlan({
-        nameScope: { app: "app", stage: "test" },
+        app: "app",
+        stage: "test",
         resources: replaced(),
         state: runtime.state,
         deploymentId: "credentials",

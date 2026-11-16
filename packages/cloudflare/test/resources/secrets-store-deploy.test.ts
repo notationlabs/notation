@@ -197,7 +197,8 @@ async function plan() {
     resources,
     state: runtime.state,
     registry,
-    nameScope: scope,
+    app: scope.app,
+    stage: scope.stage,
   });
 }
 

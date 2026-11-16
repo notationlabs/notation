@@ -58,7 +58,8 @@ export async function planApp({
         registry: mergeResourceRegistries(providerRegistry, registry),
         requested,
         deploymentId: runtime.deploymentId,
-        nameScope,
+        app: deployment.app,
+        stage: deployment.stage,
       });
     },
   );
