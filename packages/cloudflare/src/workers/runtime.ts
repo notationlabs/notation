@@ -54,7 +54,7 @@ export function isWorkerGroup(_value: unknown): false {
  * @resource
  */
 export function addBindings(
-  _worker: Worker<any>,
+  _worker: Worker<any, any>,
   _bindings: Bindings,
 ): never {
   throw infraOnly("addBindings()");

@@ -253,7 +253,7 @@ type WorkerExports = {
 
 /** How a Worker was declared, and where its code comes from. */
 type WorkerSource = {
-  declaration: Worker<any>;
+  declaration: Worker<any, any>;
   /** Names the Worker in errors, with its module if known. */
   describe: () => string;
   /** Undefined when the module is not known. */
@@ -436,8 +436,25 @@ function registerWorker(
   const entry: Entry = {
     ...source,
     id: config.id,
-    // Called once, after all infra modules have loaded.
-    bindings: () => (bindings ??= withAdded(entry, config.bindings?.() ?? {})),
+    // Called once, after all infra modules have loaded. A name in the
+    // Worker's own bindings is checked here, not in addBindings(), as
+    // `config.bindings` is only called then.
+    bindings: () => {
+      if (bindings) return bindings;
+      const own = config.bindings?.() ?? {};
+      bindings = { ...own };
+      for (const added of entry.added) {
+        for (const [name, value] of Object.entries(added.bindings)) {
+          if (Object.hasOwn(own, name)) {
+            throw new Error(
+              `addBindings() at ${added.caller()} binds ${name} on ${entry.describe()}, which already binds ${name} in its bindings. Give one of the bindings another name.`,
+            );
+          }
+          bindings[name] = value;
+        }
+      }
+      return bindings;
+    },
     added: [],
     // A Worker that is already in `chain` means the bindings form a cycle.
     build: (chain = []) => {
@@ -542,7 +559,7 @@ function registerWorker(
  * @resource
  */
 export function addBindings(
-  worker: Worker<any>,
+  worker: Worker<any, any>,
   bindings: Bindings,
 ): void {
   const caller = captureCallSiteLazily(addBindings);
@@ -569,23 +586,6 @@ export function addBindings(
     }
   }
   entry.added.push({ bindings: { ...bindings }, caller: at });
-}
-
-// A name in a Worker's own bindings is checked here, not in addBindings(),
-// as the Worker's `bindings` is first called at the end of evaluation.
-function withAdded(entry: Entry, own: Bindings): Bindings {
-  const merged = { ...own };
-  for (const added of entry.added) {
-    for (const [name, value] of Object.entries(added.bindings)) {
-      if (Object.hasOwn(own, name)) {
-        throw new Error(
-          `addBindings() at ${added.caller()} binds ${name} on ${entry.describe()}, which already binds ${name} in its bindings. Give one of the bindings another name.`,
-        );
-      }
-      merged[name] = value;
-    }
-  }
-  return merged;
 }
 
 // Workers are built from onEvaluationEnd, when a collection is always
