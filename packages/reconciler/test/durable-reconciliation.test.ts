@@ -5992,6 +5992,58 @@ describe("dependency cycles", () => {
     runtime.close();
   });
 
+  it("does not run a check on a placeholder that leaves out the field the check requires", async () => {
+    const { Worker, worker, bind, calls } = defineWorkers();
+    const bindsB = v.pipe(
+      v.array(v.string()),
+      v.check((bindings) => bindings.includes("b"), "Must bind b"),
+    );
+    const shared = worker("shared");
+    const a: BaseResource = new Worker("a", {
+      config: { name: "a" } as any,
+      checks: { bindings: bindsB } as any,
+    });
+    const b = worker("b");
+    bind(a, shared);
+    bind(a, b);
+    bind(b, a);
+    const runtime = createRuntime([a, b, shared], "cycle-check");
+
+    await runtime.run("cycle-check-1");
+    expect(calls).toEqual([
+      "create shared []",
+      "create a [shared]",
+      "create b [a]",
+      "update a [b, shared]",
+    ]);
+    runtime.close();
+  });
+
+  it("runs the check on the full params of the placeholder in the next pass", async () => {
+    const { Worker, worker, bind, calls } = defineWorkers();
+    const a: BaseResource = new Worker("a", {
+      config: { name: "a" } as any,
+      checks: {
+        bindings: v.pipe(
+          v.array(v.string()),
+          v.check((bindings) => bindings.includes("c"), "Must bind c"),
+        ),
+      } as any,
+    });
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const runtime = createRuntime([a, b], "cycle-check-fails");
+
+    await expect(runtime.run("cycle-check-fails-1")).rejects.toThrow(
+      /^Invalid bindings for a \(test\/durable\/cycle-worker\) at deploy.*: Must bind c$/,
+    );
+    // Before deploy, b's name is unknown, so the check of a's bindings is
+    // left to the pass that has it.
+    expect(calls).toEqual(["create a []", "create b [a]"]);
+    runtime.close();
+  });
+
   it("does not read a placeholder that it created for drift in the next pass", async () => {
     const { worker, bind } = defineWorkers({ versioned: true });
     const a = worker("a");
