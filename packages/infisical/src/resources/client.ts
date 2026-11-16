@@ -22,8 +22,8 @@ export function where(address: SecretAddress): string {
 
 /**
  * Fetches one shared secret, with `GET /api/v4/secrets/{secretName}`. Without
- * `version`, it fetches the current version. Secrets imported into the
- * folder are not found.
+ * `version`, it fetches the current version. It finds a secret imported into
+ * the folder too, and then Infisical ignores `version`.
  */
 export async function getSecret(
   address: SecretAddress,
@@ -44,7 +44,7 @@ export async function getSecret(
     type: "shared",
     viewSecretValue: "true",
     expandSecretReferences: String(options.expandSecretReferences),
-    includeImports: "false",
+    includeImports: "true",
   });
   if (options.version !== undefined) {
     query.set("version", String(options.version));

@@ -43,14 +43,15 @@ new secretsStore.SecretsStoreSecret("stripe-key-secret", {
 
 `INFISICAL_DOMAIN` sets the URL of the Infisical instance. It defaults to `https://app.infisical.com`.
 
-- The source reads a shared secret in the folder. A secret imported into the folder, and a personal override, are not read.
+- The source reads a shared secret in the folder, or a shared secret imported into the folder. A personal override is not read.
+- For an imported secret without `track`, deploy cannot load an earlier version. If the imported secret was edited after plan read it, deploy fails and asks you to run deploy again.
 - Plan and deploy fail when the folder doesn't have the key, when the identity can't read secret values, and when the value is empty.
 - Plan reads the value of every `InfisicalSecret`, so the identity that runs plan needs permission to read values. Plan keeps the value in memory, and does not record it.
 - Without `track`, deploy loads a secret with a reference at its current value, and not at a fixed version. When a deploy is resumed after the secret, or a secret that it refers to, was edited, the resources written before and after the resume can have different values.
 
 ## When the value is written
 
-Without `track`, the `revision` of the source is the secret's ID and its Infisical version, such as `9c2e…:14`. A resource that takes the value is written when the version changes:
+Without `track`, the `revision` of the source is the secret's ID and its Infisical version, such as `version:9c2e…:14`. A resource that takes the value is written when the version changes:
 
 ```text
 ~ update infisical/secrets/InfisicalSecret stripe-key

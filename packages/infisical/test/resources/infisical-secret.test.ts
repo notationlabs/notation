@@ -126,7 +126,7 @@ describe("InfisicalSecret", () => {
     const source = await declare(address);
 
     const revision = await read(source, address);
-    expect(revision).toBe("sec-1:15");
+    expect(revision).toBe("version:sec-1:15");
     expect(calls).toHaveLength(2);
     const [stored, expanded] = calls;
     expect(stored!.url.origin).toBe("https://app.infisical.com");
@@ -138,7 +138,7 @@ describe("InfisicalSecret", () => {
       type: "shared",
       viewSecretValue: "true",
       expandSecretReferences: "false",
-      includeImports: "false",
+      includeImports: "true",
     });
     expect(expanded!.url.searchParams.get("expandSecretReferences")).toBe(
       "true",
@@ -147,7 +147,10 @@ describe("InfisicalSecret", () => {
 
     calls = [];
     await expect(
-      source.loadCredential({ ...address, revision: "sec-1:14" }, loadContext),
+      source.loadCredential(
+        { ...address, revision: "version:sec-1:14" },
+        loadContext,
+      ),
     ).resolves.toBe("sk_live_14");
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url.searchParams.get("version")).toBe("14");
@@ -170,7 +173,7 @@ describe("InfisicalSecret", () => {
     const source = await declare(params);
 
     const revision = await read(source, params);
-    expect(revision).toBe("exec-1");
+    expect(revision).toBe("exec:exec-1");
 
     calls = [];
     await expect(
@@ -219,8 +222,83 @@ describe("InfisicalSecret", () => {
     const source = await declare(address);
 
     await expect(
-      source.loadCredential({ ...address, revision: "sec-1:1" }, loadContext),
+      source.loadCredential(
+        { ...address, revision: "version:sec-1:1" },
+        loadContext,
+      ),
     ).rejects.toThrow(SecretReplacedError);
+  });
+
+  it("fails when the version returned is not the one in the revision, as for an imported secret", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({
+        secret: {
+          id: "sec-1",
+          version: 16,
+          secretKey: "STRIPE_KEY",
+          secretValue: "sk_live_16",
+        },
+      }),
+    );
+    const source = await declare(address);
+
+    await expect(
+      source.loadCredential(
+        { ...address, revision: "version:sec-1:15" },
+        loadContext,
+      ),
+    ).rejects.toThrow("changed after deploy read it");
+  });
+
+  it("fails before any fetch for a revision in an unknown format", async () => {
+    mockInfisical({});
+    const source = await declare(address);
+
+    for (const revision of ["sec-1:15", "exec-2", "version:sec-1:x"]) {
+      await expect(
+        source.loadCredential({ ...address, revision }, loadContext),
+      ).rejects.toThrow(
+        `\`${revision}\` is not a revision of an Infisical secret.`,
+      );
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("fails before any fetch when the revision does not match track", async () => {
+    vi.stubEnv("NOTATION_TRACK_KEY", "track-key");
+    mockInfisical({});
+    const source = await declare(address);
+
+    await expect(
+      source.loadCredential(
+        { ...address, track: "hmac", revision: "version:sec-1:15" },
+        loadContext,
+      ),
+    ).rejects.toThrow('does not match `track: "hmac"`');
+    await expect(
+      source.loadCredential(
+        { ...address, track: "hmac", revision: "scrypt:00" },
+        loadContext,
+      ),
+    ).rejects.toThrow('does not match `track: "hmac"`');
+    await expect(
+      source.loadCredential({ ...address, revision: "hmac:00" }, loadContext),
+    ).rejects.toThrow("does not match `track: undefined`");
+    expect(calls).toHaveLength(0);
+  });
+
+  it('with track: "hmac" and no NOTATION_TRACK_KEY, fails before any fetch', async () => {
+    mockInfisical({
+      STRIPE_KEY: [{ id: "sec-1", version: 1, secretValue: "sk_live_1" }],
+    });
+    const params = { ...address, track: "hmac" as const };
+    const source = await declare(params);
+
+    await expect(read(source, params)).rejects.toThrow("NOTATION_TRACK_KEY");
+    await expect(
+      source.loadCredential({ ...params, revision: "hmac:00" }, loadContext),
+    ).rejects.toThrow("NOTATION_TRACK_KEY");
+    expect(calls).toHaveLength(0);
   });
 
   it("fails to load an empty value", async () => {
@@ -230,7 +308,10 @@ describe("InfisicalSecret", () => {
     const source = await declare(address);
 
     await expect(
-      source.loadCredential({ ...address, revision: "sec-1:3" }, loadContext),
+      source.loadCredential(
+        { ...address, revision: "version:sec-1:3" },
+        loadContext,
+      ),
     ).rejects.toThrow(
       "The value of `STRIPE_KEY` in Infisical project proj, environment prod, path /orders is empty.",
     );
@@ -246,7 +327,10 @@ describe("InfisicalSecret", () => {
       "`MISSING` isn't in Infisical project proj, environment prod, path /orders.",
     );
     await expect(
-      source.loadCredential({ ...address, revision: "sec-1:4" }, loadContext),
+      source.loadCredential(
+        { ...address, revision: "version:sec-1:4" },
+        loadContext,
+      ),
     ).rejects.toThrow("Version 4 of `STRIPE_KEY` isn't in");
   });
 
