@@ -1,5 +1,17 @@
 # @notation/aws
 
+## 0.24.1
+
+### Patch Changes
+
+- 99eb8e8: The `id` option of `kvJson()`, `queue()`, `jwtAuthorizer()`, `api()`, `eventBus()`, `rule()`, `schedule()`, `lambda()` and `$lambda` takes an id built from another id. `NameSafe` and `IdOption` still check a string literal such as `"flags"` in full. A template literal type such as `${string}-config` now passes when its fixed parts hold only letters, digits, hyphens and underscores, so `${string}.config` is still a type error. Plain `string` now passes. The holes of a template and a plain string are checked when the resource is declared, as before.
+- Updated dependencies [99eb8e8]
+- Updated dependencies [02ee5cd]
+  - @notation/utils@0.24.1
+  - @notation/resource@0.24.1
+  - @notation/core@0.24.1
+  - @notation/std@0.24.1
+
 ## 0.24.0
 
 ### Patch Changes

@@ -1,5 +1,14 @@
 # @notation/cli
 
+## 0.24.1
+
+### Patch Changes
+
+- Updated dependencies [02ee5cd]
+  - @notation/core@0.24.1
+  - @notation/dashboard@0.24.1
+  - @notation/build@0.24.1
+
 ## 0.24.0
 
 ### Minor Changes

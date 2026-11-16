@@ -1,5 +1,18 @@
 # @notation/cloudflare
 
+## 0.24.1
+
+### Patch Changes
+
+- 99eb8e8: The `id` option of `kvJson()`, `queue()`, `jwtAuthorizer()`, `api()`, `eventBus()`, `rule()`, `schedule()`, `lambda()` and `$lambda` takes an id built from another id. `NameSafe` and `IdOption` still check a string literal such as `"flags"` in full. A template literal type such as `${string}-config` now passes when its fixed parts hold only letters, digits, hyphens and underscores, so `${string}.config` is still a type error. Plain `string` now passes. The holes of a template and a plain string are checked when the resource is declared, as before.
+- fd11fd3: `kvJson()` accepts a schema whose input has `unknown` or `any` at any depth, such as `v.looseObject()` or `v.objectWithRest(..., v.unknown())`, and a recursive JSON schema built with `v.lazy()`, which failed with "Type instantiation is excessively deep". A schema whose input isn't JSON is now a type error that names the key, such as `kvJson(): the input type of the schema must be JSON, but the key meta.at isn't`. `json()` bindings keep their check, which refuses `unknown`.
+- Updated dependencies [99eb8e8]
+- Updated dependencies [02ee5cd]
+  - @notation/utils@0.24.1
+  - @notation/resource@0.24.1
+  - @notation/core@0.24.1
+  - @notation/std@0.24.1
+
 ## 0.24.0
 
 ### Minor Changes

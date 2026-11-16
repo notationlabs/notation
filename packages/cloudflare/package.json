@@ -1,7 +1,7 @@
 {
   "type": "module",
   "name": "@notation/cloudflare",
-  "version": "0.24.0",
+  "version": "0.24.1",
   "sideEffects": false,
   "exports": {
     "./workers": {
