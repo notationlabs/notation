@@ -640,6 +640,52 @@ describe("a deploy that is resumed after a resource took a credential", () => {
   });
 });
 
+describe("a deploy that is resumed after an update of a resource that takes two credentials", () => {
+  it("gives the resource again only the credential that it did not receive", async () => {
+    const provider = createProvider();
+    const rotatable = defineResources(provider, { rotate: true });
+    const fixed = defineResources(provider, { rotate: false });
+    const declareBoth = (secrets: string[]) => {
+      const rotating = new rotatable.Token("rotating", {
+        config: { scope: "read" },
+      });
+      const unrotatable = new fixed.Token("fixed", {
+        config: { scope: "read" },
+      });
+      return [
+        rotating,
+        unrotatable,
+        ...secrets.map(
+          (name) =>
+            new rotatable.Secret(`secret:${name}`, {
+              config: {
+                name,
+                Value: rotating.credentials.Value,
+                ...(name === "a"
+                  ? { label: unrotatable.credentials.Value }
+                  : {}),
+              },
+            }),
+        ),
+      ];
+    };
+    const runtime = createRuntime({
+      crashAfterStep: "notation:deploy:secret%3Aa:update:remote:attempt:0",
+    });
+    await runtime.deploy("first", declareBoth(["a"]));
+
+    await expect(
+      runtime.nextProcess("second", declareBoth(["a", "b"])),
+    ).rejects.toThrow("simulated process crash");
+    await runtime.nextProcess("second", declareBoth(["a", "b"]));
+
+    const rotated = provider.tokens.get("token-0");
+    expect(provider.secrets.get("a")).toBe(rotated);
+    expect(provider.secrets.get("b")).toBe(rotated);
+    runtime.close();
+  });
+});
+
 describe("the state that an operation receives", () => {
   it("has no marker for a credential that the resource takes", async () => {
     const provider = createProvider();

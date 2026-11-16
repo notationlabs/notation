@@ -73,7 +73,7 @@ import {
   currentCredentialMarkers,
   setRecordedOutput,
   staleCredentialMarkers,
-  wasGivenCredentials,
+  ungivenCredentials,
 } from "../credentials";
 import { assertNoPassedCredential, requestedReplace } from "../replace-request";
 import { mintNeededCredentials, obtainCredentials } from "./credentials";
@@ -138,10 +138,11 @@ export type ReconcileOptions = {
    */
   driftRead?: DriftRead;
   /**
-   * Decides as if the resource's record held no version of the credentials
-   * that it takes, so that deploy gives it their values again.
+   * Credential versions that the resource's record holds and the resource
+   * has not received. Deploy decides as if the record held no version where
+   * it holds one of these, so that it gives the resource those values again.
    */
-  staleCredentials?: boolean;
+  staleCredentials?: readonly string[];
 };
 
 /**
@@ -213,7 +214,7 @@ export async function* reconcileResource(
   // value of each credential whose version they do not hold.
   const recordedParams =
     options.staleCredentials && session.node
-      ? staleCredentialMarkers(session.node.params)
+      ? staleCredentialMarkers(session.node.params, options.staleCredentials)
       : session.node?.params;
   let action = decideAction({
     resource,
@@ -351,20 +352,19 @@ export async function* reconcileResource(
   // so the resource holds the value that the operation received then, and a
   // rotation since has revoked that value. The resource is reconciled again
   // as one that has not taken the credentials, which updates it.
-  if (
-    !opts.dryRun &&
-    !options.staleCredentials &&
-    action.decision !== "noop" &&
-    !wasGivenCredentials(resource, received, opts.resources)
-  ) {
-    const versions = received
-      .map(({ $credential }) => $credential.version)
-      .join(",");
+  const ungiven =
+    !opts.dryRun && !options.staleCredentials && action.decision !== "noop"
+      ? ungivenCredentials(resource, received, opts.resources).map(
+          ({ $credential }) => $credential.version ?? "",
+        )
+      : [];
+  if (ungiven.length > 0) {
+    const versions = ungiven.join(",");
     yield* reconcileResource(
       step.scope(`credentials:refresh:${versions}`, `credentials:${versions}`),
       resource,
       { ...opts, driftDetection: false },
-      { quietNoop: true, staleCredentials: true },
+      { quietNoop: true, staleCredentials: ungiven },
     );
   }
 }

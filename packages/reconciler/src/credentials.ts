@@ -266,31 +266,38 @@ function sameMarker(a: CredentialMarker, b: CredentialMarker): boolean {
 }
 
 /**
- * Whether an operation of `taker` has received, in this process, the value
- * of every credential in `markers`. The credentials of the sources
- * among `resources` are skipped: a source gives the same value for the same
+ * The credentials in `markers` whose values an operation of `taker` has not
+ * received in this process. The credentials of the sources among
+ * `resources` are left out: a source gives the same value for the same
  * version, so an operation replayed from the journal received that value.
  */
-export function wasGivenCredentials(
+export function ungivenCredentials(
   taker: BaseResource,
   markers: readonly CredentialMarker[],
   resources: readonly BaseResource[],
-): boolean {
-  return markers.every(({ $credential }) => {
+): CredentialMarker[] {
+  return markers.filter(({ $credential }) => {
     const producer = resources.find(({ id }) => id === $credential.resource);
-    if (producer && isCredentialSource(producer)) return true;
-    return given.get(taker)?.has($credential.version ?? "") ?? false;
+    if (producer && isCredentialSource(producer)) return false;
+    return !(given.get(taker)?.has($credential.version ?? "") ?? false);
   });
 }
 
 /**
- * Copies a value, with no version in each credential marker, as in the
- * record of a resource that has not taken the credential's current value.
+ * Copies a value, with no version in each credential marker whose version
+ * is in `versions`, as in the record of a resource that has not taken those
+ * values.
  */
-export function staleCredentialMarkers<T>(value: T): T {
-  return mapCredentialMarkers(value, ({ $credential }) =>
-    credentialMarker($credential.resource, $credential.name, null),
-  ) as T;
+export function staleCredentialMarkers<T>(
+  value: T,
+  versions: readonly string[],
+): T {
+  return mapCredentialMarkers(value, (marker) => {
+    const { resource, name, version } = marker.$credential;
+    return version !== null && versions.includes(version)
+      ? credentialMarker(resource, name, null)
+      : marker;
+  }) as T;
 }
 
 /**
