@@ -42,29 +42,27 @@ describe("WorkerSecret", () => {
 
   it("reads a missing secret, or a binding of another type, as not found", async () => {
     mockFetch(withBinding());
-    await expect(
-      resource.read!(key, undefined, {} as any),
-    ).rejects.toBeInstanceOf(ResourceNotFoundError);
+    await expect(resource.read!(key)).rejects.toBeInstanceOf(
+      ResourceNotFoundError,
+    );
 
     vi.restoreAllMocks();
     mockFetch(withBinding({ type: "plain_text" }));
-    await expect(
-      resource.read!(key, undefined, {} as any),
-    ).rejects.toBeInstanceOf(ResourceNotFoundError);
+    await expect(resource.read!(key)).rejects.toBeInstanceOf(
+      ResourceNotFoundError,
+    );
 
     vi.restoreAllMocks();
     mockFetch(() => fail(404, 10007, "This Worker does not exist"));
-    await expect(
-      resource.read!(key, undefined, {} as any),
-    ).rejects.toBeInstanceOf(ResourceNotFoundError);
+    await expect(resource.read!(key)).rejects.toBeInstanceOf(
+      ResourceNotFoundError,
+    );
   });
 
   it("reads a secret that the Worker has", async () => {
     mockFetch(withBinding({ type: "secret_text" }));
 
-    await expect(resource.read!(key, undefined, {} as any)).resolves.toEqual(
-      key,
-    );
+    await expect(resource.read!(key)).resolves.toEqual(key);
   });
 
   // The upload of the Worker has set the same secret through `Secrets`.

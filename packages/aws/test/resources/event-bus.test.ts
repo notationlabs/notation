@@ -68,9 +68,7 @@ describe("EventBridge event bus", () => {
   it("reads the bus's name and ARN", async () => {
     mockSend(() => ({ Name: "orders", Arn: arn, Policy: "{}" }));
 
-    await expect(
-      bus.read!({ Name: "orders" }, undefined, {} as any),
-    ).resolves.toEqual({
+    await expect(bus.read!({ Name: "orders" })).resolves.toEqual({
       Name: "orders",
       Arn: arn,
     });
@@ -81,9 +79,9 @@ describe("EventBridge event bus", () => {
       throw notFound();
     });
 
-    await expect(
-      bus.read!({ Name: "orders" }, undefined, {} as any),
-    ).rejects.toBeInstanceOf(ResourceNotFoundError);
+    await expect(bus.read!({ Name: "orders" })).rejects.toBeInstanceOf(
+      ResourceNotFoundError,
+    );
   });
 
   it("deletes the bus, and succeeds when it is gone", async () => {

@@ -113,7 +113,7 @@ describe("API Gateway API", () => {
       Tags: { team: "web", "notation:create-token": "hash" },
       $metadata: {},
     }));
-    const result = await api.read!({ ApiId: "api-1" }, undefined, {} as any);
+    const result = await api.read!({ ApiId: "api-1" });
 
     expect(() =>
       validateValues(api, api.toResult(result), "read"),
@@ -143,11 +143,7 @@ describe("API Gateway API with the create token tag of an earlier version", () =
       ApiId: "api-1",
       Tags: { team: "web", "notation:create-token": "hash" },
     }));
-    const tagged = (await api.read!(
-      { ApiId: "api-1" },
-      undefined,
-      {} as any,
-    )) as { Tags: unknown };
+    const tagged = (await api.read!({ ApiId: "api-1" })) as { Tags: unknown };
     expect(tagged.Tags).toEqual({ team: "web" });
 
     vi.restoreAllMocks();
@@ -155,11 +151,7 @@ describe("API Gateway API with the create token tag of an earlier version", () =
       ApiId: "api-1",
       Tags: { "notation:create-token": "hash" },
     }));
-    const untagged = (await api.read!(
-      { ApiId: "api-1" },
-      undefined,
-      {} as any,
-    )) as { Tags: unknown };
+    const untagged = (await api.read!({ ApiId: "api-1" })) as { Tags: unknown };
     expect(untagged.Tags).toBeUndefined();
   });
 });

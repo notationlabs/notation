@@ -117,7 +117,7 @@ describe("SecretsStore", () => {
     mockFetch(() => fail(404, 1001, "store_not_found"));
 
     await expect(
-      store.read!({ AccountId: "acc", StoreId: "store" }, undefined, {} as any),
+      store.read!({ AccountId: "acc", StoreId: "store" }),
     ).rejects.toBeInstanceOf(ResourceNotFoundError);
   });
 
@@ -298,7 +298,7 @@ describe("SecretsStoreSecret", () => {
   it("reads the secret's ID by its name", async () => {
     mockFetch(() => ok([listed({ id: "s2" })]));
 
-    await expect(resource.read!(key, undefined, {} as any)).resolves.toEqual({
+    await expect(resource.read!(key)).resolves.toEqual({
       ...key,
       SecretId: "s2",
     });
@@ -315,9 +315,7 @@ describe("SecretsStoreSecret", () => {
         : ok([listed({ id: "s2" })]),
     );
 
-    await expect(
-      resource.read!(key, undefined, {} as any),
-    ).resolves.toMatchObject({
+    await expect(resource.read!(key)).resolves.toMatchObject({
       SecretId: "s2",
     });
     expect(calls).toHaveLength(2);
@@ -325,15 +323,15 @@ describe("SecretsStoreSecret", () => {
 
   it("reads a missing secret, or a missing store, as not found", async () => {
     mockFetch(() => ok([]));
-    await expect(
-      resource.read!(key, undefined, {} as any),
-    ).rejects.toBeInstanceOf(ResourceNotFoundError);
+    await expect(resource.read!(key)).rejects.toBeInstanceOf(
+      ResourceNotFoundError,
+    );
 
     vi.restoreAllMocks();
     mockFetch(() => fail(404, 1001, "store_not_found"));
-    await expect(
-      resource.read!(key, undefined, {} as any),
-    ).rejects.toBeInstanceOf(ResourceNotFoundError);
+    await expect(resource.read!(key)).rejects.toBeInstanceOf(
+      ResourceNotFoundError,
+    );
   });
 
   it("deletes a stage-scoped secret by the ID that its name has now, not the ID in its record", async () => {

@@ -291,7 +291,7 @@ describe("AccountToken", () => {
         }),
     });
 
-    await expect(token.read!(key, undefined, {} as any)).resolves.toEqual({
+    await expect(token.read!(key)).resolves.toEqual({
       ...key,
       Policies: params.Policies,
       Condition: {},
@@ -301,7 +301,7 @@ describe("AccountToken", () => {
   it("reads a missing token as not found", async () => {
     route({ getToken: () => fail(404, 1003, "Invalid API Token") });
 
-    await expect(token.read!(key, undefined, {} as any)).rejects.toBeInstanceOf(
+    await expect(token.read!(key)).rejects.toBeInstanceOf(
       ResourceNotFoundError,
     );
   });
@@ -349,7 +349,7 @@ describe("AccountToken", () => {
             })),
           }),
       });
-      return token.read!(key, undefined, {} as any);
+      return token.read!(key);
     };
 
     it("doesn't see the order of the policies and their groups as a change", async () => {
@@ -414,7 +414,7 @@ describe("AccountToken", () => {
             ...fields,
           }),
       });
-      return token.read!(key, undefined, {} as any);
+      return token.read!(key);
     };
 
     it("creates the token with its IP ranges and times", async () => {

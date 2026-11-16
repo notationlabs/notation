@@ -158,8 +158,8 @@ export interface BaseResource {
   >;
   read?: (
     key: any,
-    context: ResourceOperationContext | undefined,
-    params: any,
+    context?: ResourceOperationContext,
+    params?: any,
   ) => Promise<{}>;
   update?: (
     key: any,
@@ -295,8 +295,8 @@ export abstract class Resource<
   rotate?: RotateOperations<T>;
   abstract read?: (
     key: T["compoundKey"],
-    context: ResourceOperationContext | undefined,
-    params: T["params"],
+    context?: ResourceOperationContext,
+    params?: T["params"],
   ) => Promise<T["result"]>;
   abstract update?: (
     key: T["compoundKey"],
@@ -999,8 +999,8 @@ export type ResourceOperationsOptions<
    */
   read?: (
     key: T["compoundKey"],
-    context: ResourceOperationContext | undefined,
-    params: T["params"],
+    context?: ResourceOperationContext,
+    params?: T["params"],
   ) => Promise<T["result"]>;
   /**
    * A param that takes a credential of another resource holds the value in

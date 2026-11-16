@@ -30,7 +30,7 @@ describe("WorkerSubdomain", () => {
     await subdomain.create(key);
     expect(calls[0]).toMatchObject({ method: "POST" });
     expect(JSON.parse(calls[0]!.body as string)).toEqual({ enabled: true });
-    await expect(subdomain.read!(key, undefined, {} as any)).resolves.toEqual({
+    await expect(subdomain.read!(key)).resolves.toEqual({
       ...key,
       Url: "https://app--dev--api.team.workers.dev",
     });
@@ -43,9 +43,7 @@ describe("WorkerSubdomain", () => {
         : ok({ enabled: true, previews_enabled: false }),
     );
 
-    const error = await subdomain.read!(key, undefined, {} as any).catch(
-      (error) => error,
-    );
+    const error = await subdomain.read!(key).catch((error) => error);
     expect(error.message).toContain(
       "The account acc has no workers.dev subdomain.",
     );
@@ -59,7 +57,7 @@ describe("WorkerSubdomain", () => {
         : ok({ enabled: true, previews_enabled: false }),
     );
 
-    await expect(subdomain.read!(key, undefined, {} as any)).rejects.toThrow(
+    await expect(subdomain.read!(key)).rejects.toThrow(
       "failed with status 404",
     );
   });
@@ -67,8 +65,8 @@ describe("WorkerSubdomain", () => {
   it("reads a Worker that is not on workers.dev as not found", async () => {
     mockFetch(() => ok({ enabled: false, previews_enabled: false }));
 
-    await expect(
-      subdomain.read!(key, undefined, {} as any),
-    ).rejects.toBeInstanceOf(ResourceNotFoundError);
+    await expect(subdomain.read!(key)).rejects.toBeInstanceOf(
+      ResourceNotFoundError,
+    );
   });
 });

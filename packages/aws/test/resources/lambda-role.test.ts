@@ -167,9 +167,7 @@ describe("LambdaIamRole result", () => {
     );
     const role = new LambdaIamRole("role");
 
-    const result = role.toResult(
-      await role.read!({ RoleName: "app-role" }, undefined, {} as any),
-    );
+    const result = role.toResult(await role.read!({ RoleName: "app-role" }));
 
     expect(result).toMatchObject({
       CreateDate: new Date("2026-07-22T00:00:00.000Z"),
