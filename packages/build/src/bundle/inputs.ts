@@ -198,6 +198,15 @@ function resolveExtends(specifier: string, dir: string): string | undefined {
 }
 
 /**
+ * A filesystem can record an mtime only to the second, so a write during the
+ * build can be stamped at the start of that second, before `started`. A
+ * clock can also stamp the write a little after `Date.now()`. A second of
+ * room on each side still leaves out a file whose mtime is ahead of the
+ * clock, which would otherwise count on every build.
+ */
+const mtimeSlackMs = 1000;
+
+/**
  * Whether a file was modified between `started`, in milliseconds since the
  * epoch, and now. A file that can't be read counts as modified. A file whose
  * mtime is ahead of the clock doesn't, as it would count on every build.
@@ -213,7 +222,10 @@ export function modifiedSince(
   // Taken after the stats, so that a file modified while they run counts.
   const finished = Date.now();
   return stats.some(
-    (stat) => !stat || (stat.mtimeMs >= started && stat.mtimeMs <= finished),
+    (stat) =>
+      !stat ||
+      (stat.mtimeMs >= started - mtimeSlackMs &&
+        stat.mtimeMs <= finished + mtimeSlackMs),
   );
 }
 

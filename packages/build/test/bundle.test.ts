@@ -352,15 +352,19 @@ describe("Bundle", () => {
 
   it("doesn't write the inputs file when an input is modified during the build", async () => {
     write("src/worker.ts", `export default { fetch() { return 1; } };`);
-    builds.during = () =>
-      writeFileSync(
-        path.join(root, "src/worker.ts"),
-        `export default { fetch() { return 2; } };`,
-      );
+    builds.during = () => {
+      const file = path.join(root, "src/worker.ts");
+      writeFileSync(file, `export default { fetch() { return 2; } };`);
+      // The second the filesystem records can start before the build did.
+      const recorded = new Date(Math.floor(Date.now() / 1000) * 1000);
+      utimesSync(file, recorded, recorded);
+    };
     await deploy(worker());
     expect(readInputs("router")).toBeUndefined();
 
     builds.during = undefined;
+    const settled = new Date(Date.now() - 60_000);
+    utimesSync(path.join(root, "src/worker.ts"), settled, settled);
     clearBuildCache();
     await worker().deriveParams();
     expect(builds.count).toBe(2);
