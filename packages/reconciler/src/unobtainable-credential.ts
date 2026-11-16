@@ -30,13 +30,14 @@ export type UnobtainableCredential = {
 /**
  * Plan and deploy throw this when a resource needs the value of a credential
  * without `rotate`, deploy holds none, and neither `--replace` nor
- * `--credential` names the credential. The message gives deploy commands
- * with the flags of `overrides`. The CLI throws a new error with the
- * `--config` and `--stage` of the command that it ran.
+ * `--credential` names the credential. Plan and deploy's validate step list
+ * every such credential. The message gives deploy commands with the flags of
+ * `overrides`. The CLI throws a new error with the `--config` and `--stage`
+ * of the command that it ran.
  */
 export class UnobtainableCredentialError extends Error {
   readonly _tag = "UnobtainableCredentialError" as const;
-  readonly credential: UnobtainableCredential;
+  readonly credentials: readonly UnobtainableCredential[];
   /**
    * The overrides of the plan or deploy, with an instance hash for each
    * `--replace` and a version for each `--credential` that state has.
@@ -44,20 +45,20 @@ export class UnobtainableCredentialError extends Error {
   readonly overrides?: Overrides;
 
   constructor(
-    credential: UnobtainableCredential,
+    credentials: readonly UnobtainableCredential[],
     overrides?: Overrides,
     deployCommand = "notation deploy",
     options?: ErrorOptions,
   ) {
     super(
       unobtainableCredentialMessage(
-        credential,
+        credentials,
         [deployCommand, formatOverrides(overrides)].filter(Boolean).join(" "),
       ),
       options,
     );
     this.name = "UnobtainableCredentialError";
-    this.credential = credential;
+    this.credentials = credentials;
     if (overrides) this.overrides = overrides;
   }
 
@@ -70,10 +71,51 @@ export class UnobtainableCredentialError extends Error {
   }
 }
 
+/**
+ * Throws an UnobtainableCredentialError for the credentials, if there are
+ * any. A credential that several resources need is listed once, with the
+ * first of them.
+ */
+export function throwIfUnobtainable(
+  credentials: readonly UnobtainableCredential[],
+  overrides: Overrides | undefined,
+): void {
+  if (credentials.length === 0) return;
+  const unique = new Map<string, UnobtainableCredential>();
+  for (const credential of credentials) {
+    const key = `${credential.producer}.${credential.name}`;
+    if (!unique.has(key)) unique.set(key, credential);
+  }
+  throw new UnobtainableCredentialError([...unique.values()], overrides);
+}
+
+/**
+ * For one credential, two deploy commands. For several, the deploy command
+ * once, and the two flags of each credential, as the user adds one flag for
+ * each.
+ */
 export function unobtainableCredentialMessage(
-  credential: UnobtainableCredential,
+  credentials: readonly UnobtainableCredential[],
   deployCommand: string,
 ): string {
+  if (credentials.length === 1) {
+    return credentialLines(credentials[0]!, `${deployCommand} `).join("\n");
+  }
+  return [
+    `Deploy cannot get ${credentials.length} credentials. Add one flag for each to the deploy command:`,
+    `  ${deployCommand}`,
+    ...credentials.flatMap((credential) => [
+      "",
+      ...credentialLines(credential, ""),
+    ]),
+  ].join("\n");
+}
+
+/** The lines for one credential, with `prefix` before each flag. */
+function credentialLines(
+  credential: UnobtainableCredential,
+  prefix: string,
+): string[] {
   const { consumer, producer, producerType, name, version } = credential;
   const replace = credential.instanceHash
     ? `${producer}@${credential.instanceHash}`
@@ -82,14 +124,10 @@ export function unobtainableCredentialMessage(
   const replaceCommand = [
     "",
     `  Replace ${producer}, to issue a new value:`,
-    `    ${deployCommand} --replace ${shellQuote(replace)}`,
+    `    ${prefix}--replace ${shellQuote(replace)}`,
   ];
   if (version === undefined) {
-    return [
-      first,
-      `Replace the resource \`${producer}\`.`,
-      ...replaceCommand,
-    ].join("\n");
+    return [first, `Replace the resource \`${producer}\`.`, ...replaceCommand];
   }
   const passed = formatCredential({
     id: producer,
@@ -103,8 +141,8 @@ export function unobtainableCredentialMessage(
     ...replaceCommand,
     "",
     "  Or pass a value that you hold:",
-    `    ${deployCommand} --credential ${shellQuote(passed)}`,
-  ].join("\n");
+    `    ${prefix}--credential ${shellQuote(passed)}`,
+  ];
 }
 
 export function unobtainableCredential(opts: {
@@ -132,9 +170,10 @@ export function unobtainableCredential(opts: {
  * The credentials of `producer` that deploy gives a new value before it
  * reaches the resources that take them, as `mintNeededCredentials` does:
  * each that `--credential` names, and each that `getCredentialsToMint` lists.
- * Throws for a credential in that list without `rotate`. Plan and deploy's
- * validate step call this for a resource that deploy keeps, and whose
- * record is not "creating".
+ * A credential in that list without `rotate` is added to `unobtainable`, and
+ * counted as one that `--credential` names, so the caller goes on to find
+ * the others. Plan and deploy's validate step call this for a resource that
+ * deploy keeps, and whose record is not "creating".
  */
 export async function mintedCredentials(opts: {
   producer: BaseResource;
@@ -143,6 +182,7 @@ export async function mintedCredentials(opts: {
   recordedOutputs: RecordedOutputs;
   overrides: Overrides | undefined;
   deploymentId: string | undefined;
+  unobtainable: UnobtainableCredential[];
 }): Promise<string[]> {
   const { producer, record, overrides, deploymentId } = opts;
   const minted = (overrides?.credential ?? [])
@@ -157,7 +197,7 @@ export async function mintedCredentials(opts: {
   for (const { name, consumer } of needed) {
     if (minted.includes(name)) continue;
     if (!producer.rotate?.[name]) {
-      throw new UnobtainableCredentialError(
+      opts.unobtainable.push(
         unobtainableCredential({
           consumer,
           producer,
@@ -166,7 +206,6 @@ export async function mintedCredentials(opts: {
           version: getCredentialVersion(producer, name),
           deploymentId,
         }),
-        overrides,
       );
     }
     minted.push(name);
@@ -178,7 +217,8 @@ export async function mintedCredentials(opts: {
  * Whether deploy rotates a credential that `consumer` takes when deploy
  * creates `consumer` again and holds no value for it, as
  * `obtainCredentials` does. False for a credential that `--credential`
- * names. Throws for any other credential without `rotate`.
+ * names. Any other credential without `rotate` is added to `unobtainable`,
+ * and counted as one that `--credential` names.
  */
 export function rotatesForCreate(opts: {
   consumer: BaseResource;
@@ -187,17 +227,18 @@ export function rotatesForCreate(opts: {
   record: StateNode | undefined;
   overrides: Overrides | undefined;
   deploymentId: string | undefined;
+  unobtainable: UnobtainableCredential[];
 }): boolean {
   const { producer, name } = opts;
   if (producer.rotate?.[name]) return true;
   if (findCredentialOverride(opts.overrides, producer.id, name)) return false;
-  throw new UnobtainableCredentialError(
+  opts.unobtainable.push(
     unobtainableCredential({
       ...opts,
       version: getCredentialVersion(producer, name),
     }),
-    opts.overrides,
   );
+  return false;
 }
 
 /** A variable name for the plan error, such as `APP_PRIVATE_KEY`. */

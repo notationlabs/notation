@@ -94,7 +94,7 @@ export async function withDeployCommands<T>(
   } catch (error) {
     if (!UnobtainableCredentialError.is(error)) throw error;
     throw new UnobtainableCredentialError(
-      error.credential,
+      error.credentials,
       error.overrides,
       `notation deploy ${targetFlags(deployment, config)}`,
       { cause: error },

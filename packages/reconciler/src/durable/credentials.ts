@@ -111,14 +111,16 @@ export async function* mintNeededCredentials(
     if (passed.some((target) => target.name === name)) continue;
     if (!resource.rotate?.[name]) {
       throw new UnobtainableCredentialError(
-        unobtainableCredential({
-          consumer: consumers.find((candidate) => candidate.id === consumer)!,
-          producer: resource,
-          name,
-          record: current.node,
-          version: getCredentialVersion(resource, name),
-          deploymentId: opts.state.deploymentId,
-        }),
+        [
+          unobtainableCredential({
+            consumer: consumers.find((candidate) => candidate.id === consumer)!,
+            producer: resource,
+            name,
+            record: current.node,
+            version: getCredentialVersion(resource, name),
+            deploymentId: opts.state.deploymentId,
+          }),
+        ],
         opts.overrides,
       );
     }
@@ -185,14 +187,16 @@ export async function* obtainCredentials(
         id,
         name,
         new UnobtainableCredentialError(
-          unobtainableCredential({
-            consumer,
-            producer,
-            name,
-            record: session.node,
-            version,
-            deploymentId: opts.state.deploymentId,
-          }),
+          [
+            unobtainableCredential({
+              consumer,
+              producer,
+              name,
+              record: session.node,
+              version,
+              deploymentId: opts.state.deploymentId,
+            }),
+          ],
           opts.overrides,
         ),
       );

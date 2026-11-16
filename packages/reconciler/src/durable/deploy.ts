@@ -21,6 +21,8 @@ import { workflowRegistry, type ResourceRegistry } from "../resource-registry";
 import {
   mintedCredentials,
   rotatesForCreate,
+  throwIfUnobtainable,
+  type UnobtainableCredential,
 } from "../unobtainable-credential";
 import { reconcileCycle } from "./cycle";
 import { withDeploymentHold } from "./deployment-hold";
@@ -108,7 +110,8 @@ async function checkOverrides(opts: DurableDeployOptions): Promise<void> {
  * still checks before any change.
  *
  * A credential without `rotate` that deploy needs and cannot get is checked
- * here as plan checks it, from the decisions without drift.
+ * here as plan checks it, from the decisions without drift. As in plan, the
+ * error lists every such credential.
  */
 async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
   const recordedOutputs = await readRecordedOutputs(opts.resources, opts.state);
@@ -118,6 +121,7 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
   // The credentials that get a new value before deploy reaches the resources
   // that take them, by the ID of their resource.
   const renewed = new Map<string, readonly string[]>();
+  const unobtainable: UnobtainableCredential[] = [];
   for (const unit of orderDeployUnits(opts.resources)) {
     for (const resource of await loadUnit(unit, opts.state)) {
       const { stateNode, params } = await planKnownParams(
@@ -151,14 +155,23 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
               recordedOutputs,
               overrides: opts.overrides,
               deploymentId: opts.state.deploymentId,
+              unobtainable,
             })
           : credentialNames(resource.schema),
       );
       if (!keepsResource(decision)) {
-        assertCredentialsForCreate(opts, resource, params, records, renewed);
+        findCredentialsForCreate(
+          opts,
+          resource,
+          params,
+          records,
+          renewed,
+          unobtainable,
+        );
       }
     }
   }
+  throwIfUnobtainable(unobtainable, opts.overrides);
   const registry = workflowRegistry(opts);
   for (const stateNode of orphansDeployDeletes(
     await opts.state.values(),
@@ -170,15 +183,17 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
 }
 
 /**
- * Throws for a credential that `resource` takes, and that deploy cannot get
- * when it creates `resource` again. See `rotatesForCreate`.
+ * Adds to `unobtainable` each credential that `resource` takes, and that
+ * deploy cannot get when it creates `resource` again. See
+ * `rotatesForCreate`.
  */
-function assertCredentialsForCreate(
+function findCredentialsForCreate(
   opts: DurableDeployOptions,
   resource: BaseResource,
   params: Record<string, unknown>,
   records: ReadonlyMap<string, StateNode>,
   renewed: Map<string, readonly string[]>,
+  unobtainable: UnobtainableCredential[],
 ): void {
   for (const { $credential } of findCredentialMarkers(params)) {
     const { resource: id, name } = $credential;
@@ -193,6 +208,7 @@ function assertCredentialsForCreate(
       record: records.get(id),
       overrides: opts.overrides,
       deploymentId: opts.state.deploymentId,
+      unobtainable,
     });
     if (rotates) renewed.set(id, [...(renewed.get(id) ?? []), name]);
   }

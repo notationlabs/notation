@@ -65,7 +65,12 @@ import {
   type Overrides,
 } from "./overrides";
 import { readAndDecideSource } from "./sources";
-import { mintedCredentials, rotatesForCreate } from "./unobtainable-credential";
+import {
+  mintedCredentials,
+  rotatesForCreate,
+  throwIfUnobtainable,
+  type UnobtainableCredential,
+} from "./unobtainable-credential";
 import { assertSameType } from "./resource-type";
 import { createStepRunner, runOperation } from "./step-runner";
 
@@ -153,6 +158,9 @@ export async function createPlan({
         })
       : overrides;
   const recordedOutputs = await readRecordedOutputs(resources, state);
+  // The credentials that deploy cannot get. Plan goes on as if `--credential`
+  // passed each, and fails after the last resource with all of them.
+  const unobtainable: UnobtainableCredential[] = [];
   // The edges in state as deploy finds them when it replaces a resource.
   // Deploy writes the edges in code for each resource it reaches, so a
   // resource takes those once it is planned.
@@ -266,6 +274,7 @@ export async function createPlan({
             recordedOutputs,
             overrides: identified,
             deploymentId,
+            unobtainable,
           })
         : [];
 
@@ -441,6 +450,7 @@ export async function createPlan({
         record: stateById.get(id),
         overrides: identified,
         deploymentId,
+        unobtainable,
       });
       if (!rotates) continue;
       producerNode.rotates = [...(producerNode.rotates ?? []), name];
@@ -511,6 +521,7 @@ export async function createPlan({
       nodes.push(node);
     }
   }
+  throwIfUnobtainable(unobtainable, identified);
 
   const inCode = new Set(resourceById.keys());
   const { swept, edgesById: sweptEdges } = sweptRecords(stateNodes, inCode);

@@ -214,13 +214,15 @@ describe("replace flags", () => {
       await vi.importActual<typeof import("@notation/core")>("@notation/core");
     deployApp.mockRejectedValueOnce(
       new core.UnobtainableCredentialError(
-        {
-          consumer: "app-key-secret",
-          producer: "app",
-          producerType: "github/App",
-          name: "privateKey",
-          instanceHash: "5d2e8b17",
-        },
+        [
+          {
+            consumer: "app-key-secret",
+            producer: "app",
+            producerType: "github/App",
+            name: "privateKey",
+            instanceHash: "5d2e8b17",
+          },
+        ],
         { replace: [{ id: "queue", instanceHash: "0c4d9e21" }] },
       ),
     );

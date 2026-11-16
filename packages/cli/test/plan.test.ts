@@ -442,14 +442,16 @@ it("fails for a credential that deploy cannot get, with deploy commands for the 
     await vi.importActual<typeof import("@notation/core")>("@notation/core");
   planApp.mockRejectedValueOnce(
     new core.UnobtainableCredentialError(
-      {
-        consumer: "app-key-secret",
-        producer: "app",
-        producerType: "github/App",
-        name: "privateKey",
-        instanceHash: "5d2e8b17",
-        version: "7b1e52c0",
-      },
+      [
+        {
+          consumer: "app-key-secret",
+          producer: "app",
+          producerType: "github/App",
+          name: "privateKey",
+          instanceHash: "5d2e8b17",
+          version: "7b1e52c0",
+        },
+      ],
       { replace: [{ id: "queue", instanceHash: "0c4d9e21" }] },
     ),
   );

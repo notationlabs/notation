@@ -114,6 +114,8 @@ This happens when the deploy that created the app failed before it created the s
 
 When state has no version of the credential, the error says ``Replace the resource `app`.`` and prints the `--replace` command only.
 
+When deploy cannot get several credentials, plan lists all of them in one error. It prints the deploy command once, and the two flags of each credential. Add one flag for each credential to the command. A `--replace` can create other resources again, so the next plan can find a credential that this one did not list.
+
 `--credential` reads the value from the environment variable that it names, so the value is never an argument on the command line:
 
 ```sh

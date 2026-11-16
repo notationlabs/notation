@@ -336,6 +336,80 @@ describe("a resource that takes a credential in a later deploy", () => {
     runtime.close();
   });
 
+  describe("when deploy cannot get several", () => {
+    // Two tokens, each with a secret that takes its credential, and with
+    // `added` secrets that take it as well.
+    const declareTwo = (
+      types: ReturnType<typeof defineResources>,
+      added: string[],
+    ): BaseResource[] =>
+      ["token", "key"].flatMap((id) => {
+        const token = new types.Token(id, { config: { scope: "read" } });
+        return [
+          token,
+          ...[id, ...added].map(
+            (name) =>
+              new types.Secret(`secret:${id}:${name}`, {
+                config: {
+                  name: `${id}:${name}`,
+                  Value: token.credentials.Value,
+                },
+              }),
+          ),
+        ];
+      });
+
+    it("fails the plan with each of them once", async () => {
+      const types = defineResources(createProvider(), { rotate: false });
+      const runtime = createRuntime();
+      await runtime.deploy("first", declareTwo(types, []));
+
+      const error = await createPlan({
+        app: "app",
+        stage: "test",
+        resources: declareTwo(types, ["b", "c"]),
+        state: runtime.state,
+        deploymentId: "credentials",
+      }).catch((e: Error) => e);
+
+      expect(UnobtainableCredentialError.is(error)).toBe(true);
+      expect(
+        (error as UnobtainableCredentialError).credentials.map(
+          ({ consumer, producer }) => `${consumer} ${producer}`,
+        ),
+      ).toEqual(["secret:token:b token", "secret:key:b key"]);
+      const message = (error as Error).message;
+      expect(message).toMatch(
+        /^Deploy cannot get 2 credentials\. Add one flag for each to the deploy command:\n  notation deploy\n/,
+      );
+      expect(message).toMatch(/\n    --replace token@[0-9a-f]{8}\n/);
+      expect(message).toMatch(
+        /\n    --credential key\.Value@[0-9a-f]{8}=KEY_VALUE$/,
+      );
+      runtime.close();
+    });
+
+    it("fails the deploy with each of them before it changes anything", async () => {
+      const provider = createProvider();
+      const types = defineResources(provider, { rotate: false });
+      const runtime = createRuntime();
+      await runtime.deploy("first", declareTwo(types, []));
+      provider.calls.length = 0;
+
+      const error = await runtime
+        .nextProcess("second", declareTwo(types, ["b"]))
+        .catch((e: Error) => e);
+
+      expect(
+        (error as UnobtainableCredentialError).credentials.map(
+          ({ producer }) => producer,
+        ),
+      ).toEqual(["token", "key"]);
+      expect(provider.calls).toEqual([]);
+      runtime.close();
+    });
+  });
+
   it("fails the plan with the request's hashes and versions in the deploy commands", async () => {
     const types = defineResources(createProvider(), { rotate: false });
     const runtime = createRuntime();
