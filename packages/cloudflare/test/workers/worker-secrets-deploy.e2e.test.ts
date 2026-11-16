@@ -18,7 +18,6 @@ const SECRET_KEY = "NOTATION_E2E_ORDER_SECRET";
 describeE2e("$worker with a Worker secret, during deploy", () => {
   const project = useProject();
   const secret = `token-${crypto.randomBytes(8).toString("hex")}`;
-  const ciSecret = `ci-${crypto.randomBytes(8).toString("hex")}`;
 
   // The Worker answers `<version>:<TOKEN>`, or `<version>:missing` when it
   // has no TOKEN.
@@ -178,7 +177,7 @@ describeE2e("$worker with a Worker secret, during deploy", () => {
     writeWorker("new-ci", { version: "v1" });
   });
 
-  it("uploads nothing when a live Worker gains a secret without a source, and deploys after notation secret set", async () => {
+  it("uploads nothing when a live Worker gains a secret without a source", async () => {
     writeWorker("ci", { version: "v1" });
     const before = await deployWatching("ci", "v1:missing");
 
@@ -188,16 +187,5 @@ describeE2e("$worker with a Worker secret, during deploy", () => {
     expect(
       (await poll(project.url(before.name), { done: () => true })).body,
     ).toBe("v1:missing");
-
-    await project.notation(["secret", "set", "ci-token"], {
-      input: `${ciSecret}\n`,
-    });
-    const deployed = await deployWatching("ci", `v2:${ciSecret}`);
-
-    expect(
-      deployed.seen.filter((fetched) => fetched.body === "v2:missing"),
-    ).toEqual([]);
-    expect(await bindingsOfLatestCode(deployed.name)).toEqual([["TOKEN"]]);
-    expect(deployed.name).toBe(before.name);
   });
 });

@@ -24,13 +24,13 @@ op read op://prod/admin/password | notation secret set admin-password --stage pr
 
 `set` compiles the infra, finds the secret's declaration, and writes the value to the store. It doesn't read state, run the reconciler, or record anything, so it works before the first deploy. For a Cloudflare secret, it creates the account's Secrets Store if the account has none. A [Worker secret](../providers/cloudflare/workers.md#workersecretconfig) is the exception. It is stored with each Worker that binds it, so `set` writes it to each of those Workers that is deployed, and fails when none is deployed. `delete` deletes it from each of those Workers.
 
-Run `set` before a deploy without a terminal, such as in CI, for each secret that has no source. A Worker secret can only be set on a Worker that exists. Deploy sends a Worker's secrets in the upload of its code, so without a terminal, the first deploy of a new Worker fails before it creates the Worker, and `set` has no Worker to write to. Run that first deploy from a terminal, or give the secret a source. For a Worker that is already deployed, run `set`, then deploy. See [`notation secret set` for a Worker secret](../providers/cloudflare/workers.md#notation-secret-set-for-a-worker-secret). If the secret has a source, the source wins at its next write: on the next deploy for `env` and `dotenv`, and when the version changes for a versioned source.
+Run `set` before a deploy without a terminal, such as in CI, for each secret that has no source. If the secret has a source, the source wins at its next write: on the next deploy for `env` and `dotenv`, and when the version changes for a versioned source.
 
 ## `delete`
 
 `delete` deletes a secret from its store. It succeeds if the secret is already gone. It asks for confirmation on a terminal, and needs `--yes` without one.
 
-The next `notation deploy` finds the secret missing and creates it again, from its source or from the prompt. `notation watch` deploys without drift detection, so it doesn't create the secret again. For a Secrets Store secret, until `notation deploy` runs, an upload of a Worker that binds the secret fails with Cloudflare error 10182. For a Worker secret, `notation watch` sends the secret again only when it uploads the Worker for another reason, such as a change of code.
+The next `notation deploy` finds the secret missing and creates it again, from its source or from the prompt. `notation watch` deploys without drift detection, so it doesn't create the secret again. Until `notation deploy` runs, an upload of a Worker that binds the secret fails with Cloudflare error 10182.
 
 ## Errors
 

@@ -69,7 +69,7 @@ A secret without a source takes its value from a prompt:
 - `notation watch` asks at each deploy that needs the value. It doesn't keep the answer between deploys.
 - Plan never asks. It notes that deploy will ask, or fail without a terminal.
 
-The prompt only fills a missing secret. When the secret already exists, such as after `notation secret set`, deploy records it without asking. See [notation secret](../cli/secret.md). A Worker secret can only be set on a Worker that exists, so a new Worker's first deploy without a terminal fails, and creates nothing that `notation secret set` could write to. Run that deploy from a terminal, or give the secret a source. See [`notation secret set` for a Worker secret](../providers/cloudflare/workers.md#notation-secret-set-for-a-worker-secret).
+The prompt only fills a missing secret. When the secret already exists, such as after `notation secret set`, deploy records it without asking. See [notation secret](../cli/secret.md).
 
 ## Writing a source
 

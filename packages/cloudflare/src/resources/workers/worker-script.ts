@@ -444,8 +444,8 @@ async function presentSecrets(
 
 /**
  * Reads the value of each secret in `Secrets` from its source. Skips a
- * prompted secret that the Worker already has, so that a value set with
- * `notation secret set` is kept.
+ * prompted secret that the Worker already has, so that a value given at an
+ * earlier prompt is kept.
  */
 async function secretBindings(
   params: WorkerScriptParams,

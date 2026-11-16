@@ -7,7 +7,6 @@ import {
   Redacted,
   runDurableWorkflow,
   runWithSecretContext,
-  secretContext,
   setConfigFile,
   type SecretPrompt,
   type Source,
@@ -111,12 +110,6 @@ function fakeCloudflare() {
       log.push(`delete ${name}`);
       workers.delete(name);
       return ok(null);
-    }
-    if (method === "PUT" && sub === "secrets") {
-      const body = JSON.parse(String(init!.body));
-      log.push(`secret ${body.name} on ${name}`);
-      worker.secrets.set(body.name, body.text);
-      return ok({ name: body.name, type: "secret_text" });
     }
     if (method === "GET" && sub === "secrets") {
       return ok(
@@ -353,20 +346,6 @@ describe("a Worker with secrets", () => {
     expect(asked).toHaveBeenCalledOnce();
     expect(log).toEqual([`upload ${name} with ADMIN,API_KEY`]);
     expect(workers.get(name)!.secrets.get("ADMIN")).toBe("typed again");
-  });
-
-  it("keeps a value set with notation secret set", async () => {
-    await deploy("first", prompt);
-    const name = onlyWorker();
-    await runWithSecretContext({ stage: "dev", runId: "set" }, async () => {
-      await collect();
-      await secretContext()!.declared.get("admin")!.set!("rotated");
-    });
-
-    await writeBundle("export default { fetch: () => new Response('v2') };\n");
-    await deploy("second");
-
-    expect(workers.get(name)!.secrets.get("ADMIN")).toBe("rotated");
   });
 
   it("deletes a removed secret after the upload, and keeps the name when the last secret goes", async () => {

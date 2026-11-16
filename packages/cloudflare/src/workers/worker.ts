@@ -119,8 +119,8 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
           CompatibilityDate: config.compatibilityDate,
           CompatibilityFlags: config.compatibilityFlags,
           Bindings: config.bindings,
-          // Undefined when empty, so that the params of a Worker without
-          // secrets don't change.
+          // Undefined when empty, so that a read of a Worker with no secrets
+          // doesn't list its secrets.
           Secrets: Object.keys(config.secrets).length
             ? config.secrets
             : undefined,

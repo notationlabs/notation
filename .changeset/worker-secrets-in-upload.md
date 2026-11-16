@@ -9,8 +9,6 @@
 
 `cloudflare.workers.WorkerSecret` and `cloudflare.workers.WorkerScriptPlaceholder` are removed. A deployment that has these resources in its state is not migrated.
 
-Without a terminal, the first deploy of a new Worker with a secret that has no source now fails before it creates the Worker. Before, it left a placeholder Worker that `notation secret set` could write to.
-
 Deploy fails, before it uploads, when a Worker is in a gradual rollout, as an upload ends the rollout.
 
 `PhysicalNameRule` no longer has `suppliable`.

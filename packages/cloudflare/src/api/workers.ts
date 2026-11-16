@@ -145,9 +145,8 @@ export async function putScript(
     compatibility_date: upload.compatibilityDate,
     compatibility_flags: upload.compatibilityFlags,
     bindings: upload.bindings,
-    // Cloudflare keeps a secret that the upload leaves out, such as one set
-    // with `notation secret set`. A `secret_text` binding in `bindings`
-    // replaces the secret of the same name.
+    // Cloudflare keeps a secret that the upload leaves out. A `secret_text`
+    // binding in `bindings` replaces the secret of the same name.
     keep_bindings: ["secret_text"],
     ...(Object.keys(upload.exports).length > 0
       ? { exports: upload.exports }
