@@ -6,10 +6,10 @@ A secret value, such as a Stripe API key, reaches a deployed resource as a **cre
 
 A credential is an output of a resource. Two kinds of resource have credentials:
 
-| Kind     | Example                                | Where the value comes from                                                |
-| -------- | -------------------------------------- | ------------------------------------------------------------------------- |
+| Kind     | Example                                   | Where the value comes from                                               |
+| -------- | ----------------------------------------- | ------------------------------------------------------------------------ |
 | Resource | `tokens.AccountToken`, credential `Value` | The provider returns it when it creates the token, and when it rolls it. |
-| Source   | `sources.Env`, credential `value`      | A place outside Notation, such as an environment variable.               |
+| Source   | `sources.Env`, credential `value`         | A place outside Notation, such as an environment variable.               |
 
 Another resource takes the value with `resource.credentials.<name>`. In this example, the key is read from the environment variable `STRIPE_KEY`, written to the Cloudflare Secrets Store, and bound to a Worker:
 
@@ -46,11 +46,11 @@ One credential can go to several resources. A Worker can also take the same valu
 
 A source is a resource that supplies a value that exists outside Notation. Deploy creates nothing at a provider for a source, and never replaces one. Each source has one credential, `value`.
 
-| Class                     | Package                         | Config                                    | Reads                                                                       |
-| ------------------------- | ------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------- |
-| `sources.Env`             | `@notation/std/resources`       | `key`                                     | The environment variable `key`.                                             |
-| `sources.Dotenv`          | `@notation/std/resources`       | `path`, `key`                             | The key in one `.env` file. `path` is relative to the project root. A missing file holds no key. |
-| `InfisicalSecret`         | `@notation/infisical/resources` | `projectId`, `environment`, `path`, `key` | One secret in Infisical. See [Infisical](../providers/infisical/sources.md). |
+| Class             | Package                         | Config                                    | Reads                                                                                            |
+| ----------------- | ------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `sources.Env`     | `@notation/std/resources`       | `key`                                     | The environment variable `key`.                                                                  |
+| `sources.Dotenv`  | `@notation/std/resources`       | `path`, `key`                             | The key in one `.env` file. `path` is relative to the project root. A missing file holds no key. |
+| `InfisicalSecret` | `@notation/infisical/resources` | `projectId`, `environment`, `path`, `key` | One secret in Infisical. See [Infisical](../providers/infisical/sources.md).                     |
 
 Each of the three also takes `track`. See [Tracking a value](#tracking-a-value).
 
@@ -109,12 +109,12 @@ Plan and deploy call the `read` operation of every source. `read` returns the so
 
 The `revision` of each source:
 
-| Source                                     | `revision`                  | A resource that takes the value is written |
-| ------------------------------------------ | --------------------------- | ------------------------------------------ |
-| `InfisicalSecret`                          | the secret's ID and version | when the version changes                   |
-| `InfisicalSecret` that refers to another secret | the deploy's execution ID | on every deploy                         |
-| `Env`, `Dotenv`                            | the deploy's execution ID   | on every deploy                            |
-| any source with `track`                    | a hash of the value         | when the value changes                     |
+| Source                                          | `revision`                  | A resource that takes the value is written |
+| ----------------------------------------------- | --------------------------- | ------------------------------------------ |
+| `InfisicalSecret`                               | the secret's ID and version | when the version changes                   |
+| `InfisicalSecret` that refers to another secret | the deploy's execution ID   | on every deploy                            |
+| `Env`, `Dotenv`                                 | the deploy's execution ID   | on every deploy                            |
+| any source with `track`                         | a hash of the value         | when the value changes                     |
 
 So without `track`, an `Env` shows a change in every plan:
 
@@ -147,14 +147,14 @@ new sources.Env("admin-password", {
 });
 ```
 
-|                         | `"scrypt"`                         | `"hmac"`                                        |
-| ----------------------- | ---------------------------------- | ----------------------------------------------- |
-| `revision`              | `scrypt:<hex>`                     | `hmac:<hex>`                                    |
-| Setup                   | none                               | `NOTATION_TRACK_KEY` on every machine           |
-| Cost at plan            | about 0.25 seconds for each source | none                                            |
-| Someone who reads state | can test guesses, slowly           | can test nothing without the key                |
-| The key is missing      |                                    | plan and deploy fail, and name the variable     |
-| The key changes         |                                    | every tracked value gets a new revision, and is written once |
+|                         | `"scrypt"`                                                    | `"hmac"`                                                     |
+| ----------------------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
+| `revision`              | `scrypt:<hex>`                                                | `hmac:<hex>`                                                 |
+| Setup                   | none                                                          | `NOTATION_TRACK_KEY` on every machine                        |
+| Cost at plan            | about 0.25 seconds and 128 MiB for each source, one at a time | none                                                         |
+| Someone who reads state | can test guesses, slowly                                      | can test nothing without the key                             |
+| The key is missing      |                                                               | plan and deploy fail, and name the variable                  |
+| The key changes         |                                                               | every tracked value gets a new revision, and is written once |
 
 **`"scrypt"` is for generated values only.** A person who reads state can test a guess against a scrypt hash. At about 15 guesses a second on a laptop, a 4-digit PIN takes minutes and a common password takes about a day. A generated API key cannot be guessed. Use `"hmac"` for a value that a person chose.
 
