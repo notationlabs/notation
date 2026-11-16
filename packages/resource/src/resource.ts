@@ -1297,9 +1297,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             }) {
               if (!opts.deriveParams) return {};
               return await opts.deriveParams({
-                config: (input?.config ?? this.config) as Partial<
-                  T["params"]
-                >,
+                config: (input?.config ?? this.config) as Partial<T["params"]>,
               });
             }
 
@@ -1334,8 +1332,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
                         ...superParams,
                         ...(await deriveParams({
                           id: this.id,
-                          config: (input?.config ??
-                            this.config) as T["params"],
+                          config: (input?.config ?? this.config) as T["params"],
                           deps:
                             input?.deps ??
                             (this

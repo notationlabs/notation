@@ -99,16 +99,18 @@ export type DeepInputWith<T, Also extends "credential" | "state"> =
 // Distributes over a union, so each object in it is mapped on its own. An
 // array is written as an array type, which the type checker expands only
 // when it is read, so a recursive type such as a JSON value ends.
-type DeepInputMembers<T, Also extends "credential" | "state"> =
-  T extends readonly (infer E)[]
-    ? T extends unknown[]
-      ? DeepInputWith<E, Also>[]
-      : readonly DeepInputWith<E, Also>[]
-    : T extends Function
-      ? T
-      : T extends object
-        ? { [K in keyof T]: DeepInputWith<T[K], Also> }
-        : T;
+type DeepInputMembers<
+  T,
+  Also extends "credential" | "state",
+> = T extends readonly (infer E)[]
+  ? T extends unknown[]
+    ? DeepInputWith<E, Also>[]
+    : readonly DeepInputWith<E, Also>[]
+  : T extends Function
+    ? T
+    : T extends object
+      ? { [K in keyof T]: DeepInputWith<T[K], Also> }
+      : T;
 
 class OutputRefClass {
   readonly [outputRefBrand] = true as const;
@@ -472,7 +474,10 @@ export function toCanonicalOutputRefs(value: unknown): unknown {
   );
 }
 
-function describeOutputRef(token: { resource: BaseResource; path: readonly string[] }): string {
+function describeOutputRef(token: {
+  resource: BaseResource;
+  path: readonly string[];
+}): string {
   return [token.resource.id, ...token.path].join(".");
 }
 

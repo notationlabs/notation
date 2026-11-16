@@ -198,7 +198,10 @@ export function credentialSourceResource<
             readSource = opts.read;
             loadCredential = opts.loadCredential;
 
-            constructor(id: string, args?: { config?: NoInfer<ConfigInput<C>> }) {
+            constructor(
+              id: string,
+              args?: { config?: NoInfer<ConfigInput<C>> },
+            ) {
               super(id, args);
               this.checkDeclaration();
             }
