@@ -15,6 +15,7 @@ import {
   type CredentialMarker,
   type DurableObject,
   type ResourceClass,
+  type ResourceGroupId,
   type ResourceGroupRef,
   type ResourceDeletion,
   type ResourceType,
@@ -609,11 +610,25 @@ function declaredFields(resource: BaseResource) {
   return { provider: resource.provider, group: resource.group };
 }
 
-function sameGroup(
+/**
+ * Whether two refs name the same group with the same ancestry. A recorded
+ * ref with no `parents` differs from every ref, so the next deploy writes
+ * them.
+ */
+export function sameGroup(
   a: ResourceGroupRef | null,
   b: ResourceGroupRef | null,
 ): boolean {
-  return a?.type === b?.type && a?.id === b?.id;
+  if (a === null || b === null) return a === b;
+  const sameId = (x: ResourceGroupId, y: ResourceGroupId) =>
+    x.type === y.type && x.id === y.id;
+  return (
+    sameId(a, b) &&
+    Array.isArray(a.parents) &&
+    Array.isArray(b.parents) &&
+    a.parents.length === b.parents.length &&
+    a.parents.every((parent, i) => sameId(parent, b.parents[i]!))
+  );
 }
 
 /**

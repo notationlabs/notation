@@ -23,11 +23,20 @@ export const createMermaidFlowChart = (
     mermaidString += `${indent}${nodeId}(${label(`${resource.type} ${resource.id}`)})\n`;
   };
 
-  resourceGroups.forEach((group, index) => {
-    mermaidString += `  subgraph g${index}[${label(`${group.type} ${group.id}`)}]\n`;
-    group.resources.forEach((resource) => drawResource(resource, "    "));
-    mermaidString += `  end\n`;
-  });
+  // `resourceGroups` lists every group, nested or not. A group is drawn
+  // inside its parent, so only the groups at the top level start a walk.
+  let groupCount = 0;
+  const drawGroup = (group: ResourceGroup, indent: string) => {
+    mermaidString += `${indent}subgraph g${groupCount++}[${label(`${group.type} ${group.id}`)}]\n`;
+    group.resources.forEach((resource) =>
+      drawResource(resource, `${indent}  `),
+    );
+    group.groups.forEach((child) => drawGroup(child, `${indent}  `));
+    mermaidString += `${indent}end\n`;
+  };
+  resourceGroups
+    .filter((group) => group.parent === null)
+    .forEach((group) => drawGroup(group, "  "));
 
   resources
     .filter((resource) => !nodeIds.has(resource.id))

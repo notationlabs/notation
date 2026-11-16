@@ -75,6 +75,7 @@ test("a schedule group is identified by its name", async () => {
   expect(daily.rule.group).toEqual({
     type: "aws/eventBridge/schedule",
     id: "daily",
+    parents: [],
   });
 });
 

@@ -92,6 +92,47 @@ it("draws resources that are in no group outside every subgraph", () => {
   expect(chart).toBe(expected + "\n");
 });
 
+it("draws nested groups as nested subgraphs, each once", () => {
+  const outerResource = fakeResource("outer-resource", "test/resource");
+  const innerResource = fakeResource("inner-resource", "test/resource", {
+    outerResource,
+  });
+  const deepResource = fakeResource("deep-resource", "test/resource");
+  const outer = new TestGroup("Outer", "o");
+  const inner = new TestGroup("Inner", "i");
+  const deep = new TestGroup("Deep", "d");
+  const sibling = new TestGroup("Sibling", "s");
+  outer.add(outerResource);
+  inner.add(innerResource);
+  deep.add(deepResource);
+  inner.add(deep);
+  outer.add(inner);
+
+  // Lists every group, as a collected graph does, inner ones first.
+  const chart = createMermaidFlowChart(
+    [deep, inner, outer, sibling],
+    [outerResource, innerResource, deepResource],
+  );
+
+  const expected = stripIndent`
+    flowchart TD
+      subgraph g0["Outer o"]
+        r0("test/resource outer-resource")
+        subgraph g1["Inner i"]
+          r1("test/resource inner-resource")
+          subgraph g2["Deep d"]
+            r2("test/resource deep-resource")
+          end
+        end
+      end
+      subgraph g3["Sibling s"]
+      end
+
+      r1 --> r0`;
+
+  expect(chart).toBe(expected + "\n");
+});
+
 it("should create a mermaid live URL from given code", () => {
   const mermaidCode = "flowchart TD\nA --> B";
   const result = createMermaidLiveUrl(mermaidCode);
@@ -118,9 +159,20 @@ function fakeResource(
 }
 
 function fakeGroup(type: string, id: string, resources: BaseResource[]) {
-  for (const resource of resources) resource.group = { type, id };
-  return { type, id, config: {}, resources } as unknown as ResourceGroup;
+  for (const resource of resources) {
+    resource.group = { type, id, parents: [] };
+  }
+  return {
+    type,
+    id,
+    config: {},
+    resources,
+    groups: [],
+    parent: null,
+  } as unknown as ResourceGroup;
 }
+
+class TestGroup extends ResourceGroup {}
 
 function getFixture() {
   const resourceA = fakeResource("resource-a", "ResourceTypeA");

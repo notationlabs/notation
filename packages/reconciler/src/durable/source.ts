@@ -19,7 +19,7 @@ import { emitLifecycleEvent, getErrorDetails } from "../operations";
 import { getDependencyIds, hasSameEdges } from "../plan";
 import { assertSameType } from "../resource-type";
 import { readAndDecideSource, sourceState } from "../sources";
-import { openStateSession } from "./reconcile";
+import { openStateSession, sameGroup } from "./reconcile";
 import { durableEmitter, type DurableStepRunner } from "./step";
 import type { DeployContext } from "./types";
 
@@ -82,8 +82,7 @@ export async function* reconcileSource(
     record &&
     (!hasSameEdges(record, dependsOn) ||
       record.provider !== source.provider ||
-      group?.type !== source.group?.type ||
-      group?.id !== source.group?.id);
+      !sameGroup(group, source.group));
   if (!opts.dryRun && (decision !== "noop" || rewrite)) {
     yield* session.persist({
       id: source.id,

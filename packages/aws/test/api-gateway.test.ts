@@ -102,6 +102,7 @@ test("api and route groups are identified by the api name and route", async () =
   expect(todoRoute.route.group).toEqual({
     type: "API Gateway/Route",
     id: "api-route:todo-api:GET /todos",
+    parents: [],
   });
 });
 
@@ -165,6 +166,7 @@ test("routes of one authorizer share its RouteAuth, which the authorizer owns", 
   expect(authA?.group).toEqual({
     type: "API Gateway/JWT Authorizer",
     id: "api-authorizer:user-api:user-auth",
+    parents: [],
   });
   expect(authA?.id).toBe("api-authorizer:user-api:user-auth");
   expect(authA?.config.Name).toBe("user-auth");

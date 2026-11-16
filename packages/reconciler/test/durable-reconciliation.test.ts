@@ -3317,7 +3317,7 @@ describe("state from before groups had stable IDs", () => {
 
   function groupedResource(name: string) {
     const legacy = new LegacyResource("legacy", { config: { name } });
-    legacy.group = { type: "Legacy", id: "legacy-group" };
+    legacy.group = { type: "Legacy", id: "legacy-group", parents: [] };
     return legacy;
   }
 
@@ -3337,7 +3337,7 @@ describe("state from before groups had stable IDs", () => {
 
     const node = await runtime.state.get("legacy");
     expect(node).toMatchObject({
-      group: { type: "Legacy", id: "legacy-group" },
+      group: { type: "Legacy", id: "legacy-group", parents: [] },
       params: { name: "after" },
     });
     expect(node).not.toHaveProperty("groupId");
@@ -3388,7 +3388,7 @@ describe("moving a resource between groups", () => {
     expect(await runtime.state.get("moved")).toMatchObject({ group: null });
     create.mockClear();
 
-    const group = { type: "Moved", id: "moved-group" };
+    const group = { type: "Moved", id: "moved-group", parents: [] };
     resources[0] = moved(group);
     await runtime.run("deploy-2");
     expect(await runtime.state.get("moved")).toMatchObject({
@@ -3399,6 +3399,43 @@ describe("moving a resource between groups", () => {
     resources[0] = moved(null);
     await runtime.run("deploy-3");
     expect(await runtime.state.get("moved")).toMatchObject({ group: null });
+
+    expect(create).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    runtime.close();
+  });
+
+  it("rewrites the record without calling the provider when the group's ancestry changes", async () => {
+    const group = { type: "Moved", id: "moved-group", parents: [] };
+    const resources: BaseResource[] = [moved(group)];
+    const runtime = createRuntime(resources, "moved-ancestry");
+
+    await runtime.run("deploy-1");
+    create.mockClear();
+
+    const nested = {
+      ...group,
+      parents: [
+        { type: "Outer", id: "outer" },
+        { type: "Middle", id: "middle" },
+      ],
+    };
+    resources[0] = moved(nested);
+    await runtime.run("deploy-2");
+    const node = await runtime.state.get("moved");
+    expect(node).toMatchObject({ lastOperation: "create" });
+    expect(node?.group).toEqual(nested);
+
+    // The same groups, with the parents in another order.
+    const reordered = { ...group, parents: [...nested.parents].reverse() };
+    resources[0] = moved(reordered);
+    await runtime.run("deploy-3");
+    expect((await runtime.state.get("moved"))?.group).toEqual(reordered);
+
+    resources[0] = moved(group);
+    await runtime.run("deploy-4");
+    expect((await runtime.state.get("moved"))?.group).toEqual(group);
 
     expect(create).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
