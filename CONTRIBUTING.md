@@ -3,15 +3,16 @@
 Every task in this repository runs through `pok`. Run `pok` on its own to list
 the commands, or `pok <command> --help` for one of them.
 
-| Command          | What it does                                                        |
-| ---------------- | ------------------------------------------------------------------- |
-| `pok build`      | Build every package                                                 |
-| `pok dev`        | Watch and rebuild every package                                     |
-| `pok test run`   | Run the suite once, as CI and the pre-commit hook do                |
-| `pok test watch` | Re-run tests on change                                              |
-| `pok test e2e`   | Build, then run the end-to-end tests against real provider accounts |
-| `pok typecheck`  | Type-check every package                                            |
-| `pok format`     | Format the repository                                               |
+| Command             | What it does                                                |
+| ------------------- | ----------------------------------------------------------- |
+| `pok build`         | Build every package                                         |
+| `pok dev`           | Watch and rebuild every package                             |
+| `pok test run`      | Run the suite once, as CI and the pre-commit hook do        |
+| `pok test watch`    | Re-run tests on change                                      |
+| `pok test e2e`      | Build, then run the end-to-end tests, except the slow tests |
+| `pok test e2e-slow` | Build, then run the slow end-to-end tests                   |
+| `pok typecheck`     | Type-check every package                                    |
+| `pok format`        | Format the repository                                       |
 
 ## Tests
 
@@ -38,6 +39,19 @@ variables from the environment:
 | `ECR_PULL_ACCESS_KEY_ID`, `ECR_PULL_SECRET_ACCESS_KEY`     | The Cloudflare `ContainerRegistry` test                    |
 
 A Cloudflare test is skipped when its variables are missing. An AWS test fails.
+
+`pok test e2e` leaves out the slow tests, which `vitest.e2e.config.ts` lists
+in `slow`. Each takes several minutes. Today they are the tests of the
+Cloudflare container resources, which build and push images and wait for
+rollouts. Run them with `pok test e2e-slow` when you change the code they
+test.
+
+To run one file, build, then pass its path to Vitest:
+
+```
+pok build
+pnpm exec vitest run --config vitest.e2e.config.ts packages/cloudflare/test/resources/kv-namespace.e2e.test.ts
+```
 
 The Cloudflare `ContainerImage` test and the container test of `$durableObject`
 build an image with Docker, and are skipped unless the Docker daemon is running.
