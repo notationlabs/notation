@@ -11,6 +11,7 @@ import { clearSecretValues } from "@notation/utils";
 import { beforeEach, describe, expect, it } from "vitest";
 import { clearHeldCredentials } from "../src/credentials";
 import { createPlan } from "../src/planner";
+import { createResourceRegistry } from "../src/resource-registry";
 import { decideSource } from "../src/sources";
 import { createRuntime } from "./credentials-runtime";
 
@@ -389,6 +390,87 @@ describe("a source", () => {
         overrides: { replace: [{ id: "stripe-key" }] },
       }),
     ).rejects.toThrow("stripe-key is a source, and a source is never replaced");
+    runtime.close();
+  });
+});
+
+describe("a source that has left the code, whose class is not registered", () => {
+  /** A source that depends on the secret `project`. */
+  function declareDependent(types: Types): BaseResource[] {
+    const project = new types.Secret("project", {
+      config: { name: "project", Value: "v" },
+    });
+    const source = new types.Stored("stripe-key", {
+      config: { key: "STRIPE_KEY" },
+    });
+    source.dependOn(project);
+    return [project, source];
+  }
+
+  async function deployed() {
+    const outside = createOutside();
+    set(outside, "STRIPE_KEY", "sk_1");
+    const types = defineResources(outside);
+    const runtime = createRuntime({
+      registry: createResourceRegistry([types.Secret]),
+    });
+    await runtime.deploy("first", declareDependent(types));
+    outside.calls.length = 0;
+    return { outside, runtime };
+  }
+
+  const skipped = (runtime: ReturnType<typeof createRuntime>) =>
+    runtime.events.filter(
+      (event) => event.event === "reconciler.orphan-deletion.skipped",
+    );
+
+  it("is marked as a source in its record", async () => {
+    const { runtime } = await deployed();
+
+    expect(await runtime.state.get("stripe-key")).toMatchObject({
+      kind: "credential-source",
+    });
+    expect(await runtime.state.get("project")).not.toHaveProperty("kind");
+    runtime.close();
+  });
+
+  it("has its record deleted by deploy, with what it depends on, and no warning", async () => {
+    const { outside, runtime } = await deployed();
+
+    await runtime.nextProcess("second", []);
+
+    expect(outside.calls).toEqual(["delete project"]);
+    expect(await runtime.state.values()).toEqual([]);
+    expect(skipped(runtime)).toEqual([]);
+    runtime.close();
+  });
+
+  it("is planned as a delete before what it depends on", async () => {
+    const { runtime } = await deployed();
+
+    const { nodes } = await createPlan({
+      resources: [],
+      state: runtime.state,
+      registry: createResourceRegistry([]),
+      app: "shop",
+      stage: "prod",
+    });
+
+    expect(nodes.map(({ id, decision }) => `${decision} ${id}`)).toEqual([
+      "delete-orphan stripe-key",
+      "delete-orphan project",
+    ]);
+    runtime.close();
+  });
+
+  it("has its record deleted by destroy, with what it depends on, and no warning", async () => {
+    const { outside, runtime } = await deployed();
+
+    await runtime.destroy("destroy", []);
+
+    expect(outside.calls).toEqual(["delete project"]);
+    expect(await runtime.state.values()).toEqual([]);
+    expect(skipped(runtime)).toEqual([]);
     runtime.close();
   });
 });

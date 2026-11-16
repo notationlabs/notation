@@ -4,12 +4,12 @@
 notation deploy [--config <path>] [--stage <stage>] [--replace <id>@<hash>] [--override-loss-protection <id>] [--credential <id>.<credential>@<version>=<variable>]
 ```
 
-| Option                            | Meaning                                                                                           |
-| --------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `--config <path>`                 | The config file. Default: the nearest `notation.config.ts`.                                       |
-| `--stage <stage>`                 | The stage. Default: `defaultStage`.                                                               |
-| `--replace <id>@<hash>`           | Replace the resource with this ID. Repeatable. See [Replacing a resource](#replacing-a-resource). |
-| `--override-loss-protection <id>` | Replace a resource that `--replace` names, though its class refuses the replace. Repeatable.      |
+| Option                                                | Meaning                                                                                                                                                           |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--config <path>`                                     | The config file. Default: the nearest `notation.config.ts`.                                                                                                       |
+| `--stage <stage>`                                     | The stage. Default: `defaultStage`.                                                                                                                               |
+| `--replace <id>@<hash>`                               | Replace the resource with this ID. Repeatable. See [Replacing a resource](#replacing-a-resource).                                                                 |
+| `--override-loss-protection <id>`                     | Replace a resource that `--replace` names, though its class refuses the replace. Repeatable.                                                                      |
 | `--credential <id>.<credential>@<version>=<variable>` | Give deploy the value of a credential from the environment variable. Repeatable. See [A credential that deploy cannot get](#a-credential-that-deploy-cannot-get). |
 
 Compiles the entry file and deploys it to the stage. Each stage has its own state, under the key `<app>:<stage>`. See [Project Config](../manual/project-config.md).
@@ -50,7 +50,7 @@ Deploy fails, before it changes anything, when:
 | The ID is not in state or in code                                        | `lambda:orders:role is not in state or in code, so there is nothing to replace.`                                                                                                                                |
 | The ID is in state, but not in code                                      | `lambda:orders:role is no longer in code. Deploy will delete it.`                                                                                                                                               |
 | An earlier deploy did not finish the create of the resource              | `lambda:orders:role has a create that an earlier deploy did not finish. Run deploy without --replace to recover it first.`                                                                                      |
-| The resource is a source                                                 | `stripe-key is a source, and a source is never replaced. Nothing exists at a provider to replace.`                                                                                                        |
+| The resource is a source                                                 | `stripe-key is a source, and a source is never replaced. Nothing exists at a provider to replace.`                                                                                                              |
 | `--replace` has no hash                                                  | `--replace lambda:orders:role needs the instance hash, as --replace lambda:orders:role@<instance hash>. Run notation plan --stage prod --replace lambda:orders:role to print the deploy command with the hash.` |
 | The part after the last `@` is hex of the wrong length, after a known ID | `The instance hash 3c1f9a0 of lambda:orders:role is malformed. An instance hash is 8 hex characters.`                                                                                                           |
 | The hash does not match                                                  | `lambda:orders:role has the instance hash 9e04b7d1 in this stage, not 3c1f9a02.`                                                                                                                                |
@@ -88,11 +88,11 @@ A resume does not check the hash again, because a create-first replace has alrea
 
 A [credential](../manual/secrets.md#credentials) is a secret output of a resource, such as the value of an API token. Deploy holds a credential's value in memory only, so a later deploy holds none. When a resource that takes the value is created or updated, deploy gets the value again:
 
-| The credential                        | Deploy                                                                  |
-| ------------------------------------- | ----------------------------------------------------------------------- |
-| of a source, such as `sources.Env`    | loads the value from the source                                         |
+| The credential                                      | Deploy                                                      |
+| --------------------------------------------------- | ----------------------------------------------------------- |
+| of a source, such as `sources.Env`                  | loads the value from the source                             |
 | of a resource with `rotate`, such as `AccountToken` | rotates it, and updates every resource that takes the value |
-| of a resource without `rotate`        | cannot get it                                                           |
+| of a resource without `rotate`                      | cannot get it                                               |
 
 Some providers issue a value once, at create, and have no API to issue another. A GitHub App's private key is one. In this case, plan fails. Deploy checks for it before it changes anything, and again before it writes the resource that needs the value. Both print two commands, with the `--config`, `--stage` and other flags of the command that you ran:
 
@@ -124,12 +124,12 @@ APP_PRIVATE_KEY="$(cat app.pem)" notation deploy --stage prod --credential app.p
 
 The flag has four parts:
 
-| Part           | Example         | Meaning                                                                                           |
-| -------------- | --------------- | ------------------------------------------------------------------------------------------------- |
-| `<id>`         | `app`           | The resource ID as state records it. The part before `@` is split at its last dot, so an ID can hold a dot. |
-| `<credential>` | `privateKey`    | The name of the credential.                                                                       |
-| `<version>`    | `7b1e52c0`      | The version that state records for the credential, or its first 8 characters.                     |
-| `<variable>`   | `APP_PRIVATE_KEY` | The environment variable that holds the value.                                  |
+| Part           | Example           | Meaning                                                                                                     |
+| -------------- | ----------------- | ----------------------------------------------------------------------------------------------------------- |
+| `<id>`         | `app`             | The resource ID as state records it. The part before `@` is split at its last dot, so an ID can hold a dot. |
+| `<credential>` | `privateKey`      | The name of the credential.                                                                                 |
+| `<version>`    | `7b1e52c0`        | The version that state records for the credential, or its first 8 characters.                               |
+| `<variable>`   | `APP_PRIVATE_KEY` | The environment variable that holds the value.                                                              |
 
 **The version ties the command to one value in one stage.** The same credential has another version in every other stage, and a new version after the resource is replaced. So a command copied from the plan of another stage fails:
 
@@ -143,18 +143,18 @@ Deploy cannot tell whether the passed value is the one that the other resources 
 
 Deploy fails, before it changes anything, when:
 
-| Case                                                     | Error                                                                                                                                     |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| The ID is not in code                                    | `--credential app.privateKey: app is not in code.`                                                                                        |
-| The resource is a source                                 | `--credential stripe-key.value: stripe-key is a source. Deploy loads a source's value from the source.`                                   |
-| The name is not a credential of the resource             | `--credential app.key: key is not a credential of app.`                                                                                   |
-| The credential has `rotate`                              | `--credential deploy-token.Value: cloudflare/tokens/AccountToken can rotate Value, so deploy gets a new value itself. --credential is accepted only for a credential without rotate.` |
-| `--replace` names the same resource                      | `--credential app.privateKey cannot be given with --replace app: the replacement is created with a new value.`                            |
-| The resource is not in state                             | `--credential app.privateKey: app is not in state, so it has no value to set. Deploy creates it, and the create returns the value.`       |
-| State has no version of the credential                   | `--credential app.privateKey: state has no version of app.privateKey, so deploy cannot check that the flag is meant for this stage. Replace app with --replace to issue a new value.` |
-| The version does not match                               | `app.privateKey is at version 3c90a1f4 in this stage, not 7b1e52c0.`                                                                      |
-| The variable is not set                                  | `--credential app.privateKey reads APP_PRIVATE_KEY, which is not set.`                                                                    |
-| The flag names the same credential twice                 | `--credential app.privateKey is given more than once.`                                                                                    |
+| Case                                         | Error                                                                                                                                                                                 |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The ID is not in code                        | `--credential app.privateKey: app is not in code.`                                                                                                                                    |
+| The resource is a source                     | `--credential stripe-key.value: stripe-key is a source. Deploy loads a source's value from the source.`                                                                               |
+| The name is not a credential of the resource | `--credential app.key: key is not a credential of app.`                                                                                                                               |
+| The credential has `rotate`                  | `--credential deploy-token.Value: cloudflare/tokens/AccountToken can rotate Value, so deploy gets a new value itself. --credential is accepted only for a credential without rotate.` |
+| `--replace` names the same resource          | `--credential app.privateKey cannot be given with --replace app: the replacement is created with a new value.`                                                                        |
+| The resource is not in state                 | `--credential app.privateKey: app is not in state, so it has no value to set. Deploy creates it, and the create returns the value.`                                                   |
+| State has no version of the credential       | `--credential app.privateKey: state has no version of app.privateKey, so deploy cannot check that the flag is meant for this stage. Replace app with --replace to issue a new value.` |
+| The version does not match                   | `app.privateKey is at version 3c90a1f4 in this stage, not 7b1e52c0.`                                                                                                                  |
+| The variable is not set                      | `--credential app.privateKey reads APP_PRIVATE_KEY, which is not set.`                                                                                                                |
+| The flag names the same credential twice     | `--credential app.privateKey is given more than once.`                                                                                                                                |
 
 A resume reads the value from the variable again, so the variable must be set for the resume too.
 
@@ -201,6 +201,6 @@ Retryable provider conditions and consistency reads suspend on durable SQLite ti
 
 5. **Detect drift** – unchanged resources are read from the provider and repaired when their remote state differs.
 
-6. **Delete orphans** – persisted resources absent from the graph are deleted when their resource type is registered. A type is registered when a resource in the graph has it, or when the provider package named in its state record is installed and exports its class.
+6. **Delete orphans** – persisted resources absent from the graph are deleted when their resource type is registered. A type is registered when a resource in the graph has it, or when the provider package named in its state record is installed and exports its class. The record of a source needs no class, and is always deleted.
 
 State, step results, timers, queued tasks, and resource stores are persisted to `.notation/workflows.db`. Set `NOTATION_DATABASE_PATH` to choose another SQLite database path.

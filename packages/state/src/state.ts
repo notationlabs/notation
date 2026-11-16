@@ -9,6 +9,12 @@ export type StateNode = {
   id: string;
   type: string;
   provider: string;
+  /**
+   * `credential-source` marks the record of a source. Deploy and destroy
+   * delete such a record without its class. Absent on the record of any
+   * other resource.
+   */
+  kind?: "credential-source";
   config: DurableObject;
   params: DurableObject;
   output: DurableObject;

@@ -90,6 +90,7 @@ export async function* reconcileSource(
       group: source.group,
       type: source.type,
       provider: source.provider,
+      kind: "credential-source",
       lastOperation: decision === "create" ? "create" : "update",
       lastOperationAt: new Date().toISOString(),
       config: resolveOutputRefs(source.config, deployLookup) as DurableObject,

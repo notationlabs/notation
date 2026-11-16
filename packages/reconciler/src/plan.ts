@@ -6,15 +6,11 @@ import {
   type RejectChange,
   type RejectChangeContext,
   type ReplaceField,
-  type ResourceType,
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
 import type { ReplaceOrder } from "./events";
 import type { ReplaceOverride } from "./overrides";
-import {
-  resolveResourceClass,
-  type ResourceRegistry,
-} from "./resource-registry";
+import { resolveRecordClass, type ResourceRegistry } from "./resource-registry";
 
 export {
   UNKNOWN_AFTER_APPLY,
@@ -273,8 +269,7 @@ export function assertOrphanDeleteAllowed(
 ): void {
   assertChangeAllowed(
     stateNode.id,
-    resolveResourceClass(registry, stateNode.type as ResourceType)
-      ?.rejectChange,
+    resolveRecordClass(registry, stateNode)?.rejectChange,
     stateNode.params,
     undefined,
     { replace: false },

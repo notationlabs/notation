@@ -1,6 +1,6 @@
-import type { BaseResource, ResourceType } from "@notation/resource";
+import type { ResourceType } from "@notation/resource";
 import type { StateNode } from "@notation/state";
-import type { ResourceRegistry } from "./resource-registry";
+import { resolveRecordClass, type ResourceRegistry } from "./resource-registry";
 
 /**
  * Whether the record `dependentId` blocks the delete of the record
@@ -12,13 +12,15 @@ export function createBlocksDelete(
   records: StateNode[],
   registry: ResourceRegistry,
 ) {
-  const typeById = new Map(
-    records.map((node) => [node.id, node.type as ResourceType]),
-  );
+  const recordById = new Map(records.map((node) => [node.id, node]));
   return (dependentId: string, dependencyId: string): boolean => {
-    const dependentType = typeById.get(dependentId);
-    const type = typeById.get(dependencyId);
-    if (!dependentType || !type) return false;
-    return registry.get(dependentType)?.blocksDeleteOf.includes(type) ?? false;
+    const dependent = recordById.get(dependentId);
+    const dependency = recordById.get(dependencyId);
+    if (!dependent || !dependency) return false;
+    return (
+      resolveRecordClass(registry, dependent)?.blocksDeleteOf.includes(
+        dependency.type as ResourceType,
+      ) ?? false
+    );
   };
 }

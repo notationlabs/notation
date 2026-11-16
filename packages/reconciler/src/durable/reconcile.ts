@@ -30,7 +30,11 @@ import { collectDependents } from "../dependency-graph";
 import { createBlocksDelete } from "../delete-cascade";
 import type { EmitStep, OperationLifecycleEvent } from "../events";
 import { sweepSteps, sweptRecords } from "../orphan-sweep";
-import { resolveResourceClass, workflowRegistry } from "../resource-registry";
+import {
+  resolveRecordClass,
+  resolveResourceClass,
+  workflowRegistry,
+} from "../resource-registry";
 import { assertSameType } from "../resource-type";
 import {
   applyDriftDetection,
@@ -885,10 +889,7 @@ async function* deleteBlockingDependents(
         encodeURIComponent(id),
         `replace:${encodeURIComponent(resource.id)}`,
       ),
-      await instantiateRecord(
-        registry.get(record.type as ResourceType)!,
-        record,
-      ),
+      await instantiateRecord(resolveRecordClass(registry, record)!, record),
       opts,
       "deploy",
       { reason: "dependency-replaced", replacedDependency: resource.id },
@@ -918,10 +919,7 @@ export async function* deleteResource(
   if (!session.node) return;
   // The classes in code win in the registry, so a record of the declared
   // type resolves to the declared class.
-  const Resource = resolveResourceClass(
-    workflowRegistry(opts),
-    session.node.type as ResourceType,
-  );
+  const Resource = resolveRecordClass(workflowRegistry(opts), session.node);
   if (!Resource) {
     throw new Error(
       `No class is registered for type ${session.node.type}, the type of ` +
@@ -1128,7 +1126,8 @@ function retiredDeleteError(
  * A state node whose type has no registry entry is left in place and surfaced
  * as a warning, because deleting it would need a resource class we cannot
  * resolve. Every orphan or retired instance it depends on is left in place
- * too, and the warning names them.
+ * too, and the warning names them. A source's record needs no class, and is
+ * always deleted.
  */
 export async function* sweepOrphans(
   step: DurableStep,

@@ -137,7 +137,7 @@ Deploy lists state before each delete of a resource of such a type, so set it on
 
 ### Provider packages
 
-When a resource's type no longer appears in code, deploy and destroy load the class from the package or package subpath that `provider` names, to delete the resource. `@notation/core` resolves it with `require.resolve` from the project, and then imports it. The provider must meet these conditions, or the record is left in place with a `reconciler.provider.load-failed` warning:
+When a resource's type no longer appears in code, deploy and destroy load the class from the package or package subpath that `provider` names, to delete the resource. A source needs no class to be deleted, so its package is not loaded. `@notation/core` resolves it with `require.resolve` from the project, and then imports it. The provider must meet these conditions, or the record is left in place with a `reconciler.provider.load-failed` warning:
 
 - Its entry in `exports` must have a `require` or `default` condition. An entry with only an `import` condition can't be resolved.
 - Its entry must export resource classes, or namespaces of them, such as `export * as lambda from "./lambda"`. The loader registers each resource class among the exports and among the values of each exported namespace, and ignores other values. It also ignores a class whose `provider` names another package, such as a class re-exported from another provider. Give the provider its own entry, such as a `/resources` subpath, so that loading it does not import the rest of the package.
@@ -682,7 +682,7 @@ The schema has params, a computed `revision`, any other computed outputs, and on
 `loadCredential` receives `state` and the context without `state` and `warn`. `state` holds the params and the outputs that `read` returned in this deploy, without the credential.
 
 - A source that no resource takes is never loaded.
-- When a source leaves the code, deploy deletes its record and calls nothing.
+- When a source leaves the code, deploy deletes its record and calls nothing. It does not load the source's provider package to do this.
 - `--replace` and `--credential` refuse a source.
 - Pass every value that `read` reads to `recordSecretValue` from `@notation/utils`, so that it is removed from error messages. The reconciler does this for the value that `loadCredential` returns.
 

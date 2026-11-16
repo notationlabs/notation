@@ -127,7 +127,8 @@ export type CredentialSourceClass<
   new (id: string, ...args: ResourceArgs<C, {}>): CredentialSource<T, C>;
   readonly type: ResourceType;
   readonly provider: string;
-  readonly blocksDeleteOf: readonly ResourceType[];
+  /** A source never blocks the delete of another resource. */
+  readonly blocksDeleteOf: readonly [];
 };
 
 /**
@@ -189,7 +190,7 @@ export function credentialSourceResource<
           > extends CredentialSource<T, NoInfer<C>> {
             static type = meta.type;
             static provider = meta.provider;
-            static blocksDeleteOf: readonly ResourceType[] = [];
+            static blocksDeleteOf = [] as const;
             type = meta.type;
             provider = meta.provider;
             schema = schema;

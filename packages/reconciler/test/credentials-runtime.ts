@@ -12,6 +12,7 @@ import { clearHeldCredentials } from "../src/credentials";
 import * as durable from "../src/durable";
 import type { ReconcilerEvent } from "../src/events";
 import type { Overrides } from "../src/overrides";
+import type { ResourceRegistry } from "../src/resource-registry";
 
 class CrashAfterWriteHeap implements HeapClient {
   #crashed = false;
@@ -48,7 +49,11 @@ class CrashAfterWriteHeap implements HeapClient {
  * the deploy of the app `shop` to the stage `prod`.
  */
 export function createRuntime(
-  options: { crashAfterStep?: string; driftDetection?: boolean } = {},
+  options: {
+    crashAfterStep?: string;
+    driftDetection?: boolean;
+    registry?: ResourceRegistry;
+  } = {},
 ) {
   const database = createSqliteDb({ path: ":memory:" });
   let skew = 0;
@@ -78,10 +83,22 @@ export function createRuntime(
         executionId: event.executionId,
         resources,
         state,
+        registry: options.registry,
         driftDetection: options.driftDetection ?? false,
         app: "shop",
         stage: "prod",
         overrides: currentOverrides,
+        emit: (event) => {
+          events.push(event);
+        },
+      });
+    }),
+    destroy: workflow(async function* (step, event) {
+      yield* durable.destroy(step, {
+        executionId: event.executionId,
+        resources,
+        state,
+        registry: options.registry,
         emit: (event) => {
           events.push(event);
         },
@@ -93,7 +110,16 @@ export function createRuntime(
     logger: pino({ level: "silent" }),
   });
 
-  async function deploy(
+  function deploy(
+    executionId: string,
+    declared: BaseResource[],
+    overrides?: Overrides,
+  ) {
+    return deliver("deploy", executionId, declared, overrides);
+  }
+
+  async function deliver(
+    workflowId: "deploy" | "destroy",
     executionId: string,
     declared: BaseResource[],
     overrides?: Overrides,
@@ -103,7 +129,7 @@ export function createRuntime(
     if (!(await runtime.executions.get(executionId))) {
       const admission = await runtime.executions.admit({
         executionId,
-        workflowId: "deploy",
+        workflowId,
         params: {},
         context: new Map(),
       });
@@ -118,7 +144,7 @@ export function createRuntime(
     let outcome;
     try {
       outcome = await runner.run(
-        { workflowId: "deploy", executionId, params: {}, context: new Map() },
+        { workflowId, executionId, params: {}, context: new Map() },
         { lease, signal: new AbortController().signal },
       );
     } catch (error) {
@@ -135,6 +161,10 @@ export function createRuntime(
     state,
     events,
     deploy,
+    destroy(executionId: string, declared: BaseResource[]) {
+      clearHeldCredentials();
+      return deliver("destroy", executionId, declared);
+    },
     /** Deploys as a new process does, which holds no credential. */
     nextProcess(
       executionId: string,

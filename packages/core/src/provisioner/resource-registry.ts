@@ -30,10 +30,10 @@ export function createResourceRegistryFromGraph(
   return createResourceRegistryFromResources(resources);
 }
 
-// Records whose type is in code use the class from code, so only the other
-// records need their package loaded.
+// Records whose type is in code use the class from code, and a source's
+// record needs no class, so only the other records need their package loaded.
 export function stateProviderPackages(
-  nodes: Pick<StateNode, "id" | "type" | "provider">[],
+  nodes: Pick<StateNode, "id" | "type" | "provider" | "kind">[],
   resources: Pick<BaseResource, "type">[] = [],
 ): string[] {
   const typesInCode = new Set<string>(resources.map((r) => r.type));
@@ -47,6 +47,7 @@ export function stateProviderPackages(
           `deploy it with this one.`,
       );
     }
+    if (node.kind === "credential-source") continue;
     if (!typesInCode.has(node.type)) packages.add(node.provider);
   }
   return [...packages].sort();

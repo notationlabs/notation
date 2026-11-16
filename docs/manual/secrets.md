@@ -99,9 +99,7 @@ The state record of a source holds its params, its `revision` and a marker for t
 }
 ```
 
-When a source is removed from code, deploy deletes its record and calls nothing else.
-
-Keep the source's provider package installed for the deploy that removes the source. If the package is removed in the same change, deploy cannot load the provider, warns that the provider load failed, and leaves the record in state. Remove the package after that deploy.
+When a source is removed from code, deploy deletes its record and calls nothing else. Deploy does not load the source's provider package to do this, so the package can be removed in the same change.
 
 ## When a value is written
 
