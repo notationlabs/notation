@@ -231,6 +231,7 @@ describe("createPlan with a requested replace", () => {
     const { resources, state } = queues();
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources,
       state,
       driftDetection: true,
@@ -259,6 +260,7 @@ describe("createPlan with a requested replace", () => {
     (resources[0]!.config as any).path = "/new/";
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources,
       state,
       driftDetection: false,
@@ -281,6 +283,7 @@ describe("createPlan with a requested replace", () => {
     const added = new Queue("added", { config: { path: "/" } as any });
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [...resources, added],
       state,
       driftDetection: false,
@@ -299,6 +302,7 @@ describe("createPlan with a requested replace", () => {
     const hash = hashOf((await state.get("orders"))!);
     const plan = (instanceHash: string) =>
       createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources,
         state,
         driftDetection: false,
@@ -320,6 +324,7 @@ describe("createPlan with a requested replace", () => {
       ],
     ) =>
       createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [new Queue("orders", { config: { path: "/" } as any })],
         state: new MemoryStateBackend(
           Object.fromEntries(records.map((node) => [node.id, node])),
@@ -395,6 +400,7 @@ describe("createPlan with a requested replace", () => {
 
       await expect(
         createPlan({
+          nameScope: { app: "app", stage: "test" },
           resources: [new Source("env:stripe-key", { config: { key: "k" } })],
           state: new MemoryStateBackend({
             "env:stripe-key": record("env:stripe-key", Source.type, {
@@ -431,6 +437,7 @@ describe("createPlan with a requested replace", () => {
     it("fails with the class's message and the flag that overrides it", async () => {
       await expect(
         createPlan({
+          nameScope: { app: "app", stage: "test" },
           resources: [bucket()],
           state: bucketState(),
           driftDetection: false,
@@ -444,6 +451,7 @@ describe("createPlan with a requested replace", () => {
 
     it("replaces it with --override-loss-protection", async () => {
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [bucket()],
         state: bucketState(),
         driftDetection: false,
@@ -466,6 +474,7 @@ describe("createPlan with a requested replace", () => {
     it("still fails a changed param with the param's rejectReplace", async () => {
       await expect(
         createPlan({
+          nameScope: { app: "app", stage: "test" },
           resources: [bucket("renamed")],
           state: bucketState(),
           driftDetection: false,
@@ -482,6 +491,7 @@ describe("createPlan with a requested replace", () => {
       });
 
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [uploads, binding],
         state: new MemoryStateBackend({
           uploads: record("uploads", Bucket.type, { name: "uploads" }),

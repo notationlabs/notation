@@ -239,6 +239,7 @@ describe("API Gateway API drift", () => {
     }));
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [api],
       state: new MemoryStateBackend({
         api: {

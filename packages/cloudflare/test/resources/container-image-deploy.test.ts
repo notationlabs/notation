@@ -151,7 +151,11 @@ async function deploy(executionId: string) {
 
 async function plan() {
   const { resources } = await collect();
-  const planned = await createPlan({ resources, state: runtime.state });
+  const planned = await createPlan({
+    nameScope: { app: "app", stage: "test" },
+    resources,
+    state: runtime.state,
+  });
   return Object.fromEntries(
     planned.nodes.map((node) => [node.id, node.decision]),
   );

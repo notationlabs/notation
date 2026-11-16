@@ -296,6 +296,7 @@ describe("a resource that takes a credential in a later deploy", () => {
     await runtime.deploy("first", declare(rotatable, { secrets: ["a"] }));
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: declare(rotatable, { secrets: ["a", "b"] }),
       state: runtime.state,
     });
@@ -314,6 +315,7 @@ describe("a resource that takes a credential in a later deploy", () => {
 
     await expect(
       createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: declare(types, { secrets: ["a", "b"] }),
         state: runtime.state,
         deploymentId: "credentials",
@@ -448,6 +450,7 @@ describe("a plan with a resource that is replaced and takes a credential", () =>
     await runtime.deploy("first", declare(types, { secrets: ["a", "b"] }));
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: renamed(types),
       state: runtime.state,
     });
@@ -465,7 +468,11 @@ describe("a plan with a resource that is replaced and takes a credential", () =>
     await runtime.deploy("first", declare(types, { secrets: ["a", "b"] }));
 
     await expect(
-      createPlan({ resources: renamed(types), state: runtime.state }),
+      createPlan({
+        nameScope: { app: "app", stage: "test" },
+        resources: renamed(types),
+        state: runtime.state,
+      }),
     ).rejects.toThrow("secret:b needs token.Value, and deploy cannot get it.");
     runtime.close();
   });
@@ -476,6 +483,7 @@ describe("a plan with a resource that is replaced and takes a credential", () =>
     await runtime.deploy("first", declare(types, { secrets: ["a", "b"] }));
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: renamed(types),
       state: runtime.state,
       deploymentId: "credentials",
@@ -498,6 +506,7 @@ describe("a plan with a resource that is replaced and takes a credential", () =>
     await runtime.deploy("first", declare(types, { secrets: ["a", "b"] }));
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: renamed(types),
       state: runtime.state,
       deploymentId: "credentials",
@@ -712,7 +721,11 @@ describe("a hidden param that takes a credential", () => {
     };
     const runtime = createRuntime();
     await expect(
-      createPlan({ resources, state: runtime.state }),
+      createPlan({
+        nameScope: { app: "app", stage: "test" },
+        resources,
+        state: runtime.state,
+      }),
     ).rejects.toThrow("Value is a hidden param");
     runtime.close();
   });
@@ -934,6 +947,7 @@ describe("--credential", () => {
 
     await expect(
       createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: replaced(),
         state: runtime.state,
         deploymentId: "credentials",

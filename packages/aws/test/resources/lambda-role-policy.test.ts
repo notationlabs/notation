@@ -121,6 +121,7 @@ describe("LambdaRolePolicy drift detection", () => {
     policy.contribute({ PolicyDocument: { Statement: [orders] } });
     const params = await policy.getParams();
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [role, policy],
       state: new MemoryStateBackend({
         "app-role-policy": {

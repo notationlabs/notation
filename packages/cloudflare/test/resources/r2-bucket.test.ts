@@ -297,6 +297,7 @@ describe("R2Bucket", () => {
     it("fails, and names the flag that allows it", async () => {
       await expect(
         createPlan({
+          nameScope: { app: "app", stage: "test" },
           resources: [bucket],
           state: stateWith(bucket, params),
           driftDetection: false,
@@ -310,6 +311,7 @@ describe("R2Bucket", () => {
 
     it("is planned with --override-loss-protection", async () => {
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [bucket],
         state: stateWith(bucket, params),
         driftDetection: false,

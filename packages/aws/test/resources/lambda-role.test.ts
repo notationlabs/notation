@@ -53,6 +53,7 @@ async function planUnchangedRole(config: DurableObject) {
   const role = new LambdaIamRole("role", { config: config as any });
   const params = { ...(await role.getParams()), RoleName: "app-role" };
   const plan = await createPlan({
+    nameScope: { app: "app", stage: "test" },
     resources: [role],
     state: new MemoryStateBackend({
       role: {

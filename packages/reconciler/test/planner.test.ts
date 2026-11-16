@@ -40,6 +40,7 @@ describe("createPlan", () => {
     });
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [new TestResource("desired")],
       state,
       driftDetection: false,
@@ -77,6 +78,7 @@ describe("createPlan", () => {
     });
 
     const plan = createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [new NewResource("permission")],
       state,
       driftDetection: false,
@@ -113,6 +115,7 @@ describe("createPlan", () => {
     });
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [new NewResource("invoke-permission")],
       state,
       driftDetection: false,
@@ -153,6 +156,7 @@ describe("createPlan", () => {
 
     await expect(
       createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [new TestResource("existing")],
         state,
       }),
@@ -187,6 +191,7 @@ describe("createPlan", () => {
     });
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [new TestResource("existing")],
       state,
     });
@@ -225,6 +230,7 @@ describe("createPlan", () => {
     });
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [new TestResource("creating"), new TestResource("new")],
       state,
     });
@@ -275,6 +281,7 @@ describe("createPlan", () => {
     });
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [new TestResource("existing")],
       state,
     });
@@ -361,6 +368,7 @@ describe("createPlan", () => {
     });
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [role, attachment],
       state,
       driftDetection: false,
@@ -406,6 +414,7 @@ describe("createPlan", () => {
       });
     const plan = (config: Record<string, unknown>) =>
       createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [new Store("store", { config: config as any })],
         state: new MemoryStateBackend({
           store: {
@@ -484,6 +493,7 @@ describe("createPlan", () => {
     it("fails the plan with the message, and allows a change it returns nothing for", async () => {
       const plan = (tables: string[]) =>
         createPlan({
+          nameScope: { app: "app", stage: "test" },
           resources: [new Store("store", { config: { name: "app", tables } })],
           state: state(),
           driftDetection: false,
@@ -498,6 +508,7 @@ describe("createPlan", () => {
     it("fails the plan for an orphan whose delete it rejects", async () => {
       await expect(
         createPlan({
+          nameScope: { app: "app", stage: "test" },
           resources: [],
           state: state(),
           driftDetection: false,
@@ -509,6 +520,7 @@ describe("createPlan", () => {
     it("allows an orphan that an orphan with no class keeps in place", async () => {
       const store = await state().get("store");
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [],
         state: new MemoryStateBackend({
           store: store!,
@@ -642,6 +654,7 @@ describe("createPlan", () => {
 
         await expect(
           createPlan({
+            nameScope: { app: "app", stage: "test" },
             resources: declare("us"),
             state,
             driftDetection: false,
@@ -768,6 +781,7 @@ describe("createPlan", () => {
       const other = new Bus("other", { config: { name: "other" } as any });
 
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [bus, rule, target, permission, fn, other],
         state,
         driftDetection: false,
@@ -830,6 +844,7 @@ describe("createPlan", () => {
       const rule = child(Rule, "rule", bus);
 
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [bus, rule],
         state,
         driftDetection: false,
@@ -857,6 +872,7 @@ describe("createPlan", () => {
       const rule = child(Rule, "rule", shop);
 
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [orders, shop, rule],
         state,
         driftDetection: false,
@@ -884,6 +900,7 @@ describe("createPlan", () => {
       rule.dependOn(b);
 
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [a, b, rule],
         state,
         driftDetection: false,
@@ -910,6 +927,7 @@ describe("createPlan", () => {
       const rule = child(Rule, "rule", bus);
 
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [zone, bus, rule],
         state,
         driftDetection: false,
@@ -951,6 +969,7 @@ describe("createPlan", () => {
       const target = child(Target, "target", rule);
 
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [bus, rule, target],
         state,
         driftDetection: false,
@@ -981,6 +1000,7 @@ describe("createPlan", () => {
       const bus = new Bus("bus", { config: { name: "shop" } as any });
 
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [bus, child(Rule, "rule", bus)],
         state,
         driftDetection: false,
@@ -1029,6 +1049,7 @@ describe("createPlan", () => {
     let remote: Record<string, unknown> = {};
     const plan = (config: Record<string, unknown>) =>
       createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [new Role("role", { config: config as any })],
         state: new MemoryStateBackend({
           role: {
@@ -1129,6 +1150,7 @@ describe("createPlan", () => {
       } as any);
 
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [fn, queue],
         state: new MemoryStateBackend({
           fn: {
@@ -1184,6 +1206,7 @@ describe("createPlan", () => {
       });
 
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [queue, fn],
         state: new MemoryStateBackend({
           queue: record("queue", Queue.type, { name: "orders" }),
@@ -1216,6 +1239,7 @@ describe("createPlan", () => {
       });
 
       const error = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [queue, fn],
         state: new MemoryStateBackend({
           queue: record("queue", QueueWithoutRead.type, { name: "orders" }),
@@ -1237,6 +1261,7 @@ describe("createPlan", () => {
       });
 
       const error = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [queue],
         state: new MemoryStateBackend({
           queue: record("queue", QueueWithoutRead.type, { name: "orders" }),
@@ -1331,6 +1356,7 @@ describe("createPlan", () => {
     });
     const planQueue = (config: DurableObject) =>
       createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [new Queue("queue", { config } as any)],
         state: new MemoryStateBackend({
           queue: record("queue", Queue.type, { name: "orders", size: 1 }),
@@ -1367,6 +1393,7 @@ describe("createPlan", () => {
       } as any);
 
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [queue, subscription],
         state: new MemoryStateBackend({
           queue: record("queue", Queue.type, { name: "orders", size: 1 }),
@@ -1431,6 +1458,7 @@ describe("createPlan", () => {
       } as any);
 
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [queue, attachment],
         state: new MemoryStateBackend({
           queue: record("queue", Queue.type, {
@@ -1509,6 +1537,7 @@ describe("createPlan", () => {
     it("rejects a known value that fails its validator", async () => {
       memory = 1.5;
       const plan = createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [new Fn("fn", { config: { name: "fn" } })],
         state: state(),
       });
@@ -1573,6 +1602,7 @@ describe("createPlan", () => {
       env.contribute({ env: { PORT: 8080 } } as any);
 
       const plan = createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [env, queue],
         state: new MemoryStateBackend(),
         driftDetection: false,
@@ -1590,6 +1620,7 @@ describe("createPlan", () => {
       memory = 128;
       remote = { name: "fn", memory: "128" };
       const plan = createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [new Fn("fn", { config: { name: "fn" } })],
         state: state(),
       });
@@ -1648,6 +1679,7 @@ describe("dependency cycles", () => {
 
   it("plans a new cycle as creates, with the placeholder marked and peer outputs unknown", async () => {
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: pair(),
       state: new MemoryStateBackend(),
     });
@@ -1690,6 +1722,7 @@ describe("dependency cycles", () => {
     b.contribute({ bindings: [a.outputRef("name")] } as any);
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [a, b],
       state: new MemoryStateBackend({
         a: { ...record("a", ["b"]), type: Gone.type },
@@ -1706,6 +1739,7 @@ describe("dependency cycles", () => {
 
   it("plans a deployed cycle with the outputs of every member from state", async () => {
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: pair(),
       state: new MemoryStateBackend({
         a: record("a", ["b"]),
@@ -1724,6 +1758,7 @@ describe("dependency cycles", () => {
     const [a, b] = pair();
     (b as any).config.name = "b2";
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [a!, b!],
       state: new MemoryStateBackend({
         a: record("a", ["b"]),
@@ -1765,6 +1800,7 @@ describe("dependency cycles", () => {
     });
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [a, b, c],
       state: new MemoryStateBackend({
         a: forced("a", ["b"]),
@@ -1787,6 +1823,7 @@ describe("dependency cycles", () => {
     const [a, b] = pair();
     (b as any).config.name = "b2";
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [a!, b!],
       state: new MemoryStateBackend({
         a: record("a", ["b"]),
@@ -1850,6 +1887,7 @@ describe("createPlan with a generated physical name", () => {
 
   it("plans a noop with the name in the state record", async () => {
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [queue("orders", { path: "/" })],
       state: new MemoryStateBackend({
         orders: record("orders", { name, path: "/" }),
@@ -1887,6 +1925,7 @@ describe("createPlan with a generated physical name", () => {
 
     await expect(
       createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [new Derived("orders", { config: {} as any })],
         state: new MemoryStateBackend({}),
         driftDetection: false,
@@ -1902,6 +1941,7 @@ describe("createPlan with a generated physical name", () => {
     mirror.config.target = orders.outputRef("name");
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [orders, mirror],
       state: new MemoryStateBackend({}),
       driftDetection: false,
@@ -1927,6 +1967,7 @@ describe("createPlan with a generated physical name", () => {
 
   it("plans a create with the name in a creating record", async () => {
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [queue("orders", { path: "/" })],
       state: new MemoryStateBackend({
         orders: record("orders", { name, path: "/" }, "creating"),
@@ -1951,6 +1992,7 @@ describe("createPlan with a generated physical name", () => {
     const mirrorName = "shop--prod--mirror-5e6f7a8b";
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [orders, mirror],
       state: new MemoryStateBackend({
         orders: record("orders", { name, path: "/" }),
@@ -2010,6 +2052,7 @@ describe("createPlan with a generated physical name", () => {
     });
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [orders, rule],
       state: new MemoryStateBackend({
         orders: record("orders", { name, path: "/" }),
@@ -2057,6 +2100,7 @@ describe("createPlan with a generated physical name", () => {
     const old = retired("shop--prod--old-00000003", "2026-07-21T00:00:00.000Z");
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [queue("orders", { path: "/" })],
       state: new MemoryStateBackend({
         orders: {
@@ -2100,6 +2144,7 @@ describe("createPlan with a generated physical name", () => {
 
   it("plans no delete of the retired instances of a record that an orphan with no class keeps", async () => {
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [queue("orders", { path: "/" })],
       state: new MemoryStateBackend({
         orders: {
@@ -2131,6 +2176,7 @@ describe("createPlan with a generated physical name", () => {
 
   it("plans the deletes of the retired instances and the orphans in the order of the sweep", async () => {
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [queue("orders", { path: "/" })],
       state: new MemoryStateBackend({
         access: record("access", {
@@ -2222,6 +2268,7 @@ describe("createPlan with a generated physical name", () => {
 
     it("plans the delete of the retired instances just before a delete-first replace, and not at the end", async () => {
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [
           new Fixed("orders", { config: { name, path: "/new/" } as any }),
         ],
@@ -2253,6 +2300,7 @@ describe("createPlan with a generated physical name", () => {
       });
 
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [orders, other, rule],
         state: new MemoryStateBackend({
           orders: record("orders", { name, path: "/" }),
@@ -2311,6 +2359,7 @@ describe("createPlan with a generated physical name", () => {
     const role = queue("role", { path: "/" });
 
     const plan = await createPlan({
+      nameScope: { app: "app", stage: "test" },
       resources: [role, new Fn("fn", { dependencies: { role } })],
       state: new MemoryStateBackend({
         fn: {
@@ -2331,6 +2380,7 @@ describe("createPlan with a generated physical name", () => {
   it("throws when config supplies the name", async () => {
     await expect(
       createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [queue("orders", { name: "orders", path: "/" })],
         state: new MemoryStateBackend({}),
         driftDetection: false,
@@ -2408,6 +2458,7 @@ describe("createPlan with refs that add no dependency", () => {
 
     it("plans a create with the name unknown in both params, and no cycle", async () => {
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [selfBound("host")],
         state: new MemoryStateBackend({}),
         driftDetection: false,
@@ -2430,6 +2481,7 @@ describe("createPlan with refs that add no dependency", () => {
 
     it("plans a noop with the recorded name in both params", async () => {
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [selfBound("host")],
         state: new MemoryStateBackend({
           host: record("host", {
@@ -2455,6 +2507,7 @@ describe("createPlan with refs that add no dependency", () => {
 
     it("plans a replace with the name unknown in both params", async () => {
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [selfBound("host", "/new/")],
         state: new MemoryStateBackend({
           host: record("host", {
@@ -2496,6 +2549,7 @@ describe("createPlan with refs that add no dependency", () => {
 
     it("plans with no value when the target has no record, and adds no dependency", async () => {
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: hostAndBinder(),
         state: new MemoryStateBackend({}),
         driftDetection: false,
@@ -2519,6 +2573,7 @@ describe("createPlan with refs that add no dependency", () => {
 
     it("plans with the output in the target's record", async () => {
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: hostAndBinder(),
         state: new MemoryStateBackend({
           host: record("host", { name: hostName, path: "/", sources: [] }),
@@ -2549,6 +2604,7 @@ describe("createPlan with refs that add no dependency", () => {
       } as any);
 
       const plan = await createPlan({
+        nameScope: { app: "app", stage: "test" },
         resources: [binder, host],
         state: new MemoryStateBackend({
           host: record("host", { name: hostName, path: "/" }),

@@ -108,8 +108,8 @@ export type CreatePlanOptions = {
    * `requested`.
    */
   deploymentId?: string;
-  /** The app and stage, for the `read` of each source. Required with a source. */
-  nameScope?: NameScope;
+  /** The app and stage, for the `read` of each source. */
+  nameScope: NameScope;
   /** The execution ID that each source's `read` receives. Defaults to a new one. */
   executionId?: string;
 };
@@ -192,11 +192,6 @@ export async function createPlan({
         canUpdate: true,
       });
       return { ...node, decision: "update", diff };
-    }
-    if (!nameScope) {
-      throw new Error(
-        `createPlan needs nameScope to read the source ${source.id}.`,
-      );
     }
     const { decision, output, diff } = await runOperation(
       readAndDecideSource(
