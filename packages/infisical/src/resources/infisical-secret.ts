@@ -98,6 +98,7 @@ export const InfisicalSecret = credentialSourceResource<InfisicalSecretSchema>({
           expandSecretReferences: true,
         });
         recordSecretValue(secret.secretValue);
+        assertNotEmpty(params, secret.secretValue);
         return {
           revision: await trackRevision(
             params.track,
@@ -115,6 +116,7 @@ export const InfisicalSecret = credentialSourceResource<InfisicalSecretSchema>({
       ]);
       recordSecretValue(stored.secretValue);
       recordSecretValue(expanded.secretValue);
+      assertNotEmpty(params, expanded.secretValue);
       if (stored.secretValue !== expanded.secretValue) {
         return { revision: `exec:${context.executionId}` };
       }

@@ -317,6 +317,33 @@ describe("InfisicalSecret", () => {
     );
   });
 
+  it("fails at read for an empty value, with and without track", async () => {
+    vi.stubEnv("NOTATION_TRACK_KEY", "track-key");
+    mockInfisical(
+      {
+        STRIPE_KEY: [{ id: "sec-1", version: 3, secretValue: "" }],
+        DATABASE_URL: [
+          { id: "sec-2", version: 1, secretValue: "${DB_PASSWORD}" },
+        ],
+      },
+      { DATABASE_URL: "" },
+    );
+    const empty =
+      "in Infisical project proj, environment prod, path /orders is empty.";
+
+    await expect(read(await declare(address), address)).rejects.toThrow(
+      `The value of \`STRIPE_KEY\` ${empty}`,
+    );
+    const tracked = { ...address, track: "hmac" as const };
+    await expect(read(await declare(tracked), tracked)).rejects.toThrow(
+      `The value of \`STRIPE_KEY\` ${empty}`,
+    );
+    const referring = { ...address, key: "DATABASE_URL" };
+    await expect(read(await declare(referring), referring)).rejects.toThrow(
+      `The value of \`DATABASE_URL\` ${empty}`,
+    );
+  });
+
   it("names a secret, or a version, that Infisical does not have", async () => {
     mockInfisical({
       STRIPE_KEY: [{ id: "sec-1", version: 15, secretValue: "sk_live_15" }],
