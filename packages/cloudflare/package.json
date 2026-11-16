@@ -12,6 +12,10 @@
     "./resources": {
       "types": "./dist/resources/index.d.ts",
       "default": "./dist/resources/index.js"
+    },
+    "./kv": {
+      "types": "./dist/kv/index.d.ts",
+      "default": "./dist/kv/index.js"
     }
   },
   "files": [

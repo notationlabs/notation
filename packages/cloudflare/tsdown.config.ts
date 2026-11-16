@@ -2,6 +2,7 @@ import { defineConfig } from "tsdown";
 
 export default defineConfig({
   entry: [
+    "src/kv/index.ts",
     "src/resources/index.ts",
     "src/workers/index.ts",
     "src/workers/runtime.ts",

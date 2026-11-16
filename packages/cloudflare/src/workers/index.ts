@@ -12,3 +12,4 @@ export {
   type WorkerGroupConfig,
 } from "./worker";
 export { json } from "./json";
+export { KVJsonError, readKVJson } from "./kv-json";
