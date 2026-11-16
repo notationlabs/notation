@@ -312,7 +312,7 @@ export function router({ id, routes, bindings }) {
 }
 ```
 
-The bundle must have `platform: "workerd"`. `worker()` fails for a bundle built for `node`.
+The bundle must have `platform: "workerd"`. `worker()` fails for a bundle built for `node`. Its `entrypoint` takes a marker from `entrypointType()` instead of the class. See [RPC to a `worker()`](#rpc-to-a-worker).
 
 - **The Worker is the same as one from `$worker`.** It has the same resource ids, so a `$worker` with the id `router` and a `worker({ id: "router" })` fail with `Duplicate Worker id "router"`. Its group uploads the bundle's `index.mjs`.
 - **The bundle is not in the Worker's group.** The script depends on the bundle, so deploy writes the bundle before it uploads the script.
@@ -320,6 +320,46 @@ The bundle must have `platform: "workerd"`. `worker()` fails for a bundle built 
 - **It hosts a Durable Object namespace that it binds when the bundle's entry exports the namespace's class by name.** `bundle()` reads the exports of the entry when it is called. A class that the entry re-exports with `export *` is not found, and plan fails. A container of the namespace runs on the Worker, as for a `$worker`.
 
 A `$worker` that is replaced by a `worker()` with the same id and the same exports keeps its namespaces on the same script.
+
+### RPC to a `worker()`
+
+A package that ships a Worker declares it with `worker()`, as the infra build doesn't strip a `$worker` in `node_modules`. The package's infra code can't load the Worker's class, because the class imports `cloudflare:workers`. So it imports the class as a type, and passes `entrypointType<typeof Class>()` as `entrypoint`:
+
+::code-group
+
+```ts [@acme/github: infra/github.ts]
+import { bundle } from "@notation/build/resources";
+import { entrypointType, worker } from "@notation/cloudflare/workers";
+import type Github from "../worker/github";
+
+export const github = worker({
+  id: "github",
+  code: bundle({ id: "github", platform: "workerd", entry: githubEntry }),
+  compatibilityDate: "2026-10-12",
+  bindings: () => ({ ROOT_KEY: rootKey }),
+  entrypoint: entrypointType<typeof Github>(),
+  url: false,
+});
+```
+
+```ts [@acme/github: worker/github.ts]
+import { WorkerEntrypoint } from "cloudflare:workers";
+import type { WorkerEnv } from "@notation/cloudflare/workers";
+import type { github } from "../infra/github";
+
+export default class Github extends WorkerEntrypoint<WorkerEnv<typeof github>> {
+  async receive(input: Input) {
+    const key = await this.env.ROOT_KEY.get();
+    // …
+  }
+}
+```
+
+::
+
+A Worker that binds `github` gets `Service<Github>` in `env`, as for a `$worker` with an [`entrypoint`](#rpc). `this.env` inside the class is typed too.
+
+`entrypointType()` returns an object that exists only for its type. Deploy ignores it. The build doesn't check that the marker names the bundle's default export, as the marker has no class to compare with the export. A marker for a class that the bundle doesn't export as its default types the Worker's callers wrongly.
 
 ## `addBindings(worker, bindings)`
 
@@ -333,7 +373,7 @@ import { router } from "../runtime/router";
 addBindings(router, { CHANNEL_GITHUB: github });
 ```
 
-It takes a Worker from `$worker`, and an object of bindings. The values are the ones that `bindings` accepts. The Worker resolves them together with its own bindings, so each is uploaded, and orders the deploy, as if `bindings` had returned it.
+It takes a Worker from `$worker` or `worker()`, and an object of bindings. The values are the ones that `bindings` accepts. The Worker resolves them together with its own bindings, so each is uploaded, and orders the deploy, as if `bindings` had returned it.
 
 `WorkerEnv<typeof router>` doesn't include the bindings from `addBindings()`, as they depend on which infra code runs. The Worker reads such a binding by its name, and types it from a contract that it shares with the code that called `addBindings()`. `WorkerEnv` has no index signature, so widen `env` before indexing it with a computed name:
 
@@ -343,7 +383,7 @@ const channel = (env as Record<string, unknown>)[name] as Service<Channel>;
 const received = await channel.receive(input);
 ```
 
-- A Worker hosts a Durable Object namespace only when its own module exports the namespace's class. So a namespace from `addBindings()` works only when another Worker hosts it.
+- A Worker hosts a Durable Object namespace only when its own module, the entry of its bundle, or its code file exports the namespace's class. So a namespace from `addBindings()` works only when another Worker hosts it.
 - Two Workers that bind each other through `addBindings()` deploy, in the same way as two Workers that bind each other through `bindings`.
 - Inside a Worker, `addBindings()` throws.
 
@@ -356,7 +396,7 @@ const received = await channel.receive(input);
    ```
 
 2. It is called from an `onEvaluationEnd` callback. The Workers read their bindings once the infra modules have loaded, so `addBindings()` must be called while they load, such as in the function that declares what it binds. Only engine and package code registers such callbacks, so the error names the location of the call, which points at the package to fix.
-3. The first argument isn't a Worker from `$worker`.
+3. The first argument isn't a Worker from `$worker` or `worker()`.
 
 ## `$durableObject(config)`
 
