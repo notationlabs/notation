@@ -8,16 +8,16 @@ import {
 import { isCreatingRecord, type StateNode } from "@notation/state";
 import { scrubError } from "@notation/utils";
 import {
-  credentialConsumers,
-  credentialsToMint,
-  credentialVersion,
+  findCredentialConsumers,
+  getCredentialsToMint,
+  getCredentialVersion,
   deferUnobtainable,
   holdCredential,
   holdsCredential,
-  operationState,
+  getOperationState,
   recordSecretStrings,
   takesCredential,
-  unheldCredentials,
+  findUnheldCredentials,
 } from "../credentials";
 import {
   emitLifecycleEvent,
@@ -49,7 +49,7 @@ type RecordedSession = Extract<ResourceStateSession, { node: StateNode }>;
  *    variable. Deploy treats the value as new, so every resource that takes
  *    the credential is updated.
  * 2. Each other credential that needs a value is rotated. See
- *    `credentialsToMint` for when a credential needs one. A credential
+ *    `getCredentialsToMint` for when a credential needs one. A credential
  *    without `rotate` fails the deploy.
  *
  * The new version is recorded at once, as a rotation revokes the value
@@ -73,7 +73,7 @@ export async function* mintNeededCredentials(
   if (!opts.dryRun && !opts.reconciled.has(resource)) {
     for (const target of passed) {
       const scope = step.scope(`credential-passed:${target.name}`);
-      const version = yield* passedCredentialStep(
+      const version = yield* applyPassedCredential(
         scope,
         opts,
         resource,
@@ -89,12 +89,12 @@ export async function* mintNeededCredentials(
     }
   }
 
-  const consumers = credentialConsumers(resource, opts.resources);
+  const consumers = findCredentialConsumers(resource, opts.resources);
   if (consumers.length === 0) return current;
   const output = current.node.output;
   const needed = yield* step.run("credentials:needed", async () =>
     (
-      await credentialsToMint(
+      await getCredentialsToMint(
         resource,
         output,
         await Promise.all(
@@ -116,7 +116,7 @@ export async function* mintNeededCredentials(
           producer: resource,
           name,
           record: current.node,
-          version: credentialVersion(resource, name),
+          version: getCredentialVersion(resource, name),
           deploymentId: opts.state.deploymentId,
         }),
         opts.overrides,
@@ -161,7 +161,7 @@ export async function* obtainCredentials(
   markers: readonly CredentialMarker[],
 ): AsyncGenerator<any, boolean, any> {
   let rotated = false;
-  for (const { $credential } of unheldCredentials(markers)) {
+  for (const { $credential } of findUnheldCredentials(markers)) {
     const { resource: id, name } = $credential;
     const producer = opts.resources.find((candidate) => candidate.id === id);
     if (!producer) {
@@ -174,7 +174,7 @@ export async function* obtainCredentials(
       yield* loadSourceCredential(base, opts, producer);
       continue;
     }
-    const version = credentialVersion(producer, name);
+    const version = getCredentialVersion(producer, name);
     if (!producer.rotate?.[name]) {
       // The operation throws this error when it reveals the credential. An
       // operation replayed from the journal reveals nothing, so a resumed
@@ -261,7 +261,7 @@ async function holdPassedCredential(
  * Holds the value of a `--credential` under a new version, and sets the
  * version in the resource's output. The step records the version only.
  */
-async function* passedCredentialStep(
+async function* applyPassedCredential(
   step: DurableStepRunner,
   opts: DeployContext,
   resource: BaseResource,
@@ -319,7 +319,7 @@ async function* rotateStep(
       try {
         const value = await resource.rotate![name]!(
           resource.key,
-          operationState(resource),
+          getOperationState(resource),
         );
         await validateValues(resource, { [name]: value }, "rotate");
         return holdCredential(value);

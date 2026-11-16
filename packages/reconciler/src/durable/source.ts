@@ -11,7 +11,7 @@ import {
 import { isCreatingRecord } from "@notation/state";
 import { scrubError } from "@notation/utils";
 import {
-  credentialVersion,
+  getCredentialVersion,
   holdCredential,
   recordSecretStrings,
 } from "../credentials";
@@ -114,7 +114,7 @@ export async function* loadSourceCredential(
   source: BaseCredentialSource,
 ): AsyncGenerator<any, void, any> {
   const name = "value";
-  const version = credentialVersion(source, name);
+  const version = getCredentialVersion(source, name);
   if (!opts.reconciled.has(source) || version === null) {
     throw new Error(
       `Cannot load the credential of ${source.id}: deploy has not reconciled the source`,

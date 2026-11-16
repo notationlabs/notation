@@ -5,7 +5,7 @@ import {
   type BaseResource,
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
-import { credentialConsumers } from "../credentials";
+import { findCredentialConsumers } from "../credentials";
 import { isCycle, orderDeployUnits } from "../cycles";
 import { assertDependenciesPresent } from "../dependency-graph";
 import { sweepSteps, sweptRecords } from "../orphan-sweep";
@@ -142,7 +142,7 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
           ? await mintedCredentials({
               producer: resource,
               record: stateNode,
-              consumers: credentialConsumers(resource, opts.resources).map(
+              consumers: findCredentialConsumers(resource, opts.resources).map(
                 (consumer) => ({
                   resource: consumer,
                   record: records.get(consumer.id),

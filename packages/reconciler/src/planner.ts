@@ -26,7 +26,7 @@ import { isCycle, orderDeployUnits, type DeployUnit } from "./cycles";
 import { createBlocksDelete } from "./delete-cascade";
 import {
   assertNoHiddenCredential,
-  credentialConsumers,
+  findCredentialConsumers,
   setRecordedOutput,
   takesCredential,
 } from "./credentials";
@@ -257,7 +257,7 @@ export async function createPlan({
         ? await mintedCredentials({
             producer: resource,
             record: stateNode,
-            consumers: credentialConsumers(resource, resources).map(
+            consumers: findCredentialConsumers(resource, resources).map(
               (consumer) => ({
                 resource: consumer,
                 record: stateById.get(consumer.id),

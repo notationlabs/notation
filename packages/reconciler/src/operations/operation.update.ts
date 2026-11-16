@@ -14,8 +14,8 @@ import { runPendingOperation } from "./operation.pending";
 import { readResourceOperation } from "./operation.read";
 import { firstDeferredError } from "./deferred-checks";
 import {
-  credentialOutputs,
-  operationState,
+  getCredentialOutputs,
+  getOperationState,
   revealCredentials,
 } from "../credentials";
 
@@ -53,14 +53,14 @@ export async function* updateResourceOperation(
             params.resource,
             params.recordedParams,
           ),
-          operationState(params.resource),
+          getOperationState(params.resource),
           context,
         ),
       params.maxOperationAttempts,
     );
 
     params.resource.setOutput({
-      ...credentialOutputs(params.resource),
+      ...getCredentialOutputs(params.resource),
       ...params.resource.key,
       ...params.resourceParams,
     });

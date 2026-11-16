@@ -19,7 +19,7 @@ import { recordSecretValue, sortedJson } from "@notation/utils";
 
 // The values of credentials, by version. They are kept here only, for the
 // life of the process, so a resumed deploy starts with none. A process runs
-// one deploy: `credentialsToMint` reads records and not this map, so a
+// one deploy: `getCredentialsToMint` reads records and not this map, so a
 // second deploy in the process would rotate a credential whose value is
 // still held.
 const held = new Map<string, unknown>();
@@ -67,7 +67,7 @@ export function holdCredential(
  * the same params and revision gives the same version in every deploy, so
  * loading the value again changes no resource that takes it.
  */
-export function sourceCredentialVersion(
+export function computeSourceCredentialVersion(
   source: BaseResource,
   name: string,
   params: Record<string, unknown>,
@@ -107,7 +107,7 @@ export function clearHeldCredentials(): void {
  * The marker has no version, so deploy gets a new value before a resource
  * takes the credential.
  */
-export function withCredentialMarkers(
+export function addCredentialMarkers(
   resource: BaseResource,
   output: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -122,17 +122,17 @@ export function withCredentialMarkers(
 
 /**
  * Sets the resource's output from a record or a read, with a marker for each
- * credential. See `withCredentialMarkers`.
+ * credential. See `addCredentialMarkers`.
  */
 export function setRecordedOutput(
   resource: BaseResource,
   output: Record<string, unknown>,
 ): void {
-  resource.setOutput(withCredentialMarkers(resource, output));
+  resource.setOutput(addCredentialMarkers(resource, output));
 }
 
 /** `value` without the properties that are credentials of the resource. */
-export function withoutCredentials<T extends {} | null | void>(
+export function omitCredentials<T extends {} | null | void>(
   resource: BaseResource,
   value: T,
 ): T {
@@ -147,15 +147,15 @@ export function withoutCredentials<T extends {} | null | void>(
  * `state`: without its own credentials, and with `undefined` in place of
  * each credential that it takes.
  */
-export function operationState(resource: BaseResource): {} {
+export function getOperationState(resource: BaseResource): {} {
   return mapCredentialMarkers(
-    resource.toState(withoutCredentials(resource, resource.output)),
+    resource.toState(omitCredentials(resource, resource.output)),
     () => undefined,
   ) as {};
 }
 
 /** The credential markers in the resource's output. */
-export function credentialOutputs(
+export function getCredentialOutputs(
   resource: BaseResource,
 ): Record<string, unknown> {
   const output = (resource.output ?? {}) as Record<string, unknown>;
@@ -235,7 +235,7 @@ export function revealCredentials<T>(
  * The credential markers in `value` that `recorded` does not hold at the
  * same path.
  */
-export function changedCredentials(
+export function getChangedCredentials(
   value: unknown,
   recorded: unknown,
 ): CredentialMarker[] {
@@ -257,7 +257,7 @@ function mapChangedCredentials(
   onMarker: (marker: CredentialMarker) => unknown,
 ): unknown {
   if (isCredentialMarker(value)) {
-    return isCredentialMarker(recorded) && sameMarker(value, recorded)
+    return isCredentialMarker(recorded) && isSameMarker(value, recorded)
       ? undefined
       : onMarker(value);
   }
@@ -281,7 +281,7 @@ function mapChangedCredentials(
   return value;
 }
 
-function sameMarker(a: CredentialMarker, b: CredentialMarker): boolean {
+function isSameMarker(a: CredentialMarker, b: CredentialMarker): boolean {
   return (
     a.$credential.resource === b.$credential.resource &&
     a.$credential.name === b.$credential.name &&
@@ -297,7 +297,7 @@ function sameMarker(a: CredentialMarker, b: CredentialMarker): boolean {
  * The credentials without `rotate` are left out too: the resource received
  * their value when the operation first ran.
  */
-export function ungivenCredentials(
+export function findCredentialsNotReceived(
   taker: BaseResource,
   markers: readonly CredentialMarker[],
   resources: readonly BaseResource[],
@@ -316,7 +316,7 @@ export function ungivenCredentials(
  * is in `versions`, as in the record of a resource that has not taken those
  * values.
  */
-export function staleCredentialMarkers<T>(
+export function markCredentialsStale<T>(
   value: T,
   versions: readonly string[],
 ): T {
@@ -348,7 +348,7 @@ export function assertNoHiddenCredential(resource: BaseResource): void {
 }
 
 /** The credentials in `markers` whose values are not held, each once. */
-export function unheldCredentials(
+export function findUnheldCredentials(
   markers: readonly CredentialMarker[],
 ): CredentialMarker[] {
   const seen = new Set<string>();
@@ -365,7 +365,7 @@ export function unheldCredentials(
  * Copies a value, with each credential marker replaced by the marker that
  * its resource's output holds now.
  */
-export function currentCredentialMarkers<T>(
+export function refreshCredentialMarkers<T>(
   value: T,
   resources: readonly BaseResource[],
 ): T {
@@ -402,14 +402,14 @@ export function takesCredential(
  * 1. The output in the producer's record has no version for it.
  * 2. A resource that takes it has no record, or a "creating" record.
  * 3. The record of a resource that takes it does not hold the version at
- *    each path where its params take it, as `changedCredentials` compares
+ *    each path where its params take it, as `getChangedCredentials` compares
  *    them. An earlier deploy failed before it updated the resource, or the
  *    resource now takes the credential under another name, such as a
  *    renamed Worker secret.
  *
  * A source's credential is never in the list: deploy loads its value again.
  */
-export async function credentialsToMint(
+export async function getCredentialsToMint(
   producer: BaseResource,
   output: Record<string, unknown>,
   consumers: readonly { resource: BaseResource; record?: StateNode }[],
@@ -438,7 +438,7 @@ export async function credentialsToMint(
         !current ||
         !record ||
         isCreatingRecord(record) ||
-        changedCredentials(
+        getChangedCredentials(
           mapCredentialMarkers(await paramsOf(resource), (found) =>
             isThis(found) ? current : found,
           ),
@@ -454,7 +454,7 @@ export async function credentialsToMint(
 }
 
 /** The version that the producer's output holds for the credential. */
-export function credentialVersion(
+export function getCredentialVersion(
   producer: BaseResource,
   name: string,
 ): string | null {
@@ -463,7 +463,7 @@ export function credentialVersion(
 }
 
 /** The resources that take a credential of `producer`. */
-export function credentialConsumers(
+export function findCredentialConsumers(
   producer: BaseResource,
   resources: readonly BaseResource[],
 ): BaseResource[] {

@@ -11,7 +11,7 @@ import {
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
 import { scrubError } from "@notation/utils";
-import { sourceCredentialVersion, withoutCredentials } from "./credentials";
+import { computeSourceCredentialVersion, omitCredentials } from "./credentials";
 import type { EmitStep } from "./events";
 import {
   emitLifecycleEvent,
@@ -37,7 +37,7 @@ export function sourceState(
   output: Record<string, unknown> | null | undefined,
 ): Record<string, unknown> | undefined {
   if (!output) return undefined;
-  return source.toState(withoutCredentials(source, output));
+  return source.toState(omitCredentials(source, output));
 }
 
 /** Calls the source's `read`, and checks what it returns. */
@@ -54,7 +54,7 @@ export async function readSource(
     state: sourceState(source, recorded?.output),
     warn: (message) => warnings.push(message),
   });
-  const result = withoutCredentials(source, source.toResult(returned ?? {}));
+  const result = omitCredentials(source, source.toResult(returned ?? {}));
   await validateValues(source, result, "read");
   if (result.revision === undefined) {
     throw new Error(
@@ -134,7 +134,7 @@ export function decideSource(
     output[name] = credentialMarker(
       source.id,
       name,
-      sourceCredentialVersion(source, name, params, result.revision),
+      computeSourceCredentialVersion(source, name, params, result.revision),
     );
   }
   if (!record || isCreatingRecord(record)) {

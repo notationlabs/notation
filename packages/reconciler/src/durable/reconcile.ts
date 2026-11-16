@@ -69,11 +69,11 @@ import {
   unknownNames,
 } from "../physical-names";
 import {
-  changedCredentials,
-  currentCredentialMarkers,
+  getChangedCredentials,
+  refreshCredentialMarkers,
   setRecordedOutput,
-  staleCredentialMarkers,
-  ungivenCredentials,
+  markCredentialsStale,
+  findCredentialsNotReceived,
 } from "../credentials";
 import { assertNoPassedCredential, findReplaceOverride } from "../overrides";
 import { mintNeededCredentials, obtainCredentials } from "./credentials";
@@ -214,7 +214,7 @@ export async function* reconcileResource(
   // value of each credential whose version they do not hold.
   const recordedParams =
     options.staleCredentials && session.node
-      ? staleCredentialMarkers(session.node.params, options.staleCredentials)
+      ? markCredentialsStale(session.node.params, options.staleCredentials)
       : session.node?.params;
   let action = decideAction({
     resource,
@@ -289,7 +289,7 @@ export async function* reconcileResource(
       : recordedParams;
   const receivedCredentials = (): CredentialMarker[] =>
     "patch" in action && updates
-      ? changedCredentials(action.patch, comparedParams)
+      ? getChangedCredentials(action.patch, comparedParams)
       : findCredentialMarkers(params);
   let received = receivedCredentials();
   if (
@@ -297,12 +297,12 @@ export async function* reconcileResource(
     action.decision !== "noop" &&
     (yield* obtainCredentials(step, opts, resource, received))
   ) {
-    params = currentCredentialMarkers(params, opts.resources);
-    unnamedParams = currentCredentialMarkers(unnamedParams, opts.resources);
+    params = refreshCredentialMarkers(params, opts.resources);
+    unnamedParams = refreshCredentialMarkers(unnamedParams, opts.resources);
     if ("patch" in action) {
       action = {
         ...action,
-        patch: currentCredentialMarkers(action.patch, opts.resources),
+        patch: refreshCredentialMarkers(action.patch, opts.resources),
       };
     }
     received = receivedCredentials();
@@ -354,7 +354,7 @@ export async function* reconcileResource(
   // as one that has not taken the credentials, which updates it.
   const ungiven =
     !opts.dryRun && !options.staleCredentials && action.decision !== "noop"
-      ? ungivenCredentials(resource, received, opts.resources).map(
+      ? findCredentialsNotReceived(resource, received, opts.resources).map(
           ({ $credential }) => $credential.version ?? "",
         )
       : [];

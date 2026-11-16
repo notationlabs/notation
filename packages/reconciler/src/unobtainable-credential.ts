@@ -1,6 +1,6 @@
 import type { BaseResource, RecordedOutputs } from "@notation/resource";
 import type { StateNode } from "@notation/state";
-import { credentialsToMint, credentialVersion } from "./credentials";
+import { getCredentialsToMint, getCredentialVersion } from "./credentials";
 import {
   formatCredential,
   formatOverrides,
@@ -123,7 +123,7 @@ export function unobtainableCredential(opts: {
 /**
  * The credentials of `producer` that deploy gives a new value before it
  * reaches the resources that take them, as `mintNeededCredentials` does:
- * each that `--credential` names, and each that `credentialsToMint` lists.
+ * each that `--credential` names, and each that `getCredentialsToMint` lists.
  * Throws for a credential in that list without `rotate`. Plan and deploy's
  * validate step call this for a resource that deploy keeps, and whose
  * record is not "creating".
@@ -140,7 +140,7 @@ export async function mintedCredentials(opts: {
   const minted = (overrides?.credential ?? [])
     .filter((target) => target.id === producer.id)
     .map((target) => target.name);
-  const needed = await credentialsToMint(
+  const needed = await getCredentialsToMint(
     producer,
     record.output,
     opts.consumers,
@@ -155,7 +155,7 @@ export async function mintedCredentials(opts: {
           producer,
           name,
           record,
-          version: credentialVersion(producer, name),
+          version: getCredentialVersion(producer, name),
           deploymentId,
         }),
         overrides,
@@ -186,7 +186,7 @@ export function rotatesForCreate(opts: {
   throw new UnobtainableCredentialError(
     unobtainableCredential({
       ...opts,
-      version: credentialVersion(producer, name),
+      version: getCredentialVersion(producer, name),
     }),
     opts.overrides,
   );
