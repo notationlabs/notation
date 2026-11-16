@@ -135,10 +135,19 @@ export type ConfigParams<
   >;
 
 /**
- * Identifies the group a resource belongs to. A group's ID is unique among
- * groups of the same type.
+ * Identifies a group by its type and ID. A group's ID is unique among groups
+ * of the same type.
  */
-export type ResourceGroupRef = { type: string; id: string };
+export type ResourceGroupId = { type: string; id: string };
+
+/**
+ * Identifies the group a resource belongs to, and the groups that contain
+ * it. `parents` is ordered from the outermost group, and is empty for a
+ * group at the top level.
+ */
+export type ResourceGroupRef = ResourceGroupId & {
+  parents: ResourceGroupId[];
+};
 
 /**
  * `resource`: something that deploy creates at a provider. `credential-source`:

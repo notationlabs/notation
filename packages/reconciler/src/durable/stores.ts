@@ -27,7 +27,14 @@ const resourceRecordSchema = v.objectWithRest(
     // Set on the record of a source only.
     kind: v.optional(v.literal("credential-source")),
     // null for a resource that is in no group.
-    group: v.nullable(v.object({ type: v.string(), id: v.string() })),
+    // `parents` lists the groups that contain it, from the outermost.
+    group: v.nullable(
+      v.object({
+        type: v.string(),
+        id: v.string(),
+        parents: v.array(v.object({ type: v.string(), id: v.string() })),
+      }),
+    ),
     config: durableRecord,
     params: durableRecord,
     output: durableRecord,

@@ -100,7 +100,11 @@ test("eventSourceMapping grants the function access to the queue and maps the qu
     MaximumBatchingWindowInSeconds: 2,
   });
   expect(mapping.id).toBe("sqs-mapping:orders:process");
-  expect(mapping.group).toEqual({ type: "aws/sqs/queue", id: "orders" });
+  expect(mapping.group).toEqual({
+    type: "aws/sqs/queue",
+    id: "orders",
+    parents: [],
+  });
   expect(mapping.getDependencies()).toEqual(
     expect.arrayContaining([fn.policy, fn.fn, orders.queue]),
   );

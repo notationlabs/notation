@@ -96,7 +96,11 @@ it("records the group on the resources it adds", () => {
   expect(resource.group).toBeNull();
 
   new TestResourceGroup("test-group", "group-a").add(resource);
-  expect(resource.group).toEqual({ type: "test-group", id: "group-a" });
+  expect(resource.group).toEqual({
+    type: "test-group",
+    id: "group-a",
+    parents: [],
+  });
 });
 
 it("collects resources", async () => {
@@ -135,7 +139,11 @@ it("sets the group of a collected resource when a group adds it", async () => {
   expect(graph.resources).toEqual([first, second]);
   expect(group.resources).toEqual([second]);
   expect(first.group).toBeNull();
-  expect(second.group).toEqual({ type: "test-group", id: "group-a" });
+  expect(second.group).toEqual({
+    type: "test-group",
+    id: "group-a",
+    parents: [],
+  });
 });
 
 it("throws when a collected resource is added to two groups", async () => {
@@ -205,6 +213,145 @@ it("throws when an id is reused for a different resource type", () => {
   resourceGroup.addOnce(TestResource, "binding", opts);
 
   expect(() => resourceGroup.addOnce(TestResource2, "binding", opts)).toThrow();
+});
+
+it("adds a group to a group", async () => {
+  let outer!: TestResourceGroup;
+  let inner!: TestResourceGroup;
+  let resource!: InstanceType<typeof TestResource>;
+  const graph = await collectResourceGraph(() => {
+    outer = new TestResourceGroup("outer", "o");
+    inner = new TestResourceGroup("inner", "i");
+    resource = new TestResource("nested", { config: testResourceConfig });
+    expect(outer.add(inner)).toBe(inner);
+    inner.add(resource);
+  });
+
+  expect(graph.resourceGroups).toEqual([outer, inner]);
+  expect(graph.resources).toEqual([resource]);
+  expect(outer.groups).toEqual([inner]);
+  expect(outer.resources).toEqual([]);
+  expect(outer.parent).toBeNull();
+  expect(inner.parent).toEqual({ type: "outer", id: "o", parents: [] });
+  expect(inner.ref).toEqual({
+    type: "inner",
+    id: "i",
+    parents: [{ type: "outer", id: "o" }],
+  });
+  expect(resource.group).toEqual(inner.ref);
+});
+
+it("nests groups three levels deep", () => {
+  const a = new TestResourceGroup("level", "a");
+  const b = new TestResourceGroup("level", "b");
+  const c = new TestResourceGroup("level", "c");
+  const resource = c.add(newTestResource());
+  b.add(c);
+  a.add(b);
+
+  expect(c.parent).toEqual({
+    type: "level",
+    id: "b",
+    parents: [{ type: "level", id: "a" }],
+  });
+  expect(resource.group).toEqual({
+    type: "level",
+    id: "c",
+    parents: [
+      { type: "level", id: "a" },
+      { type: "level", id: "b" },
+    ],
+  });
+});
+
+it("updates the ref of a resource when its group is added to a parent later", async () => {
+  let resource!: InstanceType<typeof TestResource>;
+  await collectResourceGraph(() => {
+    const inner = new TestResourceGroup("inner", "i");
+    resource = inner.add(newTestResource());
+    expect(resource.group).toEqual({ type: "inner", id: "i", parents: [] });
+    new TestResourceGroup("outer", "o").add(inner);
+  });
+
+  expect(resource.group).toEqual({
+    type: "inner",
+    id: "i",
+    parents: [{ type: "outer", id: "o" }],
+  });
+});
+
+it("throws when a group that has a parent is added to another group", () => {
+  const inner = new TestResourceGroup("inner", "i");
+  new TestResourceGroup("outer", "a").add(inner);
+
+  expect(() => new TestResourceGroup("outer", "b").add(inner)).toThrow(
+    'Group inner "i" has already been added to group outer "a".',
+  );
+});
+
+it("throws when a group is added to the same group twice", () => {
+  const outer = new TestResourceGroup("outer", "o");
+  const inner = new TestResourceGroup("inner", "i");
+  outer.add(inner);
+
+  expect(() => outer.add(inner)).toThrow("has already been added");
+  expect(outer.groups).toEqual([inner]);
+});
+
+it("throws when a group is added to itself", () => {
+  const group = new TestResourceGroup("test-group", "group-a");
+
+  expect(() => group.add(group)).toThrow(
+    'Group test-group "group-a" can\'t be added to itself.',
+  );
+});
+
+it("throws when a group is added to a group it contains", () => {
+  const a = new TestResourceGroup("level", "a");
+  const b = new TestResourceGroup("level", "b");
+  const c = new TestResourceGroup("level", "c");
+  a.add(b);
+  b.add(c);
+
+  expect(() => c.add(a)).toThrow(
+    'Group level "a" can\'t be added to group level "c", which it contains.',
+  );
+  expect(a.parent).toBeNull();
+});
+
+it("puts a group made outside a collection in the graph when it is added", async () => {
+  const inner = new TestResourceGroup("inner", "i");
+  const resource = inner.add(newTestResource());
+  let outer!: TestResourceGroup;
+  const graph = await collectResourceGraph(() => {
+    outer = new TestResourceGroup("outer", "o");
+    outer.add(inner);
+  });
+
+  expect(graph.resourceGroups).toEqual([outer, inner]);
+  expect(graph.resources).toEqual([resource]);
+});
+
+it("throws when a group made outside a collection reuses an id in it", async () => {
+  const inner = new TestResourceGroup("test-group", "group-a");
+  await expect(
+    collectResourceGraph(() => {
+      new TestResourceGroup("test-group", "group-a");
+      new TestResourceGroup("outer", "o").add(inner);
+    }),
+  ).rejects.toThrow('Duplicate test-group id "group-a"');
+});
+
+it("keeps a group that no group adds at the top level", async () => {
+  const graph = await collectResourceGraph(() => {
+    new TestResourceGroup("outer", "o");
+    new TestResourceGroup("inner", "i");
+  });
+
+  expect(graph.resourceGroups.map((group) => group.parent)).toEqual([
+    null,
+    null,
+  ]);
 });
 
 it("isolates consecutive collections", async () => {

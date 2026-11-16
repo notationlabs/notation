@@ -16,9 +16,10 @@ import { createPlan, createResourceRegistry } from "@notation/reconciler";
 import * as durable from "@notation/reconciler/durable";
 import {
   collectResourceGraph,
+  ResourceGroup,
   type StandardSchemaV1,
 } from "@notation/resource";
-import { kvJson, type JsonPartial } from "src/kv";
+import { kvJson, type JsonPartial, type KVJsonGroup } from "src/kv";
 import { KVJsonValue } from "src/resources/kv/kv-json-value";
 import { KVNamespace } from "src/resources/kv/kv-namespace";
 import { calls, fail, mockFetch, ok } from "../mock-api";
@@ -344,6 +345,43 @@ describe("kvJson()", () => {
       ).toThrow(`Invalid kvJson() id "router.config"`);
     });
     expect(group.value.id).toBe("kv-json:router-config");
+  });
+
+  it("nests in a group that adds it, and records the ancestry in state", async () => {
+    class Router extends ResourceGroup {
+      platform = "cloudflare";
+      readonly routes: KVJsonGroup<typeof Flags>;
+      constructor(id: string, namespace: InstanceType<typeof KVNamespace>) {
+        super("test/router", id);
+        this.routes = this.add(
+          kvJson({ id: "routes", namespace, key: "routes", schema: Flags }),
+        );
+      }
+    }
+    let router!: Router;
+    const declare: Declare = (namespace) => {
+      router = new Router("main", namespace);
+      router.routes.contribute({ features: { home: true } });
+    };
+
+    const graph = await collect(declare);
+    expect(router.groups).toEqual([router.routes]);
+    expect(router.routes.parent).toEqual({
+      type: "test/router",
+      id: "main",
+      parents: [],
+    });
+    expect(graph.resourceGroups).toEqual([router, router.routes]);
+    const ref = {
+      type: "cloudflare/kv/json",
+      id: "routes",
+      parents: [{ type: "test/router", id: "main" }],
+    };
+    expect(router.routes.value.group).toEqual(ref);
+
+    await deploy("first", declare);
+    expect(values.get("routes")).toBe('{"features":{"home":true}}');
+    expect((await runtime.state.get("kv-json:routes"))?.group).toEqual(ref);
   });
 
   it("keeps the schema on the group", async () => {

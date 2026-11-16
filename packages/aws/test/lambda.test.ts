@@ -66,7 +66,11 @@ test("the policy's role name is unknown at plan before the role is deployed", as
 test("the group is identified by the id", () => {
   const group = lambda({ id: "get-todos", code });
   expect(group.id).toBe("get-todos");
-  expect(group.fn.group).toEqual({ type: "Lambda", id: "get-todos" });
+  expect(group.fn.group).toEqual({
+    type: "Lambda",
+    id: "get-todos",
+    parents: [],
+  });
 });
 
 test("the id does not depend on the code path", () => {

@@ -861,8 +861,11 @@ abstract class ResourceGroup<
   readonly id: string;
   readonly config: C;
   readonly resources: BaseResource[];
+  readonly groups: ResourceGroup[];
+  readonly parent: ResourceGroupRef | null;
+  readonly ref: ResourceGroupRef;
 
-  add<T extends BaseResource>(resource: T): T;
+  add<T extends BaseResource | ResourceGroup>(member: T): T;
   addOnce<T>(
     ResourceClass: T,
     id: string,
@@ -890,7 +893,17 @@ Each declared resource takes an `id` from the user. The group's ID is that `id`,
 
 A resource ID is a type prefix and the IDs that the resource belongs to, joined with `:`, as `resourceId()` in `@notation/aws` builds it. For example, a Lambda's role is `lambda:<lambda id>:role`, and a queue is `sqs-queue:<queue id>`. An `id` can't contain `:`, so two resources get the same ID only when they have the same type and the same IDs. Only the last part may contain `:`, such as the path in a route's ID. The mapping from a queue to a Lambda is a resource in the `QueueGroup`, with the ID `sqs-mapping:<queue id>:<lambda id>`. API integrations and permissions are resources in the `LambdaGroup`, with IDs such as `api-integration:<api id>:<lambda id>`.
 
-`add()` records the group on the resource as `resource.group`, a `{ type, id }` pair. A resource that is in no group has `group: null`. The reconciler persists the pair with each resource's state. The group is not part of the resource's key, so a deployed resource that moves into a group, out of one, or to another group keeps its remote resource. The next deploy writes the new group to the record without calling `update`.
+`add()` records the group on the resource as `resource.group`, a `ResourceGroupRef`:
+
+```ts
+type ResourceGroupRef = {
+  type: string;
+  id: string;
+  parents: { type: string; id: string }[]; // outermost first; [] at the top level
+};
+```
+
+A resource that is in no group has `group: null`. The reconciler persists the ref with each resource's state. The group is not part of the resource's key, so a deployed resource that moves into a group, out of one, to another group, or under other parents keeps its remote resource. The next deploy writes the new ref to the record without calling `update`.
 
 Groups don't declare dependencies. Edges between groups follow from the dependencies of the resources they contain, since each resource records its group.
 
@@ -901,3 +914,43 @@ A group is optional. Every resource that is constructed while infra is evaluated
 A resource that is constructed while no graph is being collected joins no graph. If a group adds it during collection, it joins the graph then. Code that calls the reconciler directly, such as `examples/reconciler`, passes such resources in `resources`.
 
 Groups are collected during graph construction too. This is how a construct like `export const external = lambda({ ... })` maps to the 4–6 actual AWS resources required to run it, under one group.
+
+### Nested groups
+
+A group that builds on another group adds it with the same `add()`. For example, a router that keeps its routes in a `kvJson()` document holds the `KVJsonGroup`, and so the `kv.KVJsonValue` resource in it:
+
+```ts
+class Router extends ResourceGroup {
+  readonly routes: KVJsonGroup<typeof Routes>;
+
+  constructor(id: string, namespace: KVNamespaceInstance) {
+    super("router", id);
+    this.routes = this.add(
+      kvJson({ id: "routes", namespace, key: "routes", schema: Routes }),
+    );
+  }
+}
+```
+
+`new Router("main", namespace)` gives this tree:
+
+```text
+router main
+└── cloudflare/kv/json routes
+    └── kv-json:routes      group: { type: "cloudflare/kv/json", id: "routes",
+                                     parents: [{ type: "router", id: "main" }] }
+```
+
+`kvJson()` adds the `kv.KVJsonValue` in its constructor, before `Router` adds the `KVJsonGroup`. **`add()` rewrites the refs of every resource below the added group**, so the resource's `parents` name the router even though the resource joined its group first. A group's parent can't change once it is set, so the refs stay correct from then on.
+
+The rules of nesting:
+
+- **A group has at most one parent.** Adding a group that already has a parent throws, as adding a resource to a second group does.
+- **A group can't contain itself.** Adding a group to itself, or to a group that it contains at any depth, throws.
+- **Only `add()` sets a parent.** A group that is constructed inside another group's constructor, but not added, stays at the top level.
+- **Nesting has no depth limit.** `parents` lists every ancestor.
+- **IDs stay unique across the whole graph.** Nesting doesn't scope a group's ID: two groups of the same type can't share an ID, even under different parents.
+
+`group.groups` lists the groups that were added to it, `group.parent` is the ref of its parent or `null`, and `group.ref` is the group's own ref, the one its resources record. `resourceGroups` in the graph lists every group, nested or not; the groups whose `parent` is `null` are the roots of the tree. `notation viz` draws each nested group as a Mermaid subgraph inside its parent's.
+
+As for resources, a group that is constructed while no graph is being collected joins the graph when a group in the graph adds it, together with its resources and nested groups.

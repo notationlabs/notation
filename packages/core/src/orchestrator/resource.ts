@@ -1,5 +1,6 @@
 export type {
   BaseResource,
+  ResourceGroupId,
   ResourceGroupRef,
   ResourceType,
   ResourceOpts,
