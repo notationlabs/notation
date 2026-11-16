@@ -53,16 +53,16 @@ Deploy generates a Worker's name when it creates the Worker: `<app>--<stage>--<i
 
 `bindings` returns an object literal with no spread or computed keys. The runtime build keeps the names and removes the values. Each value is bound by its type:
 
-| Value                                                     | Binding                  | Type in `env`                   |
-| --------------------------------------------------------- | ------------------------ | ------------------------------- |
-| A namespace from [`$durableObject`](#durableobjectconfig) | Durable Object namespace | `DurableObjectNamespace<Class>` |
-| A Worker from `$worker`                                   | Service binding          | `Fetcher`                       |
-| A [`SecretsStoreSecret`](secrets.md) resource              | Secrets Store secret     | `SecretsStoreSecret`            |
-| A [credential](#worker-secrets), such as `apiKey.credentials.value` | Secret text     | `string`                        |
-| An `R2Bucket` resource                                    | R2 bucket                | `R2Bucket`                      |
-| A `KVNamespace` resource                                  | KV namespace             | `KVNamespace`                   |
-| A value from `json(value)`                                | JSON                     | the type of `value`             |
-| A string                                                  | Plain text               | `string`                        |
+| Value                                                               | Binding                  | Type in `env`                   |
+| ------------------------------------------------------------------- | ------------------------ | ------------------------------- |
+| A namespace from [`$durableObject`](#durableobjectconfig)           | Durable Object namespace | `DurableObjectNamespace<Class>` |
+| A Worker from `$worker`                                             | Service binding          | `Fetcher`                       |
+| A [`SecretsStoreSecret`](secrets.md) resource                       | Secrets Store secret     | `SecretsStoreSecret`            |
+| A [credential](#worker-secrets), such as `apiKey.credentials.value` | Secret text              | `string`                        |
+| An `R2Bucket` resource                                              | R2 bucket                | `R2Bucket`                      |
+| A [`KVNamespace`](kv.md) resource                                   | KV namespace             | `KVNamespace`                   |
+| A value from `json(value)`                                          | JSON                     | the type of `value`             |
+| A string                                                            | Plain text               | `string`                        |
 
 `WorkerEnv<typeof worker>` is the type of `env`, and `WorkerHandler<typeof worker>` is the type of the default export. A Worker is uploaded after each Worker, R2 bucket, KV namespace and store secret that it binds, and after each resource whose credential it binds.
 

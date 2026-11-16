@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { UNKNOWN_AFTER_APPLY, diffParams, type Schema } from "src";
+import { UNKNOWN_AFTER_APPLY, changedKeys, diffParams, type Schema } from "src";
 import { object, string } from "./validators";
 
 const schema: Schema = {
@@ -194,5 +194,61 @@ describe("diffParams", () => {
     expect(
       diffParams(schema, previous, desired, { canUpdate: true }).replaceFields,
     ).toEqual([{ name: "path", known: false }]);
+  });
+
+  describe("a change between an array and an object", () => {
+    const documentSchema: Schema = {
+      key: {
+        propertyType: "param",
+        presence: "required",
+        value: string(),
+        primaryKey: true,
+      },
+      value: { propertyType: "param", presence: "required", value: object() },
+    };
+    const diffValue = (before: unknown, after: unknown) =>
+      diffParams(
+        documentSchema,
+        { key: "k", value: before },
+        { key: "k", value: after },
+        { canUpdate: true },
+      );
+
+    test("is a change at the top level of a param", () => {
+      expect(diffValue({}, [])).toEqual({
+        patch: { value: [] },
+        changed: ["value"],
+        replaceFields: [],
+        diff: { added: {}, deleted: {}, updated: { value: [] } },
+      });
+      expect(diffValue({ 0: "x" }, ["x"]).changed).toEqual(["value"]);
+    });
+
+    test("is a change at a nested path, and shows at that path", () => {
+      const result = diffValue(
+        { routes: { a: { 0: "x" } }, other: 1 },
+        { routes: { a: ["x"] }, other: 1 },
+      );
+      expect(result.patch).toEqual({
+        value: { routes: { a: ["x"] }, other: 1 },
+      });
+      expect(result.diff).toEqual({
+        added: {},
+        deleted: {},
+        updated: { value: { routes: { a: ["x"] } } },
+      });
+    });
+
+    test("shows the new value in place of the keys added under it", () => {
+      expect(diffValue({ list: [] }, { list: { x: 1 } }).diff).toEqual({
+        added: {},
+        deleted: {},
+        updated: { value: { list: { x: 1 } } },
+      });
+    });
+
+    test("is a changed key in changedKeys", () => {
+      expect(changedKeys({ a: [], b: 1 }, { a: {}, b: 1 })).toEqual(["a"]);
+    });
   });
 });

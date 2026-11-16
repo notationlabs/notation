@@ -1,0 +1,80 @@
+import { mergeContributions, resource } from "@notation/resource";
+import { sortedJson } from "@notation/utils";
+import { jsonSchema, type Json } from "src/json";
+import {
+  deriveKVKeyParams,
+  kvKeyParams,
+  kvOperations,
+  kvResourceMeta,
+  type KVEncoding,
+  type KVKey,
+  type KVKeyDependencies,
+} from "./kv-operations";
+
+export type KVJsonValueSchema = {
+  Key: KVKey;
+  CreateParams: KVKey & { Value: Json };
+  UpdateParams: { Value: Json };
+  ReadResult: {};
+};
+
+export type KVJsonValueDependencies = KVKeyDependencies;
+
+const kvJsonValueSchema = resource<KVJsonValueSchema>(
+  kvResourceMeta("KVJsonValue"),
+).defineSchema({
+  ...kvKeyParams,
+  /**
+   * The value, a JSON value that `JSON.stringify` writes as it is. Deploy
+   * stores the text of `sortedJson.encode`, which is at most 25 MiB. Any
+   * code can add object keys to it with `contribute`. State holds the value
+   * in both the params and the outputs, so keep large values in R2.
+   */
+  Value: {
+    propertyType: "param",
+    presence: "required",
+    value: jsonSchema(),
+    collect: mergeContributions<Json>,
+  },
+} as const);
+
+const jsonValidator = jsonSchema()["~standard"];
+
+// `jsonSchema` validates synchronously.
+const isJson = (value: unknown): boolean =>
+  !(jsonValidator.validate(value) as { issues?: unknown }).issues;
+
+// Read must return a value that the class validator accepts, or plan fails.
+// Text that is not JSON, or that parses to a value the validator refuses,
+// such as `[1e999]`, reads as a JSON string. Text too long to be a JSON
+// string within 25 MiB reads as a short string that names its length. Both
+// differ from the value in code, so plan shows an update and deploy writes
+// the key again. A read that threw would stop every deploy until the key was
+// fixed by hand.
+const jsonEncoding: KVEncoding<Json> = {
+  encode: (value) => sortedJson.encode(value),
+  decode: (text) => {
+    try {
+      const value = sortedJson.decode(text);
+      if (isJson(value)) return value as Json;
+    } catch {}
+    if (isJson(text)) return text;
+    return `<${text.length} characters that are not a valid JSON value>`;
+  },
+};
+
+/**
+ * A JSON value in a key of a Workers KV namespace. `kvJson()` in
+ * `@notation/cloudflare/kv` declares one with a schema. Create fails when the
+ * key already exists, rather than overwrite it. Delete deletes the key.
+ *
+ * Read parses the stored text. A read within about 60 seconds of a write
+ * made elsewhere can return the older value. Deploy then plans an update,
+ * which writes the value in code again.
+ */
+export const KVJsonValue = kvJsonValueSchema
+  .defineOperations(kvOperations("KVJsonValue", jsonEncoding))
+  .requireDependencies<KVJsonValueDependencies>()
+  .deriveParams(deriveKVKeyParams);
+
+export type KVJsonValueInstance = InstanceType<typeof KVJsonValue>;
