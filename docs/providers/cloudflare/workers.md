@@ -38,6 +38,7 @@ The declaration adds the Worker even when nothing imports it.
 | `compatibilityDate`  | Required. The Worker's compatibility date, such as `"2026-10-12"`. Cloudflare runs the Worker with the behaviour of the runtime on that date.            |
 | `compatibilityFlags` | The Worker's compatibility flags. `nodejs_compat` is always added, as the build imports Node's built-in modules as `node:` modules, which need the flag. |
 | `url`                | Serves the Worker on `https://<name>.<account subdomain>.workers.dev`, where `<name>` is the Worker's name. Defaults to `true`, as in wrangler.          |
+| `entrypoint`         | The class that the module exports as its default, such as `class Api extends WorkerEntrypoint`. A Worker that binds this Worker can call its methods with types. See [RPC](#rpc). |
 
 ### Names
 
@@ -53,16 +54,16 @@ Deploy generates a Worker's name when it creates the Worker: `<app>--<stage>--<i
 
 `bindings` returns an object literal with no spread or computed keys. The runtime build keeps the names and removes the values. Each value is bound by its type:
 
-| Value                                                               | Binding                  | Type in `env`                   |
-| ------------------------------------------------------------------- | ------------------------ | ------------------------------- |
-| A namespace from [`$durableObject`](#durableobjectconfig)           | Durable Object namespace | `DurableObjectNamespace<Class>` |
-| A Worker from `$worker` or `worker()`                              | Service binding          | `Fetcher`                       |
-| A [`SecretsStoreSecret`](secrets.md) resource                       | Secrets Store secret     | `SecretsStoreSecret`            |
-| A [credential](#worker-secrets), such as `apiKey.credentials.value` | Secret text              | `string`                        |
-| An `R2Bucket` resource                                              | R2 bucket                | `R2Bucket`                      |
-| A [`KVNamespace`](kv.md) resource                                   | KV namespace             | `KVNamespace`                   |
-| A value from `json(value)`                                          | JSON                     | the type of `value`             |
-| A string                                                            | Plain text               | `string`                        |
+| Value                                                               | Binding                  | Type in `env`                                                                         |
+| ------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------- |
+| A namespace from [`$durableObject`](#durableobjectconfig)           | Durable Object namespace | `DurableObjectNamespace<Class>`                                                       |
+| A Worker from `$worker` or `worker()`                              | Service binding          | `Service<Class>` for a Worker with an [`entrypoint`](#rpc) class, otherwise `Fetcher` |
+| A [`SecretsStoreSecret`](secrets.md) resource                       | Secrets Store secret     | `SecretsStoreSecret`                                                                  |
+| A [credential](#worker-secrets), such as `apiKey.credentials.value` | Secret text              | `string`                                                                              |
+| An `R2Bucket` resource                                              | R2 bucket                | `R2Bucket`                                                                            |
+| A [`KVNamespace`](kv.md) resource                                   | KV namespace             | `KVNamespace`                                                                         |
+| A value from `json(value)`                                          | JSON                     | the type of `value`                                                                   |
+| A string                                                            | Plain text               | `string`                                                                              |
 
 `WorkerEnv<typeof worker>` is the type of `env`, and `WorkerHandler<typeof worker>` is the type of the default export. A Worker is uploaded after each Worker, R2 bucket, KV namespace and store secret that it binds, and after each resource whose credential it binds.
 
@@ -133,6 +134,77 @@ Two Workers can bind each other as services. Each service binding is a [contribu
 3. It uploads the first Worker again, with its service bindings.
 
 Between steps 1 and 3, the first Worker's `env` has no service bindings, so a request that calls the other Worker fails.
+
+TypeScript can't type two Workers that bind each other through `bindings`, or a Worker that binds itself. The type of each Worker depends on the type of the other, and TypeScript types both as `any`, which fails under `strict`. To keep one direction typed, bind the other direction with [`addBindings()`](#addbindingsworker-bindings).
+
+### RPC
+
+When a Worker's default export is a `WorkerEntrypoint` class, a Worker that binds it can call the class's methods over RPC. Pass the class as `entrypoint`, and the binding is typed `Service<Class>` in `env`:
+
+::code-group
+
+```ts [runtime/github.ts]
+import { WorkerEntrypoint } from "cloudflare:workers";
+import { $worker, type WorkerEnv } from "@notation/cloudflare/workers";
+
+export type Input = { headers: Record<string, string>; body: string };
+
+export default class Github extends WorkerEntrypoint<WorkerEnv<typeof github>> {
+  async receive(input: Input) {
+    const key = await this.env.ROOT_KEY.get();
+    // verify the signature, parse the event …
+  }
+}
+
+export const github = $worker({
+  id: "github",
+  compatibilityDate: "2026-10-12",
+  bindings: () => ({ ROOT_KEY: rootKey }),
+  entrypoint: Github,
+  url: false,
+});
+```
+
+```ts [runtime/router.ts]
+import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
+import { github, type Input } from "./github";
+
+export const router = $worker({
+  id: "router",
+  compatibilityDate: "2026-10-12",
+  bindings: () => ({ GITHUB: github }),
+});
+
+export default {
+  async fetch(request, env) {
+    const input: Input = {
+      headers: Object.fromEntries(request.headers),
+      body: await request.text(),
+    };
+    return Response.json(await env.GITHUB.receive(input));
+  },
+} satisfies WorkerHandler<typeof router>;
+```
+
+::
+
+`env.GITHUB.receive(input)` is typed. An unknown method, or an argument of the wrong type, is a type error. The router's runtime bundle doesn't include the GitHub Worker's code: the build removes the values of `bindings`, and then the import of `github` is unused.
+
+Deploy doesn't read `entrypoint`. The infra build replaces it with a function that throws, so it never loads the class or `cloudflare:workers`. The service binding has no `entrypoint` field, so Cloudflare sends the calls to the default export.
+
+Set `url: false` when the class has no `fetch` method. The Worker then has no workers.dev URL, and only the Workers that bind it can call it.
+
+The build fails when `entrypoint` is not the class that the module exports as its default:
+
+```text
+runtime/github.ts:17:15: entrypoint is Admin, but github.ts exports Github as its default. The platform calls that export, so entrypoint must name it. Pass entrypoint: Github.
+```
+
+- The class must have a name, and be declared before `$worker`. TypeScript fails with `TS2449` for a class declared after it.
+- The class must be declared in the Worker's module, as `export default class Github`, or as `class Github` with `export default Github` or `export { Github as default }`. The build doesn't follow imports or re-exports, so a class that the module imports, or a default export that it re-exports from another module, fails the build.
+- Only the default export can be bound. Cloudflare can also bind a named entrypoint, such as `export class Admin extends WorkerEntrypoint`, but `$worker` doesn't support it.
+- A class that is not a `WorkerEntrypoint`, such as a Durable Object class, type-checks as `entrypoint`. A Worker that binds it gets a `Fetcher`.
+- TypeScript doesn't check that the arguments and the return values of the methods can be sent over RPC. A method that takes a function or a class instance type-checks, and fails at runtime.
 
 ### Worker secrets
 
@@ -248,6 +320,43 @@ The bundle must have `platform: "workerd"`. `worker()` fails for a bundle built 
 - **It hosts a Durable Object namespace that it binds when the bundle's entry exports the namespace's class by name.** `bundle()` reads the exports of the entry when it is called. A class that the entry re-exports with `export *` is not found, and plan fails. A container of the namespace runs on the Worker, as for a `$worker`.
 
 A `$worker` that is replaced by a `worker()` with the same id and the same exports keeps its namespaces on the same script.
+
+## `addBindings(worker, bindings)`
+
+`addBindings()` adds bindings to a Worker from other infra code, such as a library that adds a feature to a Worker that it didn't declare:
+
+```ts [infra/main.ts]
+import { addBindings } from "@notation/cloudflare/workers";
+import { github } from "../runtime/github";
+import { router } from "../runtime/router";
+
+addBindings(router, { CHANNEL_GITHUB: github });
+```
+
+It takes a Worker from `$worker`, and an object of bindings. The values are the ones that `bindings` accepts. The Worker resolves them together with its own bindings, so each is uploaded, and orders the deploy, as if `bindings` had returned it.
+
+`WorkerEnv<typeof router>` doesn't include the bindings from `addBindings()`, as they depend on which infra code runs. The Worker reads such a binding by its name, and types it from a contract that it shares with the code that called `addBindings()`. `WorkerEnv` has no index signature, so widen `env` before indexing it with a computed name:
+
+```ts [runtime/router.ts]
+const name = `CHANNEL_${provider.toUpperCase()}`;
+const channel = (env as Record<string, unknown>)[name] as Service<Channel>;
+const received = await channel.receive(input);
+```
+
+- A Worker hosts a Durable Object namespace only when its own module exports the namespace's class. So a namespace from `addBindings()` works only when another Worker hosts it.
+- Two Workers that bind each other through `addBindings()` deploy, in the same way as two Workers that bind each other through `bindings`.
+- Inside a Worker, `addBindings()` throws.
+
+`addBindings()` fails when:
+
+1. A name is bound twice, by `bindings` and `addBindings()`, or by two calls to `addBindings()`. A clash between two calls fails at the second call. A clash with `bindings` fails when the Worker reads its bindings, once the infra modules have loaded. Both errors name the location of each call:
+
+   ```text
+   addBindings() at infra/main.ts:5 binds CHANNEL_GITHUB on $worker({ id: "router" }) in runtime/router.ts, which already binds CHANNEL_GITHUB in its bindings. Give one of the bindings another name.
+   ```
+
+2. It is called from an `onEvaluationEnd` callback. The Workers read their bindings once the infra modules have loaded, so `addBindings()` must be called while they load, such as in the function that declares what it binds. Only engine and package code registers such callbacks, so the error names the location of the call, which points at the package to fix.
+3. The first argument isn't a Worker from `$worker`.
 
 ## `$durableObject(config)`
 

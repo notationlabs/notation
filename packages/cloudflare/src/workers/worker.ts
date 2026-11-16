@@ -423,8 +423,7 @@ function registerWorker(
     ...source,
     id: config.id,
     // Called once, after all infra modules have loaded.
-    bindings: () =>
-      (bindings ??= withAdded(entry, config.bindings?.() ?? {})),
+    bindings: () => (bindings ??= withAdded(entry, config.bindings?.() ?? {})),
     added: [],
     // A Worker that is already in `chain` means the bindings form a cycle.
     build: (chain = []) => {

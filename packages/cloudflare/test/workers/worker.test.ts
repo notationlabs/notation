@@ -1567,7 +1567,7 @@ describe("WorkerEnv", () => {
 
     expectTypeOf<Env["GITHUB"]>().toEqualTypeOf<cf.Service<typeof Github>>();
     // Never called: the calls are only type-checked.
-    (async (env: Env) => {
+    async (env: Env) => {
       const received = await env.GITHUB.receive({ headers: {}, body: "" });
       expectTypeOf(received.key).toEqualTypeOf<string>();
       expectTypeOf(received.length).toEqualTypeOf<number>();
@@ -1575,7 +1575,7 @@ describe("WorkerEnv", () => {
       await env.GITHUB.receive({ body: 1 });
       // @ts-expect-error a method that the class doesn't have
       await env.GITHUB.send();
-    });
+    };
   });
 
   it("types a Worker with no entrypoint, or one that isn't a WorkerEntrypoint, as a Fetcher", () => {
