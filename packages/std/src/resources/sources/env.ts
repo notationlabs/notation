@@ -8,7 +8,7 @@ export type EnvSchema = {
   Value: string;
 };
 
-const read = (key: string) => async () => lookup(process.env[key], key);
+const read = (key: string) => async () => lookup(process.env[key]);
 
 /**
  * The value of an environment variable. Without `track`, it has a new
@@ -40,12 +40,18 @@ export const Env = credentialSourceResource<EnvSchema>({
   } as const)
   .defineOperations({
     read: async (params, context) => ({
-      revision: await localRevision(params.track, read(params.key), context),
+      revision: await localRevision(
+        params.track,
+        read(params.key),
+        `${params.key} is not set`,
+        context,
+      ),
     }),
     loadCredential: async (params, state, context) => ({
       value: await loadLocalValue(
         params.track,
         read(params.key),
+        `${params.key} is not set`,
         state.revision,
         context,
       ),

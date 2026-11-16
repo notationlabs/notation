@@ -21,7 +21,7 @@ const read = (path: string, key: string) => async () => {
     if (!isErrorWithCode(error, "ENOENT")) throw error;
     text = "";
   }
-  return lookup(parseEnv(text)[key], key, ` in ${path}`);
+  return lookup(parseEnv(text)[key]);
 };
 
 /**
@@ -58,6 +58,7 @@ export const Dotenv = credentialSourceResource<DotenvSchema>({
       revision: await localRevision(
         params.track,
         read(params.path, params.key),
+        `${params.key} is not set in ${params.path}`,
         context,
       ),
     }),
@@ -65,6 +66,7 @@ export const Dotenv = credentialSourceResource<DotenvSchema>({
       value: await loadLocalValue(
         params.track,
         read(params.path, params.key),
+        `${params.key} is not set in ${params.path}`,
         state.revision,
         context,
       ),

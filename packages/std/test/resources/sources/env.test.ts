@@ -71,7 +71,7 @@ describe("Env", () => {
     vi.stubEnv("STRIPE_KEY", undefined);
     await expect(load()).rejects.toThrow("STRIPE_KEY is not set.");
     vi.stubEnv("STRIPE_KEY", "");
-    await expect(load()).rejects.toThrow("STRIPE_KEY is empty.");
+    await expect(load()).rejects.toThrow("STRIPE_KEY is not set.");
   });
 
   describe("with track", () => {

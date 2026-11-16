@@ -3,23 +3,11 @@ import type {
   CredentialSourceReadContext,
 } from "@notation/resource";
 import { recordSecretValue } from "@notation/utils";
-import { assertTrackKey, trackRevision, type Track } from "./track";
+import { trackRevision, type Track } from "./track";
 
-/**
- * A value that a source looked up. `unset` says why there is no value, such
- * as "STRIPE_KEY is not set", and is undefined when there is one.
- */
-export type LocalValue =
-  { value: string; unset?: undefined } | { unset: string };
-
-export function lookup(
-  value: string | undefined,
-  name: string,
-  where = "",
-): LocalValue {
-  if (value === undefined) return { unset: `${name} is not set${where}` };
-  if (value === "") return { unset: `${name} is empty${where}` };
-  return { value };
+// An empty value counts as not set.
+export function lookup(value: string | undefined): string | undefined {
+  return value === "" ? undefined : value;
 }
 
 /**
@@ -29,20 +17,21 @@ export function lookup(
  */
 export async function localRevision(
   track: Track | undefined,
-  read: () => Promise<LocalValue>,
+  read: () => Promise<string | undefined>,
+  // Says why there is no value, such as "STRIPE_KEY is not set".
+  unset: string,
   context: CredentialSourceReadContext<{ revision: string }>,
 ): Promise<string> {
   if (!track) return context.executionId;
-  assertTrackKey(track);
-  const found = await read();
-  if (found.unset !== undefined) {
+  const value = await read();
+  if (value === undefined) {
     const recorded = context.state?.revision;
-    if (recorded === undefined) throw new Error(`${found.unset}.`);
-    context.warn(`${found.unset}. Its value was not checked for a change.`);
+    if (recorded === undefined) throw new Error(`${unset}.`);
+    context.warn(`${unset}. Its value was not checked for a change.`);
     return recorded;
   }
-  recordSecretValue(found.value);
-  return trackRevision(track, context, found.value);
+  recordSecretValue(value);
+  return trackRevision(track, context, value);
 }
 
 /**
@@ -51,19 +40,17 @@ export async function localRevision(
  */
 export async function loadLocalValue(
   track: Track | undefined,
-  read: () => Promise<LocalValue>,
+  read: () => Promise<string | undefined>,
+  unset: string,
   revision: string,
   context: CredentialSourceContext,
 ): Promise<string> {
-  const found = await read();
-  if (found.unset !== undefined) throw new Error(`${found.unset}.`);
-  if (
-    track &&
-    (await trackRevision(track, context, found.value)) !== revision
-  ) {
+  const value = await read();
+  if (value === undefined) throw new Error(`${unset}.`);
+  if (track && (await trackRevision(track, context, value)) !== revision) {
     throw new Error(
       `The value of ${context.id} changed after deploy read it. Run deploy again.`,
     );
   }
-  return found.value;
+  return value;
 }
