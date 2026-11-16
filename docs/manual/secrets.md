@@ -216,9 +216,9 @@ new InfisicalSecret("stripe-key", {
 - The value is a plain string by the time it is a param, so plan shows it and state records it.
 - Plan, deploy, destroy, watch and `notation viz` evaluate the infra code for a stage. Outside that evaluation, `deployment()` throws.
 
-## A credential that the provider issues once
+## A credential that you rotate by hand
 
-Some providers return a value once, at create, and have no API to issue another. The resource declares such a credential without a `rotate` operation. When a resource needs the value and deploy holds none, plan and deploy fail, and print two commands: one that replaces the resource, and one that passes a value that you hold. See [notation deploy](../cli/deploy.md#a-credential-that-deploy-cannot-get).
+Some providers have no API that issues another value of a credential. The resource declares such a credential without a `rotate` operation. Notation does not store the value, so when a resource needs it and deploy holds none, plan and deploy fail. The error gives the reason, and prints two commands: one that passes a value that you issue at the provider, and one that replaces the resource. See [notation deploy](../cli/deploy.md#a-credential-that-you-rotate-by-hand).
 
 A source never needs this. Deploy can always load its value again.
 

@@ -1,16 +1,16 @@
 # notation plan
 
 ```sh
-notation plan [--config <path>] [--stage <stage>] [--replace <id>[@<hash>]] [--override-loss-protection <id>] [--credential <id>.<credential>[@<version>]=<variable>]
+notation plan [--config <path>] [--stage <stage>] [--replace <id>[@<hash>]] [--override-loss-protection <id>] [--credential <id>.<credential>[@<hash>]=<variable>]
 ```
 
-| Option                            | Meaning                                                                                                     |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `--config <path>`                 | The config file. Default: the nearest `notation.config.ts`.                                                 |
-| `--stage <stage>`                 | The stage. Default: `defaultStage`.                                                                         |
-| `--replace <id>[@<hash>]`         | Plan a replace of the resource with this ID. Repeatable. See [Replacing a resource](#replacing-a-resource). |
-| `--override-loss-protection <id>` | Plan the replace of a resource that `--replace` names, though its class refuses the replace. Repeatable.    |
-| `--credential <id>.<credential>[@<version>]=<variable>` | Plan a deploy that takes the credential's value from the variable. Repeatable. See [Passing a credential](#passing-a-credential). |
+| Option                                               | Meaning                                                                                                                           |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `--config <path>`                                    | The config file. Default: the nearest `notation.config.ts`.                                                                       |
+| `--stage <stage>`                                    | The stage. Default: `defaultStage`.                                                                                               |
+| `--replace <id>[@<hash>]`                            | Plan a replace of the resource with this ID. Repeatable. See [Replacing a resource](#replacing-a-resource).                       |
+| `--override-loss-protection <id>`                    | Plan the replace of a resource that `--replace` names, though its class refuses the replace. Repeatable.                          |
+| `--credential <id>.<credential>[@<hash>]=<variable>` | Plan a deploy that takes the credential's value from the variable. Repeatable. See [Passing a credential](#passing-a-credential). |
 
 Compiles the entry file and shows what a deploy to the stage would change:
 
@@ -115,11 +115,11 @@ When a resource needs the value of a credential that deploy no longer holds, and
     Value gets a new value, as a resource that takes it needs one
 ```
 
-When the credential's resource cannot rotate it, plan fails, and prints a `--replace` command and a `--credential` command. See [A credential that deploy cannot get](./deploy.md#a-credential-that-deploy-cannot-get).
+When the credential's resource cannot rotate it, plan fails. It prints a `--credential` command, which passes a value that you issue at the provider, and a `--replace` command. See [A credential that you rotate by hand](./deploy.md#a-credential-that-you-rotate-by-hand).
 
 ## Passing a credential
 
-`--credential` plans the deploy that [`notation deploy --credential`](./deploy.md#a-credential-that-deploy-cannot-get) makes. The version is optional, because plan changes nothing, and the variable need not be set. When you give the version, plan checks it as deploy does.
+`--credential` plans the deploy that [`notation deploy --credential`](./deploy.md#a-credential-that-you-rotate-by-hand) makes. The instance hash is optional, because plan changes nothing, and the variable need not be set. When you give the hash, plan checks it as deploy does.
 
 ```sh
 notation plan --stage prod --credential app.privateKey=APP_PRIVATE_KEY
@@ -133,11 +133,11 @@ The plan shows the passed value, and the update of each resource that takes it:
 ~ update cloudflare/secrets-store/SecretsStoreSecret app-key-secret
 ```
 
-The last line is the deploy command, with the version of each credential that `--credential` names:
+The last line is the deploy command, with the instance hash of each resource that `--credential` names:
 
 ```
 To deploy this plan:
-  notation deploy --stage prod --credential app.privateKey@7b1e52c0=APP_PRIVATE_KEY
+  notation deploy --stage prod --credential app.privateKey@5d2e8b17=APP_PRIVATE_KEY
 ```
 
 ## JSON output
@@ -148,4 +148,4 @@ To deploy this plan:
 notation plan --stage prod --json > plan.json
 ```
 
-Each node has `id`, `type`, `decision`, `params` and `dependsOn`. A node with the decision `replace` or `drift-replace` has `replaceOrder`, `"create-first"` or `"delete-first"`. A retired resource is a node with the decision `delete-retired`. It has the ID of the resource that replaced it, `retiredIndex`, its position in the list of retired instances of that resource, its own `params` and `dependsOn`, and `retiredAt`, the time when the replace started. The ID and `retiredIndex` together name the instance. A node of a resource in code that has a state record has `instanceHash`, the hash that `--replace` takes. A replace that `--replace` asked for has `{ "requested": true, "known": true }` in its `replaceFields`. A node of a resource with a state record has `credentialVersions`, the version of each of its credentials as `--credential` takes it, such as `{ "privateKey": "7b1e52c0" }`.
+Each node has `id`, `type`, `decision`, `params` and `dependsOn`. A node with the decision `replace` or `drift-replace` has `replaceOrder`, `"create-first"` or `"delete-first"`. A retired resource is a node with the decision `delete-retired`. It has the ID of the resource that replaced it, `retiredIndex`, its position in the list of retired instances of that resource, its own `params` and `dependsOn`, and `retiredAt`, the time when the replace started. The ID and `retiredIndex` together name the instance. A node of a resource in code that has a state record has `instanceHash`, the hash that `--replace` and `--credential` take. A replace that `--replace` asked for has `{ "requested": true, "known": true }` in its `replaceFields`.

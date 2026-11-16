@@ -1,16 +1,16 @@
 # notation deploy
 
 ```sh
-notation deploy [--config <path>] [--stage <stage>] [--replace <id>@<hash>] [--override-loss-protection <id>] [--credential <id>.<credential>@<version>=<variable>]
+notation deploy [--config <path>] [--stage <stage>] [--replace <id>@<hash>] [--override-loss-protection <id>] [--credential <id>.<credential>@<hash>=<variable>]
 ```
 
-| Option                                                | Meaning                                                                                                                                                           |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--config <path>`                                     | The config file. Default: the nearest `notation.config.ts`.                                                                                                       |
-| `--stage <stage>`                                     | The stage. Default: `defaultStage`.                                                                                                                               |
-| `--replace <id>@<hash>`                               | Replace the resource with this ID. Repeatable. See [Replacing a resource](#replacing-a-resource).                                                                 |
-| `--override-loss-protection <id>`                     | Replace a resource that `--replace` names, though its class refuses the replace. Repeatable.                                                                      |
-| `--credential <id>.<credential>@<version>=<variable>` | Give deploy the value of a credential from the environment variable. Repeatable. See [A credential that deploy cannot get](#a-credential-that-deploy-cannot-get). |
+| Option                                             | Meaning                                                                                                                                                             |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--config <path>`                                  | The config file. Default: the nearest `notation.config.ts`.                                                                                                         |
+| `--stage <stage>`                                  | The stage. Default: `defaultStage`.                                                                                                                                 |
+| `--replace <id>@<hash>`                            | Replace the resource with this ID. Repeatable. See [Replacing a resource](#replacing-a-resource).                                                                   |
+| `--override-loss-protection <id>`                  | Replace a resource that `--replace` names, though its class refuses the replace. Repeatable.                                                                        |
+| `--credential <id>.<credential>@<hash>=<variable>` | Give deploy the value of a credential from the environment variable. Repeatable. See [A credential that you rotate by hand](#a-credential-that-you-rotate-by-hand). |
 
 Compiles the entry file and deploys it to the stage. Each stage has its own state, under the key `<app>:<stage>`. See [Project Config](../manual/project-config.md).
 
@@ -84,60 +84,66 @@ Notation saves the `--replace`, `--override-loss-protection` and `--credential` 
 
 A resume does not check the hash again, because a create-first replace has already changed the key.
 
-## A credential that deploy cannot get
+## A credential that you rotate by hand
 
-A [credential](../manual/secrets.md#credentials) is a secret output of a resource, such as the value of an API token. Deploy holds a credential's value in memory only, so a later deploy holds none. When a resource that takes the value is created or updated, deploy gets the value again:
+A [credential](../manual/secrets.md#credentials) is a secret output of a resource, such as the value of an API token. Deploy holds a credential's value in memory only, and Notation does not store it. So a later deploy holds no value. When a resource that takes the value is created or updated, deploy gets a value again:
 
 | The credential                                      | Deploy                                                      |
 | --------------------------------------------------- | ----------------------------------------------------------- |
 | of a source, such as `sources.Env`                  | loads the value from the source                             |
 | of a resource with `rotate`, such as `AccountToken` | rotates it, and updates every resource that takes the value |
-| of a resource without `rotate`                      | cannot get it                                               |
+| of a resource without `rotate`                      | fails, and asks you for a new value                         |
 
-Some providers issue a value once, at create, and have no API to issue another. A GitHub App's private key is one. In this case, plan fails. Deploy checks for it before it changes anything, and again before it writes the resource that needs the value. Both print two commands, with the `--config`, `--stage` and other flags of the command that you ran:
+Some providers have no API that issues another value. A GitHub App's private key is one: you generate a new key in the app's settings. In this case, plan fails. Deploy checks for it before it changes anything, and again before it writes the resource that needs the value. Both print two commands, with the `--config`, `--stage` and other flags of the command that you ran:
 
 ```text
-✗ app-key-secret needs app.privateKey, and deploy cannot get it. github/App issues privateKey once, at create.
-Either replace the resource `app`, or provide the credential `app.privateKey`.
+✗ app-key-secret is new, and takes app.privateKey. Notation does not store the value, and github/App has no operation that issues another.
 
-  Replace app, to issue a new value:
+  Generate a new private key in the GitHub App's settings, under Private keys. Then set the environment variable APP_PRIVATE_KEY to the value, and pass it:
+    notation deploy --stage prod --credential app.privateKey@5d2e8b17=APP_PRIVATE_KEY
+
+  Or replace app. Deploy deletes app and creates it again with a new value, so whatever exists only in the old app is lost:
     notation deploy --stage prod --replace app@5d2e8b17
-
-  Or pass a value that you hold:
-    notation deploy --stage prod --credential app.privateKey@7b1e52c0=APP_PRIVATE_KEY
 ```
 
-This happens when the deploy that created the app failed before it created the secret, and when a resource that takes the key is added or replaced in a later deploy.
+The first sentence gives the reason that the resource needs the value now:
 
-- **`--replace`** replaces the resource, as in [Replacing a resource](#replacing-a-resource). The new app has a new ID and a new key.
-- **`--credential`** gives deploy a value that you hold. The app keeps its ID.
+| First sentence                                                                               | Reason                                                                                                           |
+| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `app-key-secret is new, and takes app.privateKey.`                                           | The resource was added after the deploy that created the app.                                                    |
+| `An earlier deploy did not finish the create of app-key-secret, which takes app.privateKey.` | An earlier deploy failed while it created the resource.                                                          |
+| `Deploy replaces app-key-secret, which takes app.privateKey.`                                | The replacement is created with the value.                                                                       |
+| `app-key-secret takes app.privateKey, and has not received its current value.`               | An earlier deploy failed before it updated the resource, or the resource now takes the value under another name. |
+| `app-key-secret takes app.privateKey, and state has no record of a value for it.`            | The create of the app returned no value for the credential, or one that its validator rejects.                   |
+| `app-key-secret takes app.privateKey, and the deploy run that received its value has ended.` | The deploy stopped after it created the app, and was resumed.                                                    |
 
-When state has no version of the credential, the error says ``Replace the resource `app`.`` and prints the `--replace` command only.
+- **`--credential`** gives deploy a value that you issue at the provider. The app keeps its ID. The sentence above the command comes from the resource's class. A class that gives none prints `Issue a new value of privateKey at the provider of github/App.`
+- **`--replace`** replaces the resource, as in [Replacing a resource](#replacing-a-resource). The new app has a new ID and a new key, and whatever exists only in the old app is lost.
 
-When deploy cannot get several credentials, plan lists all of them in one error. It prints the deploy command once, and the two flags of each credential. Add one flag for each credential to the command. A `--replace` can create other resources again, so the next plan can find a credential that this one did not list.
+When several credentials need a new value, plan lists all of them in one error. It prints the deploy command once, and the two flags of each credential. Choose one flag for each credential, and add the flags to the command. A `--replace` can create other resources again, so the next plan can find a credential that this one did not list.
 
 `--credential` reads the value from the environment variable that it names, so the value is never an argument on the command line:
 
 ```sh
-APP_PRIVATE_KEY="$(cat app.pem)" notation deploy --stage prod --credential app.privateKey@7b1e52c0=APP_PRIVATE_KEY
+APP_PRIVATE_KEY="$(cat app.pem)" notation deploy --stage prod --credential app.privateKey@5d2e8b17=APP_PRIVATE_KEY
 ```
 
 The flag has four parts:
 
-| Part           | Example           | Meaning                                                                                                     |
-| -------------- | ----------------- | ----------------------------------------------------------------------------------------------------------- |
-| `<id>`         | `app`             | The resource ID as state records it. The part before `@` is split at its last dot, so an ID can hold a dot. |
-| `<credential>` | `privateKey`      | The name of the credential.                                                                                 |
-| `<version>`    | `7b1e52c0`        | The version that state records for the credential, or its first 8 characters.                               |
-| `<variable>`   | `APP_PRIVATE_KEY` | The environment variable that holds the value.                                                              |
+| Part              | Example           | Meaning                                                                                                        |
+| ----------------- | ----------------- | -------------------------------------------------------------------------------------------------------------- |
+| `<id>`            | `app`             | The resource ID as state records it. The part before `@` is split at its last dot, so an ID can hold a dot.    |
+| `<credential>`    | `privateKey`      | The name of the credential.                                                                                    |
+| `<instance hash>` | `5d2e8b17`        | The instance hash of the resource, as `--replace` takes it. See [Replacing a resource](#replacing-a-resource). |
+| `<variable>`      | `APP_PRIVATE_KEY` | The environment variable that holds the value.                                                                 |
 
-**The version ties the command to one value in one stage.** The same credential has another version in every other stage, and a new version after the resource is replaced. So a command copied from the plan of another stage fails:
+**The hash ties the command to one resource in one stage.** The same resource has another hash in every other stage. So a command copied from the plan of another stage fails:
 
 ```text
-✗ app.privateKey is at version 3c90a1f4 in this stage, not 7b1e52c0.
+✗ app has the instance hash 9e04b7d1 in this stage, not 5d2e8b17.
 ```
 
-Plan prints the version, so you do not type it. Deploy fails when `--credential` has no version. To get the command with the version, run [`notation plan --credential <id>.<credential>=<variable>`](./plan.md#passing-a-credential).
+Plan prints the hash, so you do not type it. Deploy fails when `--credential` has no hash. To get the command with the hash, run [`notation plan --credential <id>.<credential>=<variable>`](./plan.md#passing-a-credential).
 
 Deploy cannot tell whether the passed value is the one that the other resources hold. It gives the credential a new version, and updates every resource that takes it.
 
@@ -151,8 +157,8 @@ Deploy fails, before it changes anything, when:
 | The credential has `rotate`                  | `--credential deploy-token.Value: cloudflare/tokens/AccountToken can rotate Value, so deploy gets a new value itself. --credential is accepted only for a credential without rotate.` |
 | `--replace` names the same resource          | `--credential app.privateKey cannot be given with --replace app: the replacement is created with a new value.`                                                                        |
 | The resource is not in state                 | `--credential app.privateKey: app is not in state, so it has no value to set. Deploy creates it, and the create returns the value.`                                                   |
-| State has no version of the credential       | `--credential app.privateKey: state has no version of app.privateKey, so deploy cannot check that the flag is meant for this stage. Replace app with --replace to issue a new value.` |
-| The version does not match                   | `app.privateKey is at version 3c90a1f4 in this stage, not 7b1e52c0.`                                                                                                                  |
+| The hash is not 8 hex characters             | `The instance hash 5d2e8b1 of app is malformed. An instance hash is 8 hex characters.`                                                                                                |
+| The hash does not match                      | `app has the instance hash 9e04b7d1 in this stage, not 5d2e8b17.`                                                                                                                     |
 | The variable is not set                      | `--credential app.privateKey reads APP_PRIVATE_KEY, which is not set.`                                                                                                                |
 | The flag names the same credential twice     | `--credential app.privateKey is given more than once.`                                                                                                                                |
 

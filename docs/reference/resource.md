@@ -308,16 +308,17 @@ An issue in a statement that holds an unknown is still dropped, because the stat
 
 `defineOperations` accepts CRUD handlers and parameter derivation:
 
-| Field          | Required | Signature / Description                                                                                                                                           |
-| -------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create`       | yes      | `(params, context?) => Promise<CreateResult<S>>` – create the resource, return its computed key and its [credentials](#credentials).                              |
-| `rotate`       | no       | `{ [credential]: (key, state) => Promise<value> }` – issue a new value for a credential. See [Credentials](#credentials).                                         |
-| `find`         | no       | `(params) => Promise<ComputedPrimaryKey<S>>` – find the resource that a create with `params` makes, and return its computed key. See [`find`](#find).             |
-| `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                                              |
-| `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                                                |
-| `delete`       | yes      | `(key, state, context?, deletion?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
-| `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                                             |
-| `rejectChange` | no       | `(previous, desired, { replace }) => string \| undefined` – return a message to fail plan and deploy with. See [Rejecting a change](#rejecting-a-change).         |
+| Field            | Required | Signature / Description                                                                                                                                           |
+| ---------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create`         | yes      | `(params, context?) => Promise<CreateResult<S>>` – create the resource, return its computed key and its [credentials](#credentials).                              |
+| `rotate`         | no       | `{ [credential]: (key, state) => Promise<value> }` – issue a new value for a credential. See [Credentials](#credentials).                                         |
+| `rotateManually` | no       | `{ [credential]: string }` – for a credential without `rotate`, how the user issues a new value at the provider. See [Credentials](#credentials).                 |
+| `find`           | no       | `(params) => Promise<ComputedPrimaryKey<S>>` – find the resource that a create with `params` makes, and return its computed key. See [`find`](#find).             |
+| `read`           | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                                              |
+| `update`         | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                                                |
+| `delete`         | yes      | `(key, state, context?, deletion?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
+| `deriveParams`   | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                                             |
+| `rejectChange`   | no       | `(previous, desired, { replace }) => string \| undefined` – return a message to fail plan and deploy with. See [Rejecting a change](#rejecting-a-change).         |
 
 The reconciler records params, results and state, so each must be a durable value as `@notation/durable` 0.9.0 defines it: `null`, a boolean, number, string or `bigint`, `undefined`, a `Date`, an `Error`, or an array, `Map`, `Set` or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
 
@@ -583,7 +584,7 @@ Deploy keeps the value in memory only:
 - A string value is removed from error messages.
 - `read` never returns a credential, and `resource.output` has no property for it.
 
-A create, a rotate or [`--credential`](../cli/deploy.md#a-credential-that-deploy-cannot-get) gives the credential a new version. The params of each resource that takes it then differ from its record, so deploy updates it with the new value. More than one resource can take the same credential.
+A create, a rotate or [`--credential`](../cli/deploy.md#a-credential-that-you-rotate-by-hand) gives the credential a new version. The params of each resource that takes it then differ from its record, so deploy updates it with the new value. More than one resource can take the same credential.
 
 Deploy holds a value only in the process that received it. It gets a new value when a resource that takes the credential needs one and deploy holds none:
 
@@ -593,7 +594,23 @@ Deploy holds a value only in the process that received it. It gets a new value w
 
 To get a new value, deploy calls the credential's `rotate` operation, which returns a value and makes the provider revoke the one before. In cases 1 and 2 it rotates before it reaches the resources that take the credential. In case 3 it rotates when it reaches the resource, and then updates the resources before it that take the credential. Plan shows the rotation and the updates.
 
-**Without `rotate`, deploy cannot get a value, and does not choose what to do.** Plan fails, and deploy fails before it writes the resource that needs the value. Both print two commands: `notation deploy --replace`, which replaces the resource that has the credential, and `notation deploy --credential`, which passes a value that the user holds. See [A credential that deploy cannot get](../cli/deploy.md#a-credential-that-deploy-cannot-get). Leave out `rotate` only when the provider has no API to issue another value.
+**Without `rotate`, the user rotates the credential by hand.** Plan fails, and deploy fails before it writes the resource that needs the value. Both print two commands: `notation deploy --credential`, which passes a value that the user issues at the provider, and `notation deploy --replace`, which replaces the resource that has the credential. See [A credential that you rotate by hand](../cli/deploy.md#a-credential-that-you-rotate-by-hand). Leave out `rotate` only when the provider has no API to issue another value.
+
+For such a credential, give `rotateManually`: one sentence for each credential that tells the user how to issue a new value at the provider. The error prints it above the `--credential` command. Without it, the error prints `Issue a new value of <credential> at the provider of <type>.`
+
+```ts
+export const App = appSchema.defineOperations({
+  create: async (params) => {
+    const app = await createApp(params);
+    return { AppId: app.id, PrivateKey: app.pem };
+  },
+  rotateManually: {
+    PrivateKey:
+      "Generate a new private key in the GitHub App's settings, under Private keys.",
+  },
+  delete: async (key) => deleteApp(key.AppId),
+});
+```
 
 The provider revokes the old value when deploy rotates, before any resource has the new one. If the deploy then fails before it updates a resource that takes the credential, that resource holds a revoked value until a later deploy succeeds. That deploy rotates again.
 
