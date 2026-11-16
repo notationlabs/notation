@@ -1552,7 +1552,7 @@ describe("worker()", () => {
     );
   });
 
-  it("fails for code that is not a bundle", () => {
+  it("fails for code that is neither a file nor a bundle", () => {
     expect(() =>
       worker({
         id: "router",
@@ -1560,7 +1560,7 @@ describe("worker()", () => {
         compatibilityDate,
       }),
     ).toThrow(
-      'worker({ id: "router" }) expects code to be a bundle from bundle() in @notation/build/resources.',
+      'worker({ id: "router" }) expects code to be { type: "file", path: "path/to/worker.mjs" } or a bundle from bundle() in @notation/build/resources.',
     );
   });
 

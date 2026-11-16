@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import { readEntryExports } from "@notation/build";
 import { filePaths, fromProjectRoot, toProjectRoot } from "@notation/core";
 import {
   getDeclaredIn,
@@ -57,8 +59,11 @@ export type WorkerConfig<
   Id extends string,
   B extends Bindings,
 > = WorkerDeclarationConfig<Id, B> & {
-  /** A bundle from `bundle()` with `platform: "workerd"`. */
-  code: BundleLike;
+  /**
+   * A prebuilt JavaScript module, uploaded as-is, or a bundle from `bundle()`
+   * with `platform: "workerd"`. File paths are relative to the project root.
+   */
+  code: { type: "file"; path: string } | BundleLike;
 };
 
 /** The module that a Worker uploads: a file, or code declared elsewhere. */
@@ -298,10 +303,10 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
 }
 
 /**
- * Declares a Cloudflare Worker whose code is a bundle from `bundle()`, such
- * as a Worker that a library generates. It takes the options of `$worker`,
+ * Declares a Cloudflare Worker whose code is a prebuilt file or a bundle
+ * from `bundle()`. It takes the options of `$worker`,
  * and binds the same values. It hosts a Durable Object namespace that it
- * binds when the bundle's entry exports the namespace's class by name.
+ * binds when the file or bundle's entry exports the namespace's class by name.
  * @resource
  */
 export function worker<const Id extends string, B extends Bindings = {}>(
@@ -311,10 +316,35 @@ export function worker<const Id extends string, B extends Bindings = {}>(
   const label = `worker({ id: "${config.id}" })`;
   assertCompatibilityDate(label, config);
   const { code } = config;
+  const declaration = { id: config.id } as unknown as Worker<B>;
   if (!isBundle(code)) {
-    throw new Error(
-      `${label} expects code to be a bundle from bundle() in @notation/build/resources.`,
-    );
+    if (code?.type !== "file" || typeof code.path !== "string" || !code.path) {
+      throw new Error(
+        `${label} expects code to be { type: "file", path: "path/to/worker.mjs" } or a bundle from bundle() in @notation/build/resources.`,
+      );
+    }
+    const file = fromProjectRoot(code.path);
+    let source: string;
+    try {
+      source = fs.readFileSync(file, "utf8");
+    } catch (error) {
+      throw new Error(
+        `${label} can't read its code file ${code.path} at ${file}. Pass an absolute path or a path relative to the project root.`,
+        { cause: error },
+      );
+    }
+    const exports = readEntryExports(file, source, "workerd");
+    registerWorker(config, {
+      declaration,
+      describe: () => `${label} with the file ${code.path}`,
+      exports: () => ({
+        ...exports,
+        source: `The code file of ${label}, ${code.path},`,
+        module: "the code file",
+      }),
+      code: () => ({ codePath: toProjectRoot(file) }),
+    });
+    return declaration;
   }
   const { Entry, Platform } = code.config;
   if (Platform !== "workerd") {
@@ -322,7 +352,6 @@ export function worker<const Id extends string, B extends Bindings = {}>(
       `${label} takes ${code.id} as its code, which is built for ${Platform}. Build the bundle with platform: "workerd".`,
     );
   }
-  const declaration = { id: config.id } as unknown as Worker<B>;
   registerWorker(config, {
     declaration,
     describe: () => `${label} with the entry ${Entry}`,
