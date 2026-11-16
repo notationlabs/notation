@@ -12,7 +12,8 @@
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "vitest run --root ../.. --config vitest.e2e.config.ts --project e2e packages/cli/"
   },
   "dependencies": {
     "@notation/build": "workspace:*",

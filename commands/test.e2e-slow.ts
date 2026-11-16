@@ -1,12 +1,7 @@
 import { defineCommand } from "@pokit/core";
+import { runE2e } from "./_lib/e2e";
 
 export const command = defineCommand({
   label: "Run the slow end-to-end tests",
-  run: async (r) => {
-    // The tests run the built CLI, and their projects import the built packages.
-    await r.exec("pnpm exec turbo run build");
-    await r.exec(
-      "pnpm exec vitest run --config vitest.e2e.config.ts --project slow",
-    );
-  },
+  run: (r) => runE2e(r, "test:e2e-slow"),
 });

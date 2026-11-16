@@ -8,7 +8,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "vitest run --root ../.. --config vitest.e2e.config.ts --project e2e packages/test-utils/"
   },
   "peerDependencies": {
     "vitest": "^4.1.12"

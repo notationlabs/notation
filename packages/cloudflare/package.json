@@ -24,7 +24,9 @@
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "vitest run --root ../.. --config vitest.e2e.config.ts --project e2e packages/cloudflare/",
+    "test:e2e-slow": "vitest run --root ../.. --config vitest.e2e.config.ts --project slow packages/cloudflare/"
   },
   "dependencies": {
     "@cloudflare/workers-types": "5.20261012.1",
