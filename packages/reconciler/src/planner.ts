@@ -57,13 +57,13 @@ import {
 import { readRecordedOutputs } from "./recorded-outputs";
 import {
   assertNoPassedCredential,
-  assertDeployRequest,
+  assertOverrides,
   instanceHash,
-  requestedReplace,
+  findReplaceOverride,
   shortVersion,
   withStateIdentifiers,
-  type DeployRequest,
-} from "./deploy-request";
+  type Overrides,
+} from "./overrides";
 import { readAndDecideSource } from "./sources";
 import { mintedCredentials, rotatesForCreate } from "./unobtainable-credential";
 import { assertSameType } from "./resource-type";
@@ -95,11 +95,11 @@ export type CreatePlanOptions = {
   /** As for deploy: the classes of the types that only orphans have. */
   registry?: ResourceRegistry;
   /** The replaces and the credentials that the user asked for. */
-  requested?: DeployRequest;
+  overrides?: Overrides;
   /**
    * The key of the deployment's state. With it, each node of a resource in
    * code that has a record gets its instance hash. Required with
-   * `requested`.
+   * `overrides`.
    */
   deploymentId?: string;
   /** The app, for the `read` of each source. */
@@ -117,7 +117,7 @@ export async function createPlan({
   emit,
   maxOperationAttempts,
   registry,
-  requested,
+  overrides,
   deploymentId,
   app,
   stage,
@@ -131,27 +131,27 @@ export async function createPlan({
   assertDependenciesPresent(resources);
 
   const stateNodes = await state.values();
-  if (requested) {
+  if (overrides) {
     if (deploymentId === undefined) {
       throw new Error("createPlan needs deploymentId to plan --replace.");
     }
-    assertDeployRequest(requested, {
+    assertOverrides(overrides, {
       resources,
       records: stateNodes,
       deploymentId,
       point: "plan",
     });
   }
-  // The request that each UnobtainableCredentialError gives, whose deploy
+  // The overrides that each UnobtainableCredentialError gives, whose deploy
   // commands need the hashes and versions.
   const identified =
-    requested && deploymentId !== undefined
-      ? withStateIdentifiers(requested, {
+    overrides && deploymentId !== undefined
+      ? withStateIdentifiers(overrides, {
           resources,
           records: stateNodes,
           deploymentId,
         })
-      : requested;
+      : overrides;
   const recordedOutputs = await readRecordedOutputs(resources, state);
   // The edges in state as deploy finds them when it replaces a resource.
   // Deploy writes the edges in code for each resource it reaches, so a
@@ -228,18 +228,18 @@ export async function createPlan({
     );
     const { stateNode } = known;
     let { params } = known;
-    const requestedFor = requestedReplace(requested, resource.id);
+    const replaceOverride = findReplaceOverride(overrides, resource.id);
     const action: ResourceAction = await runOperation(
       applyDriftDetection(createStepRunner(), {
         action: decideAction({
           resource,
           stateNode,
           params,
-          requested: requestedFor,
+          replaceOverride,
         }),
         // A requested replace creates the resource again, so a read of it
         // would change nothing.
-        driftDetection: requestedFor ? false : detectDrift,
+        driftDetection: replaceOverride ? false : detectDrift,
         resource,
         resourceParams: params,
         persistedOutput: stateNode?.output,
@@ -264,7 +264,7 @@ export async function createPlan({
               }),
             ),
             recordedOutputs,
-            requested: identified,
+            overrides: identified,
             deploymentId,
           })
         : [];
@@ -275,7 +275,7 @@ export async function createPlan({
     const replacedDependency = cascaded.get(resource.id);
     const replaced = Boolean(replaceFields || replacedDependency);
     if (replaced || !keepsResource(action.decision)) {
-      assertNoPassedCredential(requested, resource);
+      assertNoPassedCredential(overrides, resource);
     }
     // A resource deleted in a cascade is deleted before it is created again,
     // whatever its class.
@@ -439,7 +439,7 @@ export async function createPlan({
         producer,
         name,
         record: stateById.get(id),
-        requested: identified,
+        overrides: identified,
         deploymentId,
       });
       if (!rotates) continue;

@@ -4,7 +4,7 @@ import type {
   RecordedOutputs,
 } from "@notation/resource";
 import type { ReconcilerEventEmitter } from "../events";
-import type { DeployRequest } from "../deploy-request";
+import type { Overrides } from "../overrides";
 import type { ResourceRegistry } from "../resource-registry";
 import type { DurableStateBackend } from "./state-backend";
 
@@ -24,10 +24,10 @@ export type DurableDeployOptions = DurableWorkflowOptions & {
   nameScope: NameScope;
   /**
    * The replaces and credentials that the user asked for. A resume must
-   * pass the request that the execution started with, or the replay decides
+   * pass the overrides that the execution started with, or the replay decides
    * differently.
    */
-  requested?: DeployRequest;
+  overrides?: Overrides;
 };
 
 /** The options of deploy, with what deploy reads at its start. */

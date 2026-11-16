@@ -9,5 +9,5 @@ export * from "./logger-subscriber";
 export * from "./protocol";
 export * from "./resource-type";
 export { ResourceCycleError } from "./cycles";
-export * from "./deploy-request";
+export * from "./overrides";
 export * from "./unobtainable-credential";

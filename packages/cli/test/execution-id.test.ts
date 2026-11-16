@@ -22,7 +22,7 @@ vi.mock("@notation/core", async (importOriginal) => {
     createNdjsonEventEmitter: () => () => undefined,
     deployApp,
     destroyApp,
-    formatRequest: core.formatRequest,
+    formatOverrides: core.formatOverrides,
     parseCredentialTarget: core.parseCredentialTarget,
     parseReplaceTarget: core.parseReplaceTarget,
     shellQuote: core.shellQuote,
@@ -32,7 +32,7 @@ vi.mock("@notation/core", async (importOriginal) => {
 });
 vi.mock("../src/compile", () => ({ compile: vi.fn(async () => undefined) }));
 
-const { deploy, deployRequest } = await import("../src/deploy");
+const { deploy, parseOverrides } = await import("../src/deploy");
 const { destroy } = await import("../src/destroy");
 
 describe.each([
@@ -130,19 +130,19 @@ describe("replace flags", () => {
   it("reads --replace and --override-loss-protection, and passes them to deploy", async () => {
     deployApp.mockClear();
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    const requested = deployRequest({
+    const overrides = parseOverrides({
       replace: ["bucket:uploads@3c1f9a02"],
       overrideLossProtection: ["bucket:uploads"],
     });
 
-    await deploy(deployment, { compile: false, logger, requested });
+    await deploy(deployment, { compile: false, logger, overrides });
 
-    expect(requested).toEqual({
+    expect(overrides).toEqual({
       replace: [{ id: "bucket:uploads", instanceHash: "3c1f9a02" }],
       overrideLossProtection: ["bucket:uploads"],
     });
     expect(deployApp).toHaveBeenCalledWith(
-      expect.objectContaining({ requested }),
+      expect.objectContaining({ overrides }),
     );
   });
 
@@ -155,7 +155,7 @@ describe("replace flags", () => {
         compile: false,
         logger,
         config: "infra/notation config.ts",
-        requested: deployRequest({ replace: ["bucket:uploads"] }),
+        overrides: parseOverrides({ replace: ["bucket:uploads"] }),
       }),
     ).rejects.toThrow(
       "--replace bucket:uploads needs the instance hash, as --replace bucket:uploads@<instance hash>. Run notation plan --config 'infra/notation config.ts' --stage prod --replace bucket:uploads to print the deploy command with the hash.",
@@ -171,7 +171,7 @@ describe("replace flags", () => {
       compile: false,
       logger,
       executionId: "crashed-execution",
-      requested: deployRequest({ replace: ["bucket:uploads"] }),
+      overrides: parseOverrides({ replace: ["bucket:uploads"] }),
     });
 
     expect(deployApp).toHaveBeenCalledOnce();
@@ -185,7 +185,7 @@ describe("replace flags", () => {
       deploy(deployment, {
         compile: false,
         logger,
-        requested: deployRequest({ credential: ["app.privateKey=APP_KEY"] }),
+        overrides: parseOverrides({ credential: ["app.privateKey=APP_KEY"] }),
       }),
     ).rejects.toThrow(
       "--credential app.privateKey needs the version, as --credential app.privateKey@<version>=APP_KEY. Run notation plan --stage prod --credential app.privateKey=APP_KEY to print the deploy command with the version.",
@@ -195,7 +195,7 @@ describe("replace flags", () => {
 
   it("passes --credential to deploy as a target with a version and a variable", () => {
     expect(
-      deployRequest({ credential: ["app.privateKey@7b1e52c0=APP_KEY"] }),
+      parseOverrides({ credential: ["app.privateKey@7b1e52c0=APP_KEY"] }),
     ).toEqual({
       replace: [],
       credential: [
@@ -230,7 +230,7 @@ describe("replace flags", () => {
       compile: false,
       logger,
       config: "jobs.config.ts",
-      requested: deployRequest({ replace: ["queue@0c4d9e21"] }),
+      overrides: parseOverrides({ replace: ["queue@0c4d9e21"] }),
     }).catch((e: Error) => e);
 
     expect((error as Error).message).toBe(
@@ -245,6 +245,6 @@ describe("replace flags", () => {
   });
 
   it("gives no request without any flag", () => {
-    expect(deployRequest({})).toBeUndefined();
+    expect(parseOverrides({})).toBeUndefined();
   });
 });

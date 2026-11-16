@@ -16,7 +16,7 @@ import {
 } from "../plan";
 import { loadUnit, planKnownParams } from "../planner";
 import { readRecordedOutputs } from "../recorded-outputs";
-import { assertDeployRequest, requestedReplace } from "../deploy-request";
+import { assertOverrides, findReplaceOverride } from "../overrides";
 import { workflowRegistry, type ResourceRegistry } from "../resource-registry";
 import {
   mintedCredentials,
@@ -41,16 +41,16 @@ export async function* deploy(
     // message, not a class's refusal of the replace. Outside the hold, this
     // can fail with "not in state" while another deploy is in a delete-first
     // replace of the target. That is accepted.
-    await checkDeployRequest(opts);
+    await checkOverrides(opts);
     await validateKnownParams(opts);
     return null;
   });
   yield* withDeploymentHold(step, opts, async function* () {
     // Again inside the hold, so that a deploy that waited for another one
     // checks the hashes against the records that the other one left.
-    if (opts.requested) {
-      yield* step.run("notation:replace-request", async () => {
-        await checkDeployRequest(opts);
+    if (opts.overrides) {
+      yield* step.run("notation:overrides", async () => {
+        await checkOverrides(opts);
         return null;
       });
     }
@@ -83,9 +83,9 @@ export async function* deploy(
   });
 }
 
-async function checkDeployRequest(opts: DurableDeployOptions): Promise<void> {
-  if (!opts.requested) return;
-  assertDeployRequest(opts.requested, {
+async function checkOverrides(opts: DurableDeployOptions): Promise<void> {
+  if (!opts.overrides) return;
+  assertOverrides(opts.overrides, {
     resources: opts.resources,
     records: await opts.state.values(),
     deploymentId: opts.state.deploymentId,
@@ -133,7 +133,7 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
             resource,
             stateNode,
             params,
-            requested: requestedReplace(opts.requested, resource.id),
+            replaceOverride: findReplaceOverride(opts.overrides, resource.id),
           }).decision
         : "create";
       renewed.set(
@@ -149,7 +149,7 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
                 }),
               ),
               recordedOutputs,
-              requested: opts.requested,
+              overrides: opts.overrides,
               deploymentId: opts.state.deploymentId,
             })
           : credentialNames(resource.schema),
@@ -191,7 +191,7 @@ function assertCredentialsForCreate(
       producer,
       name,
       record: records.get(id),
-      requested: opts.requested,
+      overrides: opts.overrides,
       deploymentId: opts.state.deploymentId,
     });
     if (rotates) renewed.set(id, [...(renewed.get(id) ?? []), name]);

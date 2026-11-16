@@ -1,11 +1,11 @@
 import {
   deployApp,
-  formatRequest,
+  formatOverrides,
   parseCredentialTarget,
   parseReplaceTarget,
   resolveDeploymentId,
   type Deployment,
-  type DeployRequest,
+  type Overrides,
 } from "@notation/core";
 import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
@@ -23,10 +23,10 @@ export type DeployCommandOptions = {
   driftDetection?: boolean;
   logger?: Logger;
   /**
-   * The request from `--replace`, `--override-loss-protection` and
+   * The overrides from `--replace`, `--override-loss-protection` and
    * `--credential`.
    */
-  requested?: DeployRequest;
+  overrides?: Overrides;
   /** The `--config` path, for the commands that the errors of deploy print. */
   config?: string;
 };
@@ -58,7 +58,7 @@ export async function deploy(
       emit,
       executionId,
       driftDetection: opts.driftDetection,
-      requested: opts.requested,
+      overrides: opts.overrides,
     }),
   );
 }
@@ -66,16 +66,16 @@ export async function deploy(
 /**
  * Throws if a `--replace` has no instance hash, or a `--credential` has no
  * version, with the plan command that prints the deploy command with them.
- * Skipped on a resume, so that `assertSameRequest` reports a request that
- * differs from the saved one.
+ * Skipped on a resume, so that `assertSameOverrides` reports overrides that
+ * differ from the saved one.
  */
 function assertHashesGiven(
   deployment: Deployment,
   opts: DeployCommandOptions,
 ): void {
   if (opts.executionId !== undefined) return;
-  const plan = `Run notation plan ${targetFlags(deployment, opts.config)} ${formatRequest(opts.requested)}`;
-  const missing = opts.requested?.replace.find(
+  const plan = `Run notation plan ${targetFlags(deployment, opts.config)} ${formatOverrides(opts.overrides)}`;
+  const missing = opts.overrides?.replace.find(
     (target) => target.instanceHash === undefined,
   );
   if (missing) {
@@ -83,7 +83,7 @@ function assertHashesGiven(
       `--replace ${missing.id} needs the instance hash, as --replace ${missing.id}@<instance hash>. ${plan} to print the deploy command with the hash.`,
     );
   }
-  const unversioned = opts.requested?.credential?.find(
+  const unversioned = opts.overrides?.credential?.find(
     (target) => target.version === undefined,
   );
   if (unversioned) {
@@ -96,14 +96,14 @@ function assertHashesGiven(
 
 /**
  * Reads `--replace`, `--override-loss-protection` and `--credential`.
- * Undefined when none is given, so that a resume uses the request that the
+ * Undefined when none is given, so that a resume uses the overrides that the
  * execution saved.
  */
-export function deployRequest(options: {
+export function parseOverrides(options: {
   replace?: string[];
   overrideLossProtection?: string[];
   credential?: string[];
-}): DeployRequest | undefined {
+}): Overrides | undefined {
   if (
     !options.replace &&
     !options.overrideLossProtection &&

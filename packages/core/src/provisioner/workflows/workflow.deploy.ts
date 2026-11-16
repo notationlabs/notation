@@ -1,9 +1,9 @@
 import * as durable from "@notation/reconciler/durable";
 import {
   createLoggerReconcilerSubscriber,
-  formatRequest,
+  formatOverrides,
   type ReconcilerEventEmitter,
-  type DeployRequest,
+  type Overrides,
   type ResourceRegistry,
 } from "@notation/reconciler";
 import type { Deployment } from "src/config/deployment";
@@ -32,9 +32,9 @@ export type DeployAppOptions = {
   /**
    * The replaces and credentials that the user asked for. Saved with a new
    * execution, without the values of the credentials. A resume uses the
-   * saved request, and fails if this one differs from it.
+   * saved overrides, and fails if this one differs from it.
    */
-  requested?: DeployRequest;
+  overrides?: Overrides;
 };
 
 export async function deployApp({
@@ -48,7 +48,7 @@ export async function deployApp({
   executionId,
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
-  requested,
+  overrides,
 }: DeployAppOptions): Promise<void> {
   // Code that runs while infra is evaluated, such as `workerNames` in
   // @notation/cloudflare, reads the collection's scope, which must be the
@@ -62,12 +62,12 @@ export async function deployApp({
       runtime,
       databasePath,
       executionId,
-      params: requested ? { requested } : {},
+      params: overrides ? { overrides } : {},
       assertResumable: (saved) =>
-        assertSameRequest(
+        assertSameOverrides(
           executionId,
-          saved.requested as DeployRequest | undefined,
-          requested,
+          saved.overrides as Overrides | undefined,
+          overrides,
         ),
     },
     async function* (step, executionId, runtime, params) {
@@ -87,24 +87,24 @@ export async function deployApp({
         driftDetection,
         maxOperationAttempts,
         nameScope,
-        requested: params.requested as DeployRequest | undefined,
+        overrides: params.overrides as Overrides | undefined,
       });
     },
   );
 }
 
 /**
- * Throws if a resume passes a request that differs from the one that the
- * execution started with. A resume that passes none uses the saved one.
+ * Throws if a resume passes overrides that differ from the ones that the
+ * execution started with. A resume that passes none uses the saved ones.
  */
-export function assertSameRequest(
+export function assertSameOverrides(
   executionId: string,
-  saved: DeployRequest | undefined,
-  given: DeployRequest | undefined,
+  saved: Overrides | undefined,
+  given: Overrides | undefined,
 ): void {
   if (given === undefined) return;
-  const started = formatRequest(saved);
-  if (formatRequest(given) === started) return;
+  const started = formatOverrides(saved);
+  if (formatOverrides(given) === started) return;
   throw new Error(
     started
       ? `Execution ${executionId} was started with ${started}. Leave out --replace and --credential, or pass the same flags.`

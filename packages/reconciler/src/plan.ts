@@ -10,7 +10,7 @@ import {
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
 import type { ReplaceOrder } from "./events";
-import type { RequestedReplace } from "./deploy-request";
+import type { ReplaceOverride } from "./overrides";
 import {
   resolveResourceClass,
   type ResourceRegistry,
@@ -164,16 +164,16 @@ export type ResourceAction =
     };
 
 /**
- * Decides what deploy does with the resource. With `requested`, a resource
+ * Decides what deploy does with the resource. With `replaceOverride`, a resource
  * that has a record is replaced, with the replace field `{ requested: true }`.
  */
 export function decideAction(opts: {
   resource: BaseResource;
   stateNode?: StateNode;
   params: Record<string, unknown>;
-  requested?: RequestedReplace;
+  replaceOverride?: ReplaceOverride;
 }): ResourceAction {
-  const { resource, stateNode, params, requested } = opts;
+  const { resource, stateNode, params, replaceOverride } = opts;
   // A create that left a "creating" record may or may not have made the
   // resource. Create runs again, and takes the resource over if the provider
   // reports that it already exists.
@@ -192,28 +192,28 @@ export function decideAction(opts: {
   if (replaceFields.length > 0) {
     assertReplaceAllowed(resource, stateNode.params, params, replaceFields);
   }
-  if (!requested?.overrideLossProtection) {
+  if (!replaceOverride?.overrideLossProtection) {
     assertChangeAllowed(
       resource.id,
       resource.rejectChange,
       stateNode.params,
       params,
       {
-        replace: Boolean(requested) || replaceFields.length > 0,
-        ...(requested ? { requested: true as const } : {}),
+        replace: Boolean(replaceOverride) || replaceFields.length > 0,
+        ...(replaceOverride ? { requested: true as const } : {}),
       },
-      requested
+      replaceOverride
         ? `To replace it, pass --override-loss-protection ${resource.id} with --replace.`
         : undefined,
     );
   }
 
-  if (requested || replaceFields.length > 0) {
+  if (replaceOverride || replaceFields.length > 0) {
     return {
       decision: "replace",
       patch,
       diff,
-      replaceFields: requested
+      replaceFields: replaceOverride
         ? [...replaceFields, { requested: true, known: true }]
         : replaceFields,
     };

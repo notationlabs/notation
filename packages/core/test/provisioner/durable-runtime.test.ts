@@ -369,7 +369,7 @@ describe("NodeDurableRuntime", () => {
     await new SqliteRuntime(database).executions.admit({
       executionId: "started",
       workflowId: "deploy",
-      params: { deploymentId: "test:params", requested: { replace: [] } },
+      params: { deploymentId: "test:params", overrides: { replace: [] } },
       context: new Map(),
     });
     database.close();
@@ -381,23 +381,23 @@ describe("NodeDurableRuntime", () => {
       await runtime.run(router, {
         workflowId: "deploy",
         executionId: "new",
-        params: { requested: { replace: [{ id: "a" }] } },
+        params: { overrides: { replace: [{ id: "a" }] } },
       });
       const assertResumable = vi.fn();
       await runtime.run(router, {
         workflowId: "deploy",
         executionId: "started",
-        params: { requested: { replace: [{ id: "b" }] } },
+        params: { overrides: { replace: [{ id: "b" }] } },
         assertResumable,
       });
 
       expect(seen).toEqual([
-        { deploymentId: "test:params", requested: { replace: [{ id: "a" }] } },
-        { deploymentId: "test:params", requested: { replace: [] } },
+        { deploymentId: "test:params", overrides: { replace: [{ id: "a" }] } },
+        { deploymentId: "test:params", overrides: { replace: [] } },
       ]);
       expect(assertResumable).toHaveBeenCalledWith({
         deploymentId: "test:params",
-        requested: { replace: [] },
+        overrides: { replace: [] },
       });
     } finally {
       runtime.close();

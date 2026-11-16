@@ -386,7 +386,7 @@ describe("a source", () => {
         deploymentId: "credentials",
         app: "shop",
         stage: "prod",
-        requested: { replace: [{ id: "stripe-key" }] },
+        overrides: { replace: [{ id: "stripe-key" }] },
       }),
     ).rejects.toThrow("stripe-key is a source, and a source is never replaced");
     runtime.close();

@@ -9,12 +9,12 @@ import { MemoryStateBackend, type StateNode } from "@notation/state";
 import { describe, expect, it } from "vitest";
 import { createPlan } from "../src/planner";
 import {
-  formatRequest,
+  formatOverrides,
   instanceHash,
   parseCredentialTarget,
   parseReplaceTarget,
-  type DeployRequest,
-} from "../src/deploy-request";
+  type Overrides,
+} from "../src/overrides";
 
 const deploymentId = "shop:prod";
 
@@ -218,7 +218,7 @@ describe("parseCredentialTarget", () => {
 
   it("is formatted back as a flag", () => {
     expect(
-      formatRequest({
+      formatOverrides({
         replace: [],
         credential: [parseCredentialTarget("app.privateKey@7b1e52c0=KEY")],
       }),
@@ -237,7 +237,7 @@ describe("createPlan with a requested replace", () => {
       state,
       driftDetection: true,
       deploymentId,
-      requested: { replace: [{ id: "orders" }] },
+      overrides: { replace: [{ id: "orders" }] },
     });
 
     expect(plan.nodes).toEqual([
@@ -267,7 +267,7 @@ describe("createPlan with a requested replace", () => {
       state,
       driftDetection: false,
       deploymentId,
-      requested: { replace: [{ id: "orders" }] },
+      overrides: { replace: [{ id: "orders" }] },
     });
 
     expect(plan.nodes[0]).toMatchObject({
@@ -311,7 +311,7 @@ describe("createPlan with a requested replace", () => {
         state,
         driftDetection: false,
         deploymentId,
-        requested: { replace: [{ id: "orders", instanceHash }] },
+        overrides: { replace: [{ id: "orders", instanceHash }] },
       });
 
     await expect(plan(hash)).resolves.toBeDefined();
@@ -322,7 +322,7 @@ describe("createPlan with a requested replace", () => {
 
   describe("fails before it plans anything", () => {
     const plan = (
-      requested: DeployRequest,
+      overrides: Overrides,
       records: StateNode[] = [
         record("orders", Queue.type, { name: ordersName, path: "/" }),
       ],
@@ -336,7 +336,7 @@ describe("createPlan with a requested replace", () => {
         ),
         driftDetection: false,
         deploymentId,
-        requested,
+        overrides,
       });
 
     it("when the ID is not in state", async () => {
@@ -416,7 +416,7 @@ describe("createPlan with a requested replace", () => {
           }),
           driftDetection: false,
           deploymentId,
-          requested: { replace: [{ id: "env:stripe-key" }] },
+          overrides: { replace: [{ id: "env:stripe-key" }] },
         }),
       ).rejects.toThrow(
         "env:stripe-key is a source, and a source is never replaced. Nothing exists at a provider to replace.",
@@ -449,7 +449,7 @@ describe("createPlan with a requested replace", () => {
           state: bucketState(),
           driftDetection: false,
           deploymentId,
-          requested: { replace: [{ id: "uploads" }] },
+          overrides: { replace: [{ id: "uploads" }] },
         }),
       ).rejects.toThrow(
         "uploads: Replacing this bucket would delete its objects (requested). To replace it, pass --override-loss-protection uploads with --replace.",
@@ -464,7 +464,7 @@ describe("createPlan with a requested replace", () => {
         state: bucketState(),
         driftDetection: false,
         deploymentId,
-        requested: {
+        overrides: {
           replace: [{ id: "uploads" }],
           overrideLossProtection: ["uploads"],
         },
@@ -515,7 +515,7 @@ describe("createPlan with a requested replace", () => {
         }),
         driftDetection: false,
         deploymentId,
-        requested: {
+        overrides: {
           replace: [{ id: "uploads" }],
           overrideLossProtection: ["uploads"],
         },

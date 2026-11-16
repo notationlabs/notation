@@ -13,12 +13,13 @@ const { planApp } = vi.hoisted(() => ({
 }));
 
 vi.mock("@notation/core", async (importOriginal) => ({
-  formatRequest: (await importOriginal<typeof import("@notation/core")>())
-    .formatRequest,
+  formatOverrides: (await importOriginal<typeof import("@notation/core")>())
+    .formatOverrides,
   shellQuote: (await importOriginal<typeof import("@notation/core")>())
     .shellQuote,
-  requestedCredential: (await importOriginal<typeof import("@notation/core")>())
-    .requestedCredential,
+  findCredentialOverride: (
+    await importOriginal<typeof import("@notation/core")>()
+  ).findCredentialOverride,
   UnobtainableCredentialError: (
     await importOriginal<typeof import("@notation/core")>()
   ).UnobtainableCredentialError,
@@ -414,7 +415,7 @@ it("prints a credential that --credential passes apart from one that rotates", a
       },
     ],
   });
-  const requested = {
+  const overrides = {
     replace: [],
     credential: [{ id: "app", name: "privateKey", variable: "APP_KEY" }],
   };
@@ -422,9 +423,9 @@ it("prints a credential that --credential passes apart from one that rotates", a
   const logger = { ...console, info: (line: string) => lines.push(line) };
 
   planApp.mockResolvedValueOnce(nodes(["privateKey"]));
-  await plan(deployment, { logger, requested });
+  await plan(deployment, { logger, overrides });
   planApp.mockResolvedValueOnce(nodes(["privateKey", "secret"]));
-  await plan(deployment, { logger, requested });
+  await plan(deployment, { logger, overrides });
 
   expect(lines).toContain("~ pass test/plan/app app");
   expect(lines).toContain(
@@ -457,7 +458,7 @@ it("fails for a credential that deploy cannot get, with deploy commands for the 
   const error = await plan(deployment, {
     logger,
     config: "jobs.config.ts",
-    requested: { replace: [{ id: "queue" }] },
+    overrides: { replace: [{ id: "queue" }] },
   }).catch((e: Error) => e);
 
   expect((error as Error).message).toBe(
@@ -493,7 +494,7 @@ it("prints the deploy command of a --credential with the version in state", asyn
 
   await plan(deployment, {
     logger,
-    requested: {
+    overrides: {
       replace: [],
       credential: [{ id: "app", name: "privateKey", variable: "APP_KEY" }],
     },
@@ -530,19 +531,19 @@ it("prints a requested replace, and the deploy command with the instance hash", 
   });
   const lines: string[] = [];
   const logger = { ...console, info: (line: string) => lines.push(line) };
-  const requested = {
+  const overrides = {
     replace: [{ id: "lambda:orders:role" }],
     overrideLossProtection: ["lambda:orders:role"],
   };
 
   await plan(deployment, {
     logger,
-    requested,
+    overrides,
     config: "jobs.config.ts",
   });
 
   expect(planApp).toHaveBeenLastCalledWith(
-    expect.objectContaining({ requested }),
+    expect.objectContaining({ overrides }),
   );
   expect(lines.slice(1, 3)).toEqual([
     "+/- replace aws/lambda/LambdaIamRole lambda:orders:role (create, then delete)",
@@ -575,7 +576,7 @@ it("quotes a value in the deploy command that the shell would split or expand", 
     { ...deployment, stage: "pr 12" },
     {
       logger,
-      requested: { replace: [{ id: "queue:it's" }] },
+      overrides: { replace: [{ id: "queue:it's" }] },
       config: "my app/notation.config.ts",
     },
   );

@@ -3,7 +3,7 @@ import {
   createPlan,
   type Plan,
   type ReconcilerEventEmitter,
-  type DeployRequest,
+  type Overrides,
   type ResourceRegistry,
 } from "@notation/reconciler";
 import type { Deployment } from "src/config/deployment";
@@ -25,7 +25,7 @@ export type PlanAppOptions = {
   databasePath?: string;
   emit?: ReconcilerEventEmitter;
   /** The replaces and credentials to plan, as deploy would make them. */
-  requested?: DeployRequest;
+  overrides?: Overrides;
 };
 
 export async function planApp({
@@ -37,7 +37,7 @@ export async function planApp({
   runtime: suppliedRuntime,
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
-  requested,
+  overrides,
 }: PlanAppOptions): Promise<Plan> {
   const nameScope = { app: deployment.app, stage: deployment.stage };
   const graph = await getResourceGraph(deployment.entryPoint, nameScope);
@@ -56,7 +56,7 @@ export async function planApp({
         emit,
         maxOperationAttempts,
         registry: mergeResourceRegistries(providerRegistry, registry),
-        requested,
+        overrides,
         deploymentId: runtime.deploymentId,
         app: deployment.app,
         stage: deployment.stage,

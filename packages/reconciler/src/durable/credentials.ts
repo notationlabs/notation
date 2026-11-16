@@ -25,7 +25,7 @@ import {
   toPersistedState,
 } from "../operations";
 import { getDependencyIds } from "../plan";
-import type { CredentialTarget } from "../deploy-request";
+import type { CredentialTarget } from "../overrides";
 import {
   UnobtainableCredentialError,
   unobtainableCredential,
@@ -65,7 +65,7 @@ export async function* mintNeededCredentials(
   dependsOn: string[],
 ): AsyncGenerator<any, RecordedSession, any> {
   let current = session;
-  const passed = (opts.requested?.credential ?? []).filter(
+  const passed = (opts.overrides?.credential ?? []).filter(
     (target) => target.id === resource.id,
   );
   // A cycle reconciles a resource more than once, and each flag sets the
@@ -119,7 +119,7 @@ export async function* mintNeededCredentials(
           version: credentialVersion(resource, name),
           deploymentId: opts.state.deploymentId,
         }),
-        opts.requested,
+        opts.overrides,
       );
     }
     if (opts.dryRun) continue;
@@ -193,7 +193,7 @@ export async function* obtainCredentials(
             version,
             deploymentId: opts.state.deploymentId,
           }),
-          opts.requested,
+          opts.overrides,
         ),
       );
       continue;

@@ -303,7 +303,7 @@ describe("R2Bucket", () => {
           state: stateWith(bucket, params),
           driftDetection: false,
           deploymentId: "app:prod",
-          requested: { replace: [{ id: "bucket:uploads" }] },
+          overrides: { replace: [{ id: "bucket:uploads" }] },
         }),
       ).rejects.toThrow(
         "bucket:uploads: Replacing this R2 bucket deletes it and creates it again. Cloudflare deletes only an empty bucket, so the replace fails while the bucket has objects. Delete its objects first. To replace it, pass --override-loss-protection bucket:uploads with --replace.",
@@ -318,7 +318,7 @@ describe("R2Bucket", () => {
         state: stateWith(bucket, params),
         driftDetection: false,
         deploymentId: "app:prod",
-        requested: {
+        overrides: {
           replace: [{ id: "bucket:uploads" }],
           overrideLossProtection: ["bucket:uploads"],
         },

@@ -11,7 +11,7 @@ import pino from "pino";
 import { clearHeldCredentials } from "../src/credentials";
 import * as durable from "../src/durable";
 import type { ReconcilerEvent } from "../src/events";
-import type { DeployRequest } from "../src/deploy-request";
+import type { Overrides } from "../src/overrides";
 
 class CrashAfterWriteHeap implements HeapClient {
   #crashed = false;
@@ -70,7 +70,7 @@ export function createRuntime(
     "credentials",
   );
   let resources: BaseResource[] = [];
-  let requested: DeployRequest | undefined;
+  let currentOverrides: Overrides | undefined;
   const events: ReconcilerEvent[] = [];
   const router = createWorkflowRouter({
     deploy: workflow(async function* (step, event) {
@@ -80,7 +80,7 @@ export function createRuntime(
         state,
         driftDetection: options.driftDetection ?? false,
         nameScope: { app: "shop", stage: "prod" },
-        requested,
+        overrides: currentOverrides,
         emit: (event) => {
           events.push(event);
         },
@@ -95,10 +95,10 @@ export function createRuntime(
   async function deploy(
     executionId: string,
     declared: BaseResource[],
-    request?: DeployRequest,
+    overrides?: Overrides,
   ) {
     resources = declared;
-    requested = request;
+    currentOverrides = overrides;
     if (!(await runtime.executions.get(executionId))) {
       const admission = await runtime.executions.admit({
         executionId,
@@ -138,10 +138,10 @@ export function createRuntime(
     nextProcess(
       executionId: string,
       declared: BaseResource[],
-      request?: DeployRequest,
+      overrides?: Overrides,
     ) {
       clearHeldCredentials();
-      return deploy(executionId, declared, request);
+      return deploy(executionId, declared, overrides);
     },
     /** Every row of every table, as text. */
     dump(): string {

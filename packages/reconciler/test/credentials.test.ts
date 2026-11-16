@@ -5,7 +5,7 @@ import { clearSecretValues } from "@notation/utils";
 import { beforeEach, describe, expect, it } from "vitest";
 import { clearHeldCredentials } from "../src/credentials";
 import { createPlan } from "../src/planner";
-import { instanceHash } from "../src/deploy-request";
+import { instanceHash } from "../src/overrides";
 import {
   UnobtainableCredentialError,
   credentialVariable,
@@ -352,11 +352,11 @@ describe("a resource that takes a credential in a later deploy", () => {
       resources,
       state: runtime.state,
       deploymentId: "credentials",
-      requested: { replace: [{ id: "secret:a" }] },
+      overrides: { replace: [{ id: "secret:a" }] },
     }).catch((e: Error) => e);
 
     expect(UnobtainableCredentialError.is(error)).toBe(true);
-    expect((error as UnobtainableCredentialError).request).toEqual({
+    expect((error as UnobtainableCredentialError).overrides).toEqual({
       replace: [{ id: "secret:a", instanceHash: hash }],
     });
     expect((error as Error).message).toContain(
@@ -551,7 +551,7 @@ describe("a plan with a resource that is replaced and takes a credential", () =>
       resources: renamed(types),
       state: runtime.state,
       deploymentId: "credentials",
-      requested: {
+      overrides: {
         replace: [],
         credential: [{ id: "token", name: "Value", variable: "VALUE" }],
       },
@@ -575,7 +575,7 @@ describe("a plan with a resource that is replaced and takes a credential", () =>
       resources: renamed(types),
       state: runtime.state,
       deploymentId: "credentials",
-      requested: { replace: [{ id: "token" }] },
+      overrides: { replace: [{ id: "token" }] },
     });
 
     const [token, a, b] = plan.nodes;
@@ -629,7 +629,7 @@ describe("a create that returns a credential its validator rejects", () => {
         resources: [new Token("token", { config: {} })],
         state: runtime.state,
         deploymentId: "credentials",
-        requested: {
+        overrides: {
           replace: [],
           credential: [{ id: "token", name: "Value", variable: "VALUE" }],
         },
@@ -1076,7 +1076,7 @@ describe("--credential", () => {
     await runtime.deploy("first", declare(types, { secrets: ["a"] }));
     const record = await runtime.state.get("token");
     const version = (record!.output.Value as any).$credential.version;
-    const request = {
+    const overrides = {
       replace: [],
       credential: [
         {
@@ -1099,11 +1099,11 @@ describe("--credential", () => {
         resources: replaced(),
         state: runtime.state,
         deploymentId: "credentials",
-        requested: request,
+        overrides,
       }),
     ).rejects.toThrow(message);
     await expect(
-      runtime.nextProcess("second", replaced(), request),
+      runtime.nextProcess("second", replaced(), overrides),
     ).rejects.toThrow(message);
     expect(provider.calls).toEqual([]);
     runtime.close();

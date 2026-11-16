@@ -28,10 +28,10 @@ export type CredentialTarget = {
 };
 
 /**
- * What the user asked deploy to do beyond the code: the replaces of
- * `--replace`, and the values of `--credential`.
+ * The user's flags that override what deploy decides from the code: the
+ * replaces of `--replace`, and the values of `--credential`.
  */
-export type DeployRequest = {
+export type Overrides = {
   replace: ReplaceTarget[];
   /** IDs in `replace` whose class's `rejectChange` deploy skips. */
   overrideLossProtection?: string[];
@@ -39,7 +39,7 @@ export type DeployRequest = {
 };
 
 /** How deploy decides a resource that `--replace` names. */
-export type RequestedReplace = { overrideLossProtection: boolean };
+export type ReplaceOverride = { overrideLossProtection: boolean };
 
 const INSTANCE_HASH = /^[0-9a-f]{8}$/i;
 const HEX = /^[0-9a-f]+$/i;
@@ -106,13 +106,13 @@ export function shortVersion(version: string): string {
   return version.slice(0, 8);
 }
 
-/** The request's `--credential` for the credential, if it has one. */
-export function requestedCredential(
-  request: DeployRequest | undefined,
+/** The `--credential` in the overrides for the credential, if there is one. */
+export function findCredentialOverride(
+  overrides: Overrides | undefined,
   id: string,
   name: string,
 ): CredentialTarget | undefined {
-  return request?.credential?.find(
+  return overrides?.credential?.find(
     (target) => target.id === id && target.name === name,
   );
 }
@@ -124,21 +124,21 @@ function primaryKeyNames(schema: Schema): string[] {
 }
 
 /**
- * The request as flags, in a fixed order, with each repeated flag once.
- * Empty for no request.
+ * The overrides as flags, in a fixed order, with each repeated flag once.
+ * Empty for no overrides.
  */
-export function formatRequest(request: DeployRequest | undefined): string {
+export function formatOverrides(overrides: Overrides | undefined): string {
   const flags = [
-    ...(request?.replace ?? [])
+    ...(overrides?.replace ?? [])
       .map(({ id, instanceHash }) =>
         shellQuote(instanceHash ? `${id}@${instanceHash}` : id),
       )
       .map((value) => `--replace ${value}`)
       .sort(),
-    ...(request?.overrideLossProtection ?? [])
+    ...(overrides?.overrideLossProtection ?? [])
       .map((id) => `--override-loss-protection ${shellQuote(id)}`)
       .sort(),
-    ...(request?.credential ?? [])
+    ...(overrides?.credential ?? [])
       .map((target) => `--credential ${shellQuote(formatCredential(target))}`)
       .sort(),
   ];
@@ -185,25 +185,25 @@ export function instanceHash(
 }
 
 /**
- * The request with the instance hash of each `--replace` and the version of
+ * The overrides with the instance hash of each `--replace` and the version of
  * each `--credential` that it leaves out, from the records in state. Plan
  * prints it in a deploy command, as deploy requires them.
  */
 export function withStateIdentifiers(
-  request: DeployRequest,
+  overrides: Overrides,
   opts: {
     resources: readonly BaseResource[];
     records: readonly StateNode[];
     deploymentId: string;
   },
-): DeployRequest {
+): Overrides {
   const record = (id: string) => {
     const found = opts.records.find((node) => node.id === id);
     return found && !isCreatingRecord(found) ? found : undefined;
   };
   return {
-    ...request,
-    replace: request.replace.map((target) => {
+    ...overrides,
+    replace: overrides.replace.map((target) => {
       const resource = opts.resources.find(({ id }) => id === target.id);
       const recorded = record(target.id);
       if (target.instanceHash || !resource || !recorded) return target;
@@ -212,9 +212,9 @@ export function withStateIdentifiers(
         instanceHash: instanceHash(opts.deploymentId, resource, recorded),
       };
     }),
-    ...(request.credential
+    ...(overrides.credential
       ? {
-          credential: request.credential.map((target) => {
+          credential: overrides.credential.map((target) => {
             const marker = record(target.id)?.output[target.name];
             if (target.version || !isCredentialMarker(marker)) return target;
             const { version } = marker.$credential;
@@ -227,26 +227,26 @@ export function withStateIdentifiers(
   };
 }
 
-/** The options for `decideAction` when the request names the resource. */
-export function requestedReplace(
-  request: DeployRequest | undefined,
+/** The options for `decideAction` when the overrides name the resource. */
+export function findReplaceOverride(
+  overrides: Overrides | undefined,
   id: string,
-): RequestedReplace | undefined {
-  if (!request?.replace.some((target) => target.id === id)) return undefined;
+): ReplaceOverride | undefined {
+  if (!overrides?.replace.some((target) => target.id === id)) return undefined;
   return {
     overrideLossProtection: Boolean(
-      request.overrideLossProtection?.includes(id),
+      overrides.overrideLossProtection?.includes(id),
     ),
   };
 }
 
 /**
- * Throws if the request names a resource that it cannot replace, or gives
+ * Throws if the overrides name a resource that it cannot replace, or gives
  * an instance hash that does not match. Deploy requires each hash, and plan
  * checks a hash when it is given.
  */
-export function assertDeployRequest(
-  request: DeployRequest | undefined,
+export function assertOverrides(
+  overrides: Overrides | undefined,
   opts: {
     resources: BaseResource[];
     records: StateNode[];
@@ -254,9 +254,9 @@ export function assertDeployRequest(
     point: "plan" | "deploy";
   },
 ): void {
-  if (!request) return;
-  const ids = new Set(request.replace.map((target) => target.id));
-  for (const id of request.overrideLossProtection ?? []) {
+  if (!overrides) return;
+  const ids = new Set(overrides.replace.map((target) => target.id));
+  for (const id of overrides.overrideLossProtection ?? []) {
     if (!ids.has(id)) {
       throw new Error(
         `--override-loss-protection ${id} needs --replace ${id}.`,
@@ -265,7 +265,7 @@ export function assertDeployRequest(
   }
   const resourceById = new Map(opts.resources.map((r) => [r.id, r]));
   const recordById = new Map(opts.records.map((node) => [node.id, node]));
-  for (const { id, instanceHash: given } of request.replace) {
+  for (const { id, instanceHash: given } of overrides.replace) {
     const resource = resourceById.get(id);
     const record = recordById.get(id);
     if (!record) {
@@ -306,7 +306,7 @@ export function assertDeployRequest(
       );
     }
   }
-  assertCredentialRequest(request, resourceById, recordById, opts.point);
+  assertCredentialOverrides(overrides, resourceById, recordById, opts.point);
 }
 
 /**
@@ -315,10 +315,10 @@ export function assertDeployRequest(
  * with a new value, and deploy would ignore the one that the flag passes.
  */
 export function assertNoPassedCredential(
-  request: DeployRequest | undefined,
+  overrides: Overrides | undefined,
   resource: BaseResource,
 ): void {
-  const target = request?.credential?.find(({ id }) => id === resource.id);
+  const target = overrides?.credential?.find(({ id }) => id === resource.id);
   if (!target) return;
   throw new Error(
     `--credential ${target.id}.${target.name} cannot be given when deploy replaces ${target.id}: the replacement is created with a new value.`,
@@ -330,14 +330,14 @@ export function assertNoPassedCredential(
  * version that is not the one in state, or names a variable that is not set
  * at deploy.
  */
-function assertCredentialRequest(
-  request: DeployRequest,
+function assertCredentialOverrides(
+  overrides: Overrides,
   resourceById: Map<string, BaseResource>,
   recordById: Map<string, StateNode>,
   point: "plan" | "deploy",
 ): void {
   const seen = new Set<string>();
-  for (const target of request.credential ?? []) {
+  for (const target of overrides.credential ?? []) {
     const { id, name, version: given, variable } = target;
     const flag = `--credential ${id}.${name}`;
     if (seen.has(`${id}.${name}`)) {
@@ -362,7 +362,7 @@ function assertCredentialRequest(
         `${flag}: ${resource.type} can rotate ${name}, so deploy gets a new value itself. --credential is accepted only for a credential without rotate.`,
       );
     }
-    if (request.replace.some((replaced) => replaced.id === id)) {
+    if (overrides.replace.some((replaced) => replaced.id === id)) {
       throw new Error(
         `${flag} cannot be given with --replace ${id}: the replacement is created with a new value.`,
       );

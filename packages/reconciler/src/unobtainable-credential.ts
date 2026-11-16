@@ -3,13 +3,13 @@ import type { StateNode } from "@notation/state";
 import { credentialsToMint, credentialVersion } from "./credentials";
 import {
   formatCredential,
-  formatRequest,
+  formatOverrides,
   instanceHash,
-  requestedCredential,
+  findCredentialOverride,
   shellQuote,
   shortVersion,
-  type DeployRequest,
-} from "./deploy-request";
+  type Overrides,
+} from "./overrides";
 
 export type UnobtainableCredential = {
   /** The resource that needs the value. */
@@ -31,34 +31,34 @@ export type UnobtainableCredential = {
  * Plan and deploy throw this when a resource needs the value of a credential
  * without `rotate`, deploy holds none, and neither `--replace` nor
  * `--credential` names the credential. The message gives deploy commands
- * with the flags of `request`. The CLI throws a new error with the
+ * with the flags of `overrides`. The CLI throws a new error with the
  * `--config` and `--stage` of the command that it ran.
  */
 export class UnobtainableCredentialError extends Error {
   readonly _tag = "UnobtainableCredentialError" as const;
   readonly credential: UnobtainableCredential;
   /**
-   * The request of the plan or deploy, with an instance hash for each
+   * The overrides of the plan or deploy, with an instance hash for each
    * `--replace` and a version for each `--credential` that state has.
    */
-  readonly request?: DeployRequest;
+  readonly overrides?: Overrides;
 
   constructor(
     credential: UnobtainableCredential,
-    request?: DeployRequest,
+    overrides?: Overrides,
     deployCommand = "notation deploy",
     options?: ErrorOptions,
   ) {
     super(
       unobtainableCredentialMessage(
         credential,
-        [deployCommand, formatRequest(request)].filter(Boolean).join(" "),
+        [deployCommand, formatOverrides(overrides)].filter(Boolean).join(" "),
       ),
       options,
     );
     this.name = "UnobtainableCredentialError";
     this.credential = credential;
-    if (request) this.request = request;
+    if (overrides) this.overrides = overrides;
   }
 
   static is(error: unknown): error is UnobtainableCredentialError {
@@ -133,11 +133,11 @@ export async function mintedCredentials(opts: {
   record: StateNode;
   consumers: readonly { resource: BaseResource; record?: StateNode }[];
   recordedOutputs: RecordedOutputs;
-  requested: DeployRequest | undefined;
+  overrides: Overrides | undefined;
   deploymentId: string | undefined;
 }): Promise<string[]> {
-  const { producer, record, requested, deploymentId } = opts;
-  const minted = (requested?.credential ?? [])
+  const { producer, record, overrides, deploymentId } = opts;
+  const minted = (overrides?.credential ?? [])
     .filter((target) => target.id === producer.id)
     .map((target) => target.name);
   const needed = await credentialsToMint(
@@ -158,7 +158,7 @@ export async function mintedCredentials(opts: {
           version: credentialVersion(producer, name),
           deploymentId,
         }),
-        requested,
+        overrides,
       );
     }
     minted.push(name);
@@ -177,18 +177,18 @@ export function rotatesForCreate(opts: {
   producer: BaseResource;
   name: string;
   record: StateNode | undefined;
-  requested: DeployRequest | undefined;
+  overrides: Overrides | undefined;
   deploymentId: string | undefined;
 }): boolean {
   const { producer, name } = opts;
   if (producer.rotate?.[name]) return true;
-  if (requestedCredential(opts.requested, producer.id, name)) return false;
+  if (findCredentialOverride(opts.overrides, producer.id, name)) return false;
   throw new UnobtainableCredentialError(
     unobtainableCredential({
       ...opts,
       version: credentialVersion(producer, name),
     }),
-    opts.requested,
+    opts.overrides,
   );
 }
 

@@ -255,7 +255,7 @@ describe("KVNamespace", () => {
           state: stateWith(namespace, { ...params, ...key }),
           driftDetection: false,
           deploymentId: "app:prod",
-          requested: { replace: [{ id: "kv:cache" }] },
+          overrides: { replace: [{ id: "kv:cache" }] },
         }),
       ).rejects.toThrow(
         "kv:cache: Replacing this KV namespace would delete it and its keys. To replace it, pass --override-loss-protection kv:cache with --replace.",
@@ -270,7 +270,7 @@ describe("KVNamespace", () => {
         state: stateWith(namespace, { ...params, ...key }),
         driftDetection: false,
         deploymentId: "app:prod",
-        requested: {
+        overrides: {
           replace: [{ id: "kv:cache" }],
           overrideLossProtection: ["kv:cache"],
         },

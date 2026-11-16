@@ -75,7 +75,7 @@ import {
   staleCredentialMarkers,
   ungivenCredentials,
 } from "../credentials";
-import { assertNoPassedCredential, requestedReplace } from "../deploy-request";
+import { assertNoPassedCredential, findReplaceOverride } from "../overrides";
 import { mintNeededCredentials, obtainCredentials } from "./credentials";
 import { reconcileSource } from "./source";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
@@ -205,11 +205,11 @@ export async function* reconcileResource(
       : undefined,
   );
 
-  // A cycle reconciles a resource more than once, and each request replaces
+  // A cycle reconciles a resource more than once, and each `--replace` replaces
   // it once.
-  const requested = opts.reconciled.has(resource)
+  const replaceOverride = opts.reconciled.has(resource)
     ? undefined
-    : requestedReplace(opts.requested, resource.id);
+    : findReplaceOverride(opts.overrides, resource.id);
   // The params that an update compares credentials with: it receives the
   // value of each credential whose version they do not hold.
   const recordedParams =
@@ -223,7 +223,7 @@ export async function* reconcileResource(
         ? { ...session.node, params: recordedParams }
         : session.node,
     params,
-    requested,
+    replaceOverride,
   });
 
   // Its own scope: when the gate fires, the operation that follows the drift
@@ -236,7 +236,7 @@ export async function* reconcileResource(
     if (action.decision === "noop") {
       action = decideDriftAction({ resource, params, driftRead });
     }
-  } else if (!requested) {
+  } else if (!replaceOverride) {
     action = yield* applyDriftDetection(driftStep, {
       action,
       driftDetection: opts.driftDetection,
@@ -264,7 +264,7 @@ export async function* reconcileResource(
   }
 
   if (!opts.reconciled.has(resource) && !keepsResource(action.decision)) {
-    assertNoPassedCredential(opts.requested, resource);
+    assertNoPassedCredential(opts.overrides, resource);
   }
   if (session.node && !creating && keepsResource(action.decision)) {
     session = yield* mintNeededCredentials(
@@ -852,7 +852,7 @@ async function* deleteBlockingDependents(
     // As in the planner. `validateKnownParams` already ran a requested
     // dependent's `rejectChange` through `decideAction`, which skips it with
     // --override-loss-protection.
-    if (requestedReplace(opts.requested, id)) continue;
+    if (findReplaceOverride(opts.overrides, id)) continue;
     // A step, as deriveParams is user code and need not be deterministic.
     const params = yield* step.run(
       `params:${encodeURIComponent(id)}`,

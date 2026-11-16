@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  assertSameRequest,
+  assertSameOverrides,
   deployApp,
   destroyApp,
-  formatRequest,
+  formatOverrides,
   planApp,
 } from "src/provisioner";
 
@@ -47,7 +47,7 @@ it("destroyApp evaluates infra without declaration checks", async () => {
   });
 });
 
-describe("assertSameRequest", () => {
+describe("assertSameOverrides", () => {
   const saved = {
     replace: [
       { id: "role", instanceHash: "3c1f9a02" },
@@ -57,9 +57,9 @@ describe("assertSameRequest", () => {
   };
 
   it("allows a resume that leaves out the flags, or passes the same ones in any order", () => {
-    expect(() => assertSameRequest("e", saved, undefined)).not.toThrow();
+    expect(() => assertSameOverrides("e", saved, undefined)).not.toThrow();
     expect(() =>
-      assertSameRequest("e", saved, {
+      assertSameOverrides("e", saved, {
         replace: [...saved.replace].reverse(),
         overrideLossProtection: ["bucket"],
       }),
@@ -68,7 +68,7 @@ describe("assertSameRequest", () => {
 
   it("accepts a resume that repeats a flag", () => {
     expect(() =>
-      assertSameRequest("e", saved, {
+      assertSameOverrides("e", saved, {
         replace: [...saved.replace, saved.replace[0]!],
         overrideLossProtection: ["bucket", "bucket"],
       }),
@@ -77,12 +77,12 @@ describe("assertSameRequest", () => {
 
   it("refuses a resume with other flags", () => {
     expect(() =>
-      assertSameRequest("e", saved, { replace: [saved.replace[0]!] }),
+      assertSameOverrides("e", saved, { replace: [saved.replace[0]!] }),
     ).toThrow(
       "Execution e was started with --replace bucket@9e04b7d1 --replace role@3c1f9a02 --override-loss-protection bucket. Leave out --replace and --credential, or pass the same flags.",
     );
     expect(() =>
-      assertSameRequest("e", undefined, { replace: [saved.replace[0]!] }),
+      assertSameOverrides("e", undefined, { replace: [saved.replace[0]!] }),
     ).toThrow(
       "Execution e was started without --replace or --credential. Leave out --replace, --override-loss-protection and --credential.",
     );
@@ -91,7 +91,7 @@ describe("assertSameRequest", () => {
   it("refuses a resume with another --credential", () => {
     const credential = { id: "app", name: "privateKey", variable: "KEY" };
     expect(() =>
-      assertSameRequest(
+      assertSameOverrides(
         "e",
         { replace: [], credential: [{ ...credential, version: "7b1e52c0" }] },
         { replace: [], credential: [{ ...credential, version: "3c90a1f4" }] },
@@ -102,6 +102,6 @@ describe("assertSameRequest", () => {
   });
 
   it("formats no request as no flags", () => {
-    expect(formatRequest(undefined)).toBe("");
+    expect(formatOverrides(undefined)).toBe("");
   });
 });

@@ -1,14 +1,14 @@
 import {
-  formatRequest,
+  formatOverrides,
   planApp,
-  requestedCredential,
+  findCredentialOverride,
   resolveDeploymentId,
   shellQuote,
   UnobtainableCredentialError,
   type Deployment,
   type Plan,
   type PlanNode,
-  type DeployRequest,
+  type Overrides,
 } from "@notation/core";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
@@ -19,7 +19,7 @@ export type PlanCommandOptions = {
   output?: OutputMode;
   logger?: Logger;
   /** The replaces and credentials to plan, from `--replace` and `--credential`. */
-  requested?: DeployRequest;
+  overrides?: Overrides;
   /** The `--config` path, for the deploy command that the plan prints. */
   config?: string;
 };
@@ -58,7 +58,7 @@ export async function plan(
     try {
       await compile(deployment, { logger });
       result = await withDeployCommands(deployment, opts.config, () =>
-        planApp({ deployment, emit, requested: opts.requested }),
+        planApp({ deployment, emit, overrides: opts.overrides }),
       );
     } finally {
       restore();
@@ -70,12 +70,12 @@ export async function plan(
   await compile(deployment, { logger });
   logger.info(`Planning ${resolveDeploymentId(deployment)}\n`);
   const result = await withDeployCommands(deployment, opts.config, () =>
-    planApp({ deployment, emit, requested: opts.requested }),
+    planApp({ deployment, emit, overrides: opts.overrides }),
   );
-  printPlanSummary(result, logger, opts.requested);
-  if (opts.requested) {
+  printPlanSummary(result, logger, opts.overrides);
+  if (opts.overrides) {
     logger.info(
-      `\nTo deploy this plan:\n  notation deploy ${targetFlags(deployment, opts.config)} ${requestFlags(result, opts.requested)}`,
+      `\nTo deploy this plan:\n  notation deploy ${targetFlags(deployment, opts.config)} ${overrideFlags(result, opts.overrides)}`,
     );
   }
 }
@@ -95,7 +95,7 @@ export async function withDeployCommands<T>(
     if (!UnobtainableCredentialError.is(error)) throw error;
     throw new UnobtainableCredentialError(
       error.credential,
-      error.request,
+      error.overrides,
       `notation deploy ${targetFlags(deployment, config)}`,
       { cause: error },
     );
@@ -110,16 +110,16 @@ export function targetFlags(deployment: Deployment, config?: string): string {
     : `--config ${shellQuote(config)} ${stage}`;
 }
 
-function requestFlags(result: Plan, requested: DeployRequest): string {
-  return formatRequest({
-    ...requested,
-    replace: requested.replace.map(({ id }) => ({
+function overrideFlags(result: Plan, overrides: Overrides): string {
+  return formatOverrides({
+    ...overrides,
+    replace: overrides.replace.map(({ id }) => ({
       id,
       instanceHash: findRecordNode(result, id)?.instanceHash,
     })),
-    ...(requested.credential
+    ...(overrides.credential
       ? {
-          credential: requested.credential.map((target) => ({
+          credential: overrides.credential.map((target) => ({
             ...target,
             version:
               findRecordNode(result, target.id)?.credentialVersions?.[
@@ -158,7 +158,7 @@ function retiredDeleteTime(result: Plan, id: string): string {
 function printPlanSummary(
   result: Plan,
   logger: Logger,
-  requested: DeployRequest | undefined,
+  overrides: Overrides | undefined,
 ) {
   // A resource that only gets a new value of a credential is planned as a noop.
   const changedNodes = result.nodes.filter(
@@ -169,7 +169,7 @@ function printPlanSummary(
     const order = node.replaceOrder && replaceOrders[node.replaceOrder];
     const credentialOnly = node.decision === "noop";
     const passed = (node.rotates ?? []).filter((name) =>
-      requestedCredential(requested, node.id, name),
+      findCredentialOverride(overrides, node.id, name),
     );
     const rotated = (node.rotates ?? []).filter(
       (name) => !passed.includes(name),
