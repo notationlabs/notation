@@ -537,8 +537,11 @@ function registerWorker(
  * ones that `bindings` accepts, and the Worker resolves them together with
  * its own bindings. `WorkerEnv` doesn't include them in its type.
  *
- * Call it while the infra modules load. It fails from an `onEvaluationEnd`
- * callback, as the Workers read their bindings once the modules have loaded.
+ * Call it while the infra modules load, from an infra module. It fails from
+ * an `onEvaluationEnd` callback, as the Workers read their bindings once the
+ * modules have loaded. A call in the module of a `$worker` fails the build,
+ * as the infra build only keeps the declaration of such a module.
+ * @resource
  */
 export function addBindings(
   worker: Worker<any, unknown>,

@@ -80,6 +80,8 @@ function writeCloudflarePackage() {
       `      return \`\${record.path} doesn't export \${namespace.className}, the class of the Durable Object namespace \${namespace.id}. Cloudflare finds the class by its export name.\${star}\`;`,
       `    });`,
       `}`,
+      `/** @resource */`,
+      `export function addBindings(worker, bindings) {}`,
     ].join("\n"),
   );
   write(
@@ -87,6 +89,8 @@ function writeCloudflarePackage() {
     [
       `export function $durableObject(config) { return { id: config.id }; }`,
       `export function $worker(config) { return { id: config.id, bindingNames: Object.keys(config.bindings()) }; }`,
+      `/** @resource */`,
+      `export function addBindings() { throw new Error("addBindings() declares infrastructure"); }`,
     ].join("\n"),
   );
 }
@@ -341,6 +345,20 @@ export default {
     writeRpcProject("Admin");
     await expect(build()).rejects.toThrow(
       "entrypoint is Admin, but github.ts exports Github as its default. The platform calls that export, so entrypoint must name it. Pass entrypoint: Github.",
+    );
+  });
+
+  it("fails the build for a call to addBindings() in the module of a $worker", async () => {
+    writeRpcProject();
+    write(
+      "runtime/router.ts",
+      routerModule.replace(
+        `import { $worker } from "@notation/cloudflare/workers";`,
+        `import { $worker, addBindings } from "@notation/cloudflare/workers";`,
+      ) + `\naddBindings(github, { ADMIN: github });\n`,
+    );
+    await expect(build()).rejects.toThrow(
+      "runtime/router.ts calls addBindings at its top level, and it holds a declaration, so it can't be an infra module. Move the call to addBindings to an infra module.",
     );
   });
 });

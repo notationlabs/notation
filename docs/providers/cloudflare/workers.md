@@ -385,7 +385,7 @@ const received = await channel.receive(input);
 
 - A Worker hosts a Durable Object namespace only when its own module, the entry of its bundle, or its code file exports the namespace's class. So a namespace from `addBindings()` works only when another Worker hosts it.
 - Two Workers that bind each other through `addBindings()` deploy, in the same way as two Workers that bind each other through `bindings`.
-- Inside a Worker, `addBindings()` throws.
+- Call `addBindings()` from an infra module. The build fails for a Worker whose code calls it, as it only runs at deploy. This includes a call at the top level of a `$worker` module: the infra build keeps only the declaration of that module, so the call would not run at deploy, and its bindings would not be uploaded.
 
 `addBindings()` fails when:
 

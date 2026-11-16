@@ -49,6 +49,10 @@ export function isWorkerGroup(_value: unknown): false {
   return false;
 }
 
+/**
+ * The mark fails the runtime build of a Worker that calls it.
+ * @resource
+ */
 export function addBindings(
   _worker: Worker<any, unknown>,
   _bindings: Bindings,
