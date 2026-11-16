@@ -3,7 +3,7 @@ import {
   createLoggerReconcilerSubscriber,
   formatRequest,
   type ReconcilerEventEmitter,
-  type ReplaceRequest,
+  type DeployRequest,
   type ResourceRegistry,
 } from "@notation/reconciler";
 import type { Deployment } from "src/config/deployment";
@@ -34,7 +34,7 @@ export type DeployAppOptions = {
    * execution, without the values of the credentials. A resume uses the
    * saved request, and fails if this one differs from it.
    */
-  requested?: ReplaceRequest;
+  requested?: DeployRequest;
 };
 
 export async function deployApp({
@@ -66,7 +66,7 @@ export async function deployApp({
       assertResumable: (saved) =>
         assertSameRequest(
           executionId,
-          saved.requested as ReplaceRequest | undefined,
+          saved.requested as DeployRequest | undefined,
           requested,
         ),
     },
@@ -87,7 +87,7 @@ export async function deployApp({
         driftDetection,
         maxOperationAttempts,
         nameScope,
-        requested: params.requested as ReplaceRequest | undefined,
+        requested: params.requested as DeployRequest | undefined,
       });
     },
   );
@@ -99,8 +99,8 @@ export async function deployApp({
  */
 export function assertSameRequest(
   executionId: string,
-  saved: ReplaceRequest | undefined,
-  given: ReplaceRequest | undefined,
+  saved: DeployRequest | undefined,
+  given: DeployRequest | undefined,
 ): void {
   if (given === undefined) return;
   const started = formatRequest(saved);

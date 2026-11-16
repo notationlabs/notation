@@ -10,7 +10,7 @@ import {
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
 import type { ReplaceOrder } from "./events";
-import type { RequestedReplace } from "./replace-request";
+import type { RequestedReplace } from "./deploy-request";
 import {
   resolveResourceClass,
   type ResourceRegistry,
@@ -118,7 +118,8 @@ export type PlanNode = {
   /**
    * The version for `--credential <id>.<credential>@<version>`, by
    * credential, as `shortVersion` gives it. Set for a resource in code that
-   * has a record with credentials and is not a source.
+   * has a record with credentials and is not a source. A credential with no
+   * version in the record is left out.
    */
   credentialVersions?: Record<string, string>;
   params: Record<string, unknown>;

@@ -4,7 +4,7 @@ import type {
   RecordedOutputs,
 } from "@notation/resource";
 import type { ReconcilerEventEmitter } from "../events";
-import type { ReplaceRequest } from "../replace-request";
+import type { DeployRequest } from "../deploy-request";
 import type { ResourceRegistry } from "../resource-registry";
 import type { DurableStateBackend } from "./state-backend";
 
@@ -27,7 +27,7 @@ export type DurableDeployOptions = DurableWorkflowOptions & {
    * pass the request that the execution started with, or the replay decides
    * differently.
    */
-  requested?: ReplaceRequest;
+  requested?: DeployRequest;
 };
 
 /** The options of deploy, with what deploy reads at its start. */

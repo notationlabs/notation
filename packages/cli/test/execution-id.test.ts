@@ -26,12 +26,13 @@ vi.mock("@notation/core", async (importOriginal) => {
     parseCredentialTarget: core.parseCredentialTarget,
     parseReplaceTarget: core.parseReplaceTarget,
     shellQuote: core.shellQuote,
+    UnobtainableCredentialError: core.UnobtainableCredentialError,
     resolveDeploymentId: (d: Deployment) => `${d.app}:${d.stage}`,
   };
 });
 vi.mock("../src/compile", () => ({ compile: vi.fn(async () => undefined) }));
 
-const { deploy, replaceRequest } = await import("../src/deploy");
+const { deploy, deployRequest } = await import("../src/deploy");
 const { destroy } = await import("../src/destroy");
 
 describe.each([
@@ -129,7 +130,7 @@ describe("replace flags", () => {
   it("reads --replace and --override-loss-protection, and passes them to deploy", async () => {
     deployApp.mockClear();
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    const requested = replaceRequest({
+    const requested = deployRequest({
       replace: ["bucket:uploads@3c1f9a02"],
       overrideLossProtection: ["bucket:uploads"],
     });
@@ -154,7 +155,7 @@ describe("replace flags", () => {
         compile: false,
         logger,
         config: "infra/notation config.ts",
-        requested: replaceRequest({ replace: ["bucket:uploads"] }),
+        requested: deployRequest({ replace: ["bucket:uploads"] }),
       }),
     ).rejects.toThrow(
       "--replace bucket:uploads needs the instance hash, as --replace bucket:uploads@<instance hash>. Run notation plan --config 'infra/notation config.ts' --stage prod --replace bucket:uploads to print the deploy command with the hash.",
@@ -170,7 +171,7 @@ describe("replace flags", () => {
       compile: false,
       logger,
       executionId: "crashed-execution",
-      requested: replaceRequest({ replace: ["bucket:uploads"] }),
+      requested: deployRequest({ replace: ["bucket:uploads"] }),
     });
 
     expect(deployApp).toHaveBeenCalledOnce();
@@ -184,7 +185,7 @@ describe("replace flags", () => {
       deploy(deployment, {
         compile: false,
         logger,
-        requested: replaceRequest({ credential: ["app.privateKey=APP_KEY"] }),
+        requested: deployRequest({ credential: ["app.privateKey=APP_KEY"] }),
       }),
     ).rejects.toThrow(
       "--credential app.privateKey needs the version, as --credential app.privateKey@<version>=APP_KEY. Run notation plan --stage prod --credential app.privateKey=APP_KEY to print the deploy command with the version.",
@@ -194,7 +195,7 @@ describe("replace flags", () => {
 
   it("passes --credential to deploy as a target with a version and a variable", () => {
     expect(
-      replaceRequest({ credential: ["app.privateKey@7b1e52c0=APP_KEY"] }),
+      deployRequest({ credential: ["app.privateKey@7b1e52c0=APP_KEY"] }),
     ).toEqual({
       replace: [],
       credential: [
@@ -208,7 +209,42 @@ describe("replace flags", () => {
     });
   });
 
+  it("fails for a credential that deploy cannot get, with deploy commands for the same config, stage and request", async () => {
+    const core =
+      await vi.importActual<typeof import("@notation/core")>("@notation/core");
+    deployApp.mockRejectedValueOnce(
+      new core.UnobtainableCredentialError(
+        {
+          consumer: "app-key-secret",
+          producer: "app",
+          producerType: "github/App",
+          name: "privateKey",
+          instanceHash: "5d2e8b17",
+        },
+        { replace: [{ id: "queue", instanceHash: "0c4d9e21" }] },
+      ),
+    );
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const error = await deploy(deployment, {
+      compile: false,
+      logger,
+      config: "jobs.config.ts",
+      requested: deployRequest({ replace: ["queue@0c4d9e21"] }),
+    }).catch((e: Error) => e);
+
+    expect((error as Error).message).toBe(
+      [
+        "app-key-secret needs app.privateKey, and deploy cannot get it. github/App issues privateKey once, at create.",
+        "",
+        "  Replace app, to issue a new value:",
+        "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --replace app@5d2e8b17",
+      ].join("\n"),
+    );
+    expect((error as Error).stack).toContain("--stage prod");
+  });
+
   it("gives no request without any flag", () => {
-    expect(replaceRequest({})).toBeUndefined();
+    expect(deployRequest({})).toBeUndefined();
   });
 });

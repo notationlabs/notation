@@ -94,7 +94,7 @@ A [credential](../manual/secrets.md#credentials) is a secret output of a resourc
 | of a resource with `rotate`, such as `AccountToken` | rotates it, and updates every resource that takes the value |
 | of a resource without `rotate`        | cannot get it                                                           |
 
-Some providers issue a value once, at create, and have no API to issue another. A GitHub App's private key is one. In this case, plan fails, and deploy fails before it writes the resource that needs the value. Both print two commands:
+Some providers issue a value once, at create, and have no API to issue another. A GitHub App's private key is one. In this case, plan fails. Deploy checks for it before it changes anything, and again before it writes the resource that needs the value. Both print two commands, with the `--config`, `--stage` and other flags of the command that you ran:
 
 ```text
 ✗ app-key-secret needs app.privateKey, and deploy cannot get it. github/App issues privateKey once, at create.
@@ -110,6 +110,8 @@ This happens when the deploy that created the app failed before it created the s
 
 - **`--replace`** replaces the resource, as in [Replacing a resource](#replacing-a-resource). The new app has a new ID and a new key.
 - **`--credential`** gives deploy a value that you hold. The app keeps its ID.
+
+When state has no version of the credential, the error prints the `--replace` command only.
 
 `--credential` reads the value from the environment variable that it names, so the value is never an argument on the command line:
 
@@ -146,6 +148,7 @@ Deploy fails, before it changes anything, when:
 | The credential has `rotate`                              | `--credential deploy-token.Value: cloudflare/tokens/AccountToken can rotate Value, so deploy gets a new value itself. --credential is accepted only for a credential without rotate.` |
 | `--replace` names the same resource                      | `--credential app.privateKey cannot be given with --replace app: the replacement is created with a new value.`                            |
 | The resource is not in state                             | `--credential app.privateKey: app is not in state, so it has no value to set. Deploy creates it, and the create returns the value.`       |
+| State has no version of the credential                   | `--credential app.privateKey: state has no version of app.privateKey, so deploy cannot check that the flag is meant for this stage. Replace app with --replace to issue a new value.` |
 | The version does not match                               | `app.privateKey is at version 3c90a1f4 in this stage, not 7b1e52c0.`                                                                      |
 | The variable is not set                                  | `--credential app.privateKey reads APP_PRIVATE_KEY, which is not set.`                                                                    |
 | The flag names the same credential twice                 | `--credential app.privateKey is given more than once.`                                                                                    |

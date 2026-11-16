@@ -4,7 +4,8 @@ import { clearSecretValues } from "@notation/utils";
 import { beforeEach, describe, expect, it } from "vitest";
 import { clearHeldCredentials } from "../src/credentials";
 import { createPlan } from "../src/planner";
-import { instanceHash } from "../src/replace-request";
+import { instanceHash } from "../src/deploy-request";
+import { UnobtainableCredentialError } from "../src/unobtainable-credential";
 import { createRuntime } from "./credentials-runtime";
 
 type TokenSchema = {
@@ -325,6 +326,35 @@ describe("a resource that takes a credential in a later deploy", () => {
     );
     runtime.close();
   });
+
+  it("fails the plan with the request's hashes and versions in the deploy commands", async () => {
+    const types = defineResources(createProvider(), { rotate: false });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a"] }));
+    const resources = declare(types, { secrets: ["a", "b"] });
+    const hash = instanceHash(
+      "credentials",
+      resources[1]!,
+      (await runtime.state.get("secret:a"))!,
+    );
+
+    const error = await createPlan({
+      nameScope: { app: "app", stage: "test" },
+      resources,
+      state: runtime.state,
+      deploymentId: "credentials",
+      requested: { replace: [{ id: "secret:a" }] },
+    }).catch((e: Error) => e);
+
+    expect(UnobtainableCredentialError.is(error)).toBe(true);
+    expect((error as UnobtainableCredentialError).request).toEqual({
+      replace: [{ id: "secret:a", instanceHash: hash }],
+    });
+    expect((error as Error).message).toContain(
+      `notation deploy --replace secret:a@${hash} --replace token@`,
+    );
+    runtime.close();
+  });
 });
 
 describe("a deploy that fails before a resource took the new value", () => {
@@ -544,7 +574,7 @@ describe("a plan with a resource that is replaced and takes a credential", () =>
 });
 
 describe("a create that returns a credential its validator rejects", () => {
-  it("fails with the credential's name, and records the resource", async () => {
+  it("fails with the credential's name, records the resource, and refuses --credential for it", async () => {
     const Token = resource<{
       Key: { id: string };
       CreateParams: {};
@@ -578,6 +608,21 @@ describe("a create that returns a credential its validator rejects", () => {
     );
     expect((error as Error).message).not.toContain("short-value");
     expect((await runtime.state.get("token"))?.output.id).toBe("token-0");
+
+    await expect(
+      createPlan({
+        nameScope: { app: "app", stage: "test" },
+        resources: [new Token("token", { config: {} })],
+        state: runtime.state,
+        deploymentId: "credentials",
+        requested: {
+          replace: [],
+          credential: [{ id: "token", name: "Value", variable: "VALUE" }],
+        },
+      }),
+    ).rejects.toThrow(
+      "--credential token.Value: state has no version of token.Value",
+    );
     runtime.close();
   });
 });

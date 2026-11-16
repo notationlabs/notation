@@ -16,7 +16,7 @@ import {
 } from "../plan";
 import { loadUnit, planKnownParams } from "../planner";
 import { readRecordedOutputs } from "../recorded-outputs";
-import { assertReplaceRequest, requestedReplace } from "../replace-request";
+import { assertDeployRequest, requestedReplace } from "../deploy-request";
 import { workflowRegistry, type ResourceRegistry } from "../resource-registry";
 import {
   mintedCredentials,
@@ -41,7 +41,7 @@ export async function* deploy(
     // message, not a class's refusal of the replace. Outside the hold, this
     // can fail with "not in state" while another deploy is in a delete-first
     // replace of the target. That is accepted.
-    await checkReplaceRequest(opts);
+    await checkDeployRequest(opts);
     await validateKnownParams(opts);
     return null;
   });
@@ -50,7 +50,7 @@ export async function* deploy(
     // checks the hashes against the records that the other one left.
     if (opts.requested) {
       yield* step.run("notation:replace-request", async () => {
-        await checkReplaceRequest(opts);
+        await checkDeployRequest(opts);
         return null;
       });
     }
@@ -83,9 +83,9 @@ export async function* deploy(
   });
 }
 
-async function checkReplaceRequest(opts: DurableDeployOptions): Promise<void> {
+async function checkDeployRequest(opts: DurableDeployOptions): Promise<void> {
   if (!opts.requested) return;
-  assertReplaceRequest(opts.requested, {
+  assertDeployRequest(opts.requested, {
     resources: opts.resources,
     records: await opts.state.values(),
     deploymentId: opts.state.deploymentId,

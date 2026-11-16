@@ -11,7 +11,7 @@ export {
   type ReconcilerEvent,
   type ReconcilerEventEmitter,
   type CredentialTarget,
-  type ReplaceRequest,
+  type DeployRequest,
   type ReplaceTarget,
 } from "@notation/reconciler";
 export * from "./workflow.deploy";

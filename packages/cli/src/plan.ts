@@ -4,12 +4,10 @@ import {
   resolveDeploymentId,
   shellQuote,
   UnobtainableCredentialError,
-  unobtainableCredentialMessage,
   type Deployment,
   type Plan,
-  type PlanAppOptions,
   type PlanNode,
-  type ReplaceRequest,
+  type DeployRequest,
 } from "@notation/core";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
@@ -20,7 +18,7 @@ export type PlanCommandOptions = {
   output?: OutputMode;
   logger?: Logger;
   /** The replaces and credentials to plan, from `--replace` and `--credential`. */
-  requested?: ReplaceRequest;
+  requested?: DeployRequest;
   /** The `--config` path, for the deploy command that the plan prints. */
   config?: string;
 };
@@ -58,11 +56,9 @@ export async function plan(
     const { restore } = redirectStdoutToStderr();
     try {
       await compile(deployment, { logger });
-      result = await planWithCommands(deployment, opts, {
-        deployment,
-        emit,
-        requested: opts.requested,
-      });
+      result = await withDeployCommands(deployment, opts.config, () =>
+        planApp({ deployment, emit, requested: opts.requested }),
+      );
     } finally {
       restore();
     }
@@ -72,11 +68,9 @@ export async function plan(
 
   await compile(deployment, { logger });
   logger.info(`Planning ${resolveDeploymentId(deployment)}\n`);
-  const result = await planWithCommands(deployment, opts, {
-    deployment,
-    emit,
-    requested: opts.requested,
-  });
+  const result = await withDeployCommands(deployment, opts.config, () =>
+    planApp({ deployment, emit, requested: opts.requested }),
+  );
   printPlanSummary(result, logger);
   if (opts.requested) {
     logger.info(
@@ -86,28 +80,23 @@ export async function plan(
 }
 
 /**
- * Runs the plan. A plan that fails for a credential that deploy cannot get
- * prints deploy commands with `--config`, `--stage` and the flags of the
- * request.
+ * Runs `run`, and throws an UnobtainableCredentialError from it again as a
+ * new error whose deploy commands have `--config` and `--stage`.
  */
-async function planWithCommands(
+export async function withDeployCommands<T>(
   deployment: Deployment,
-  opts: PlanCommandOptions,
-  planOptions: PlanAppOptions,
-): Promise<Plan> {
+  config: string | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
   try {
-    return await planApp(planOptions);
+    return await run();
   } catch (error) {
     if (!UnobtainableCredentialError.is(error)) throw error;
-    const command = [
-      "notation deploy",
-      targetFlags(deployment, opts.config),
-      formatRequest(opts.requested),
-    ]
-      .filter(Boolean)
-      .join(" ");
-    error.message = unobtainableCredentialMessage(error.credential, command);
-    throw error;
+    throw new UnobtainableCredentialError(
+      error.credential,
+      error.request,
+      `notation deploy ${targetFlags(deployment, config)}`,
+    );
   }
 }
 
@@ -119,7 +108,7 @@ export function targetFlags(deployment: Deployment, config?: string): string {
     : `--config ${shellQuote(config)} ${stage}`;
 }
 
-function requestFlags(result: Plan, requested: ReplaceRequest): string {
+function requestFlags(result: Plan, requested: DeployRequest): string {
   return formatRequest({
     ...requested,
     replace: requested.replace.map(({ id }) => ({

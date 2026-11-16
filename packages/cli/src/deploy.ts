@@ -5,13 +5,13 @@ import {
   parseReplaceTarget,
   resolveDeploymentId,
   type Deployment,
-  type ReplaceRequest,
+  type DeployRequest,
 } from "@notation/core";
 import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
 import { createEventRenderer, type OutputMode } from "./output";
-import { targetFlags } from "./plan";
+import { targetFlags, withDeployCommands } from "./plan";
 
 export type DeployCommandOptions = {
   output?: OutputMode;
@@ -26,8 +26,8 @@ export type DeployCommandOptions = {
    * The request from `--replace`, `--override-loss-protection` and
    * `--credential`.
    */
-  requested?: ReplaceRequest;
-  /** The `--config` path, for the plan command that a missing hash prints. */
+  requested?: DeployRequest;
+  /** The `--config` path, for the commands that the errors of deploy print. */
   config?: string;
 };
 
@@ -52,13 +52,15 @@ export async function deploy(
     );
   }
 
-  await deployApp({
-    deployment,
-    emit,
-    executionId,
-    driftDetection: opts.driftDetection,
-    requested: opts.requested,
-  });
+  await withDeployCommands(deployment, opts.config, () =>
+    deployApp({
+      deployment,
+      emit,
+      executionId,
+      driftDetection: opts.driftDetection,
+      requested: opts.requested,
+    }),
+  );
 }
 
 /**
@@ -97,11 +99,11 @@ function assertHashesGiven(
  * Undefined when none is given, so that a resume uses the request that the
  * execution saved.
  */
-export function replaceRequest(options: {
+export function deployRequest(options: {
   replace?: string[];
   overrideLossProtection?: string[];
   credential?: string[];
-}): ReplaceRequest | undefined {
+}): DeployRequest | undefined {
   if (
     !options.replace &&
     !options.overrideLossProtection &&

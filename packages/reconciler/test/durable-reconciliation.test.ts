@@ -35,7 +35,7 @@ import {
 } from "../src/resource-registry";
 import { ResourceTypeChangedError } from "../src/resource-type";
 import { ResourceCycleError } from "../src/cycles";
-import { instanceHash, type ReplaceRequest } from "../src/replace-request";
+import { instanceHash, type DeployRequest } from "../src/deploy-request";
 
 const logger = pino({ level: "silent" });
 
@@ -6632,7 +6632,7 @@ describe("dependency cycles", () => {
     const b = worker("b");
     bind(a, b);
     bind(b, a);
-    const options: { requested?: ReplaceRequest } = {};
+    const options: { requested?: DeployRequest } = {};
     const runtime = createRuntime([a, b], "cycle-requested", options);
     await runtime.run("cycle-requested-1");
     calls.length = 0;
@@ -8559,7 +8559,7 @@ describe("requested replace", () => {
   async function deployed(deploymentId: string) {
     const queues = defineQueues();
     const options: {
-      requested?: ReplaceRequest;
+      requested?: DeployRequest;
       emit?: (event: ReconcilerEvent) => void;
     } = {};
     const runtime = createRuntime(queues.resources, deploymentId, options);
@@ -8649,7 +8649,7 @@ describe("requested replace", () => {
           context.requested ? "Replacing this bucket deletes it." : undefined,
       });
     const bucket = new Bucket("bucket", { config: { name: "b" } as any });
-    const options: { requested?: ReplaceRequest } = {};
+    const options: { requested?: DeployRequest } = {};
     const runtime = createRuntime([bucket], "requested-protected", options);
     await runtime.run("requested-protected-1");
 
@@ -8682,7 +8682,7 @@ describe("requested replace", () => {
     // while orders still has its first instance.
     const early = new Queue("early", { config: {} as any });
     const deploymentId = "requested-concurrent";
-    const options: { requested?: ReplaceRequest } = {};
+    const options: { requested?: DeployRequest } = {};
     const runtime = createRuntime([early, ...resources], deploymentId, options);
     await runtime.run(`${deploymentId}-1`);
     calls.length = 0;
@@ -8736,7 +8736,7 @@ describe("requested replace", () => {
   it("takes the same decisions when an execution resumes after the replacement was created", async () => {
     const queues = defineQueues();
     const deploymentId = "requested-resume";
-    const options: { requested?: ReplaceRequest; crashAfterStep?: string } = {};
+    const options: { requested?: DeployRequest; crashAfterStep?: string } = {};
     const runtime = createRuntime(queues.resources, deploymentId, {
       ...options,
       crashAfterStep:
@@ -8854,7 +8854,7 @@ describe("requested replace", () => {
   it("replaces delete-first a resource whose class refuses the replace, with --override-loss-protection", async () => {
     const { calls, bucket } = defineBuckets();
     const deploymentId = "requested-override";
-    const options: { requested?: ReplaceRequest } = {};
+    const options: { requested?: DeployRequest } = {};
     const runtime = createRuntime([bucket], deploymentId, options);
     await runtime.run(`${deploymentId}-1`);
     calls.length = 0;
@@ -8875,7 +8875,7 @@ describe("requested replace", () => {
   it("deletes a requested dependent that blocks the delete of another replaced resource, and creates it again once", async () => {
     const { calls, bucket, binding } = defineBuckets();
     const deploymentId = "requested-blocking";
-    const options: { requested?: ReplaceRequest } = {};
+    const options: { requested?: DeployRequest } = {};
     const runtime = createRuntime([bucket, binding], deploymentId, options);
     await runtime.run(`${deploymentId}-1`);
     calls.length = 0;
@@ -8918,7 +8918,7 @@ function createRuntime(
     driftDetection?: boolean;
     dryRun?: boolean;
     emit?: (event: ReconcilerEvent) => void;
-    requested?: ReplaceRequest;
+    requested?: DeployRequest;
   } = {},
 ) {
   const database = createSqliteDb({ path: ":memory:" });

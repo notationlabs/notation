@@ -3,12 +3,13 @@ import type { StateNode } from "@notation/state";
 import { credentialsToMint, credentialVersion } from "./credentials";
 import {
   formatCredential,
+  formatRequest,
   instanceHash,
   requestedCredential,
   shellQuote,
   shortVersion,
-  type ReplaceRequest,
-} from "./replace-request";
+  type DeployRequest,
+} from "./deploy-request";
 
 export type UnobtainableCredential = {
   /** The resource that needs the value. */
@@ -19,24 +20,43 @@ export type UnobtainableCredential = {
   name: string;
   /** For `--replace`. Unset when plan has no deployment ID. */
   instanceHash?: string;
-  /** The version in the producer's record, as `shortVersion` gives it. */
-  version: string;
+  /**
+   * The version in the producer's record, as `shortVersion` gives it. Unset
+   * when the record has none, as `--credential` then cannot be given.
+   */
+  version?: string;
 };
 
 /**
  * Plan and deploy throw this when a resource needs the value of a credential
  * without `rotate`, deploy holds none, and neither `--replace` nor
- * `--credential` names the credential. The CLI writes the message again
- * with the command that it ran.
+ * `--credential` names the credential. The message gives deploy commands
+ * with the flags of `request`. The CLI throws a new error with the
+ * `--config` and `--stage` of the command that it ran.
  */
 export class UnobtainableCredentialError extends Error {
   readonly _tag = "UnobtainableCredentialError" as const;
   readonly credential: UnobtainableCredential;
+  /**
+   * The request of the plan or deploy, with an instance hash for each
+   * `--replace` and a version for each `--credential` that state has.
+   */
+  readonly request?: DeployRequest;
 
-  constructor(credential: UnobtainableCredential) {
-    super(unobtainableCredentialMessage(credential, "notation deploy"));
+  constructor(
+    credential: UnobtainableCredential,
+    request?: DeployRequest,
+    deployCommand = "notation deploy",
+  ) {
+    super(
+      unobtainableCredentialMessage(
+        credential,
+        [deployCommand, formatRequest(request)].filter(Boolean).join(" "),
+      ),
+    );
     this.name = "UnobtainableCredentialError";
     this.credential = credential;
+    if (request) this.request = request;
   }
 
   static is(error: unknown): error is UnobtainableCredentialError {
@@ -56,6 +76,13 @@ export function unobtainableCredentialMessage(
   const replace = credential.instanceHash
     ? `${producer}@${credential.instanceHash}`
     : producer;
+  const lines = [
+    `${consumer} needs ${producer}.${name}, and deploy cannot get it. ${producerType} issues ${name} once, at create.`,
+    "",
+    `  Replace ${producer}, to issue a new value:`,
+    `    ${deployCommand} --replace ${shellQuote(replace)}`,
+  ];
+  if (version === undefined) return lines.join("\n");
   const passed = formatCredential({
     id: producer,
     name,
@@ -63,10 +90,7 @@ export function unobtainableCredentialMessage(
     variable: credentialVariable(producer, name),
   });
   return [
-    `${consumer} needs ${producer}.${name}, and deploy cannot get it. ${producerType} issues ${name} once, at create.`,
-    "",
-    `  Replace ${producer}, to issue a new value:`,
-    `    ${deployCommand} --replace ${shellQuote(replace)}`,
+    ...lines,
     "",
     "  Or pass a value that you hold:",
     `    ${deployCommand} --credential ${shellQuote(passed)}`,
@@ -90,7 +114,7 @@ export function unobtainableCredential(opts: {
     ...(deploymentId && record
       ? { instanceHash: instanceHash(deploymentId, producer, record) }
       : {}),
-    version: shortVersion(opts.version),
+    ...(opts.version !== null ? { version: shortVersion(opts.version) } : {}),
   };
 }
 
@@ -106,7 +130,7 @@ export function mintedCredentials(opts: {
   producer: BaseResource;
   record: StateNode;
   consumers: readonly { resource: BaseResource; record?: StateNode }[];
-  requested: ReplaceRequest | undefined;
+  requested: DeployRequest | undefined;
   deploymentId: string | undefined;
 }): string[] {
   const { producer, record, requested, deploymentId } = opts;
@@ -126,6 +150,7 @@ export function mintedCredentials(opts: {
           version: credentialVersion(producer, name),
           deploymentId,
         }),
+        requested,
       );
     }
     minted.push(name);
@@ -144,7 +169,7 @@ export function rotatesForCreate(opts: {
   producer: BaseResource;
   name: string;
   record: StateNode | undefined;
-  requested: ReplaceRequest | undefined;
+  requested: DeployRequest | undefined;
   deploymentId: string | undefined;
 }): boolean {
   const { producer, name } = opts;
@@ -155,6 +180,7 @@ export function rotatesForCreate(opts: {
       ...opts,
       version: credentialVersion(producer, name),
     }),
+    opts.requested,
   );
 }
 

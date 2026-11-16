@@ -13,8 +13,8 @@ import {
   instanceHash,
   parseCredentialTarget,
   parseReplaceTarget,
-  type ReplaceRequest,
-} from "../src/replace-request";
+  type DeployRequest,
+} from "../src/deploy-request";
 
 const deploymentId = "shop:prod";
 
@@ -318,7 +318,7 @@ describe("createPlan with a requested replace", () => {
 
   describe("fails before it plans anything", () => {
     const plan = (
-      requested: ReplaceRequest,
+      requested: DeployRequest,
       records: StateNode[] = [
         record("orders", Queue.type, { name: ordersName, path: "/" }),
       ],

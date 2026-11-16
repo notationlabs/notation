@@ -24,7 +24,7 @@ import {
   toPersistedState,
 } from "../operations";
 import { getDependencyIds } from "../plan";
-import type { CredentialTarget } from "../replace-request";
+import type { CredentialTarget } from "../deploy-request";
 import {
   UnobtainableCredentialError,
   unobtainableCredential,
@@ -115,6 +115,7 @@ export async function* mintNeededCredentials(
           version: credentialVersion(resource, name),
           deploymentId: opts.state.deploymentId,
         }),
+        opts.requested,
       );
     }
     if (opts.dryRun) continue;
@@ -180,6 +181,7 @@ export async function* obtainCredentials(
           version,
           deploymentId: opts.state.deploymentId,
         }),
+        opts.requested,
       );
     }
 

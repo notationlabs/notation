@@ -75,7 +75,7 @@ import {
   staleCredentialMarkers,
   ungivenCredentials,
 } from "../credentials";
-import { assertNoPassedCredential, requestedReplace } from "../replace-request";
+import { assertNoPassedCredential, requestedReplace } from "../deploy-request";
 import { mintNeededCredentials, obtainCredentials } from "./credentials";
 import { reconcileSource } from "./source";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";

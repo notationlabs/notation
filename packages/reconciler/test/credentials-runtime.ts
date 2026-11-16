@@ -11,7 +11,7 @@ import pino from "pino";
 import { clearHeldCredentials } from "../src/credentials";
 import * as durable from "../src/durable";
 import type { ReconcilerEvent } from "../src/events";
-import type { ReplaceRequest } from "../src/replace-request";
+import type { DeployRequest } from "../src/deploy-request";
 
 class CrashAfterWriteHeap implements HeapClient {
   #crashed = false;
@@ -70,7 +70,7 @@ export function createRuntime(
     "credentials",
   );
   let resources: BaseResource[] = [];
-  let requested: ReplaceRequest | undefined;
+  let requested: DeployRequest | undefined;
   const events: ReconcilerEvent[] = [];
   const router = createWorkflowRouter({
     deploy: workflow(async function* (step, event) {
@@ -95,7 +95,7 @@ export function createRuntime(
   async function deploy(
     executionId: string,
     declared: BaseResource[],
-    request?: ReplaceRequest,
+    request?: DeployRequest,
   ) {
     resources = declared;
     requested = request;
@@ -138,7 +138,7 @@ export function createRuntime(
     nextProcess(
       executionId: string,
       declared: BaseResource[],
-      request?: ReplaceRequest,
+      request?: DeployRequest,
     ) {
       clearHeldCredentials();
       return deploy(executionId, declared, request);

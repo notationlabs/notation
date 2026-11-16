@@ -58,12 +58,13 @@ import {
 import { readRecordedOutputs } from "./recorded-outputs";
 import {
   assertNoPassedCredential,
-  assertReplaceRequest,
+  assertDeployRequest,
   instanceHash,
   requestedReplace,
   shortVersion,
-  type ReplaceRequest,
-} from "./replace-request";
+  withStateIdentifiers,
+  type DeployRequest,
+} from "./deploy-request";
 import { readAndDecideSource } from "./sources";
 import { mintedCredentials, rotatesForCreate } from "./unobtainable-credential";
 import { assertSameType } from "./resource-type";
@@ -95,7 +96,7 @@ export type CreatePlanOptions = {
   /** As for deploy: the classes of the types that only orphans have. */
   registry?: ResourceRegistry;
   /** The replaces and the credentials that the user asked for. */
-  requested?: ReplaceRequest;
+  requested?: DeployRequest;
   /**
    * The key of the deployment's state. With it, each node of a resource in
    * code that has a record gets its instance hash. Required with
@@ -132,13 +133,23 @@ export async function createPlan({
     if (deploymentId === undefined) {
       throw new Error("createPlan needs deploymentId to plan --replace.");
     }
-    assertReplaceRequest(requested, {
+    assertDeployRequest(requested, {
       resources,
       records: stateNodes,
       deploymentId,
       point: "plan",
     });
   }
+  // The request that each UnobtainableCredentialError gives, whose deploy
+  // commands need the hashes and versions.
+  const identified =
+    requested && deploymentId !== undefined
+      ? withStateIdentifiers(requested, {
+          resources,
+          records: stateNodes,
+          deploymentId,
+        })
+      : requested;
   const recordedOutputs = await readRecordedOutputs(resources, state);
   // The edges in state as deploy finds them when it replaces a resource.
   // Deploy writes the edges in code for each resource it reaches, so a
@@ -250,7 +261,7 @@ export async function createPlan({
                 record: stateById.get(consumer.id),
               }),
             ),
-            requested,
+            requested: identified,
             deploymentId,
           })
         : [];
@@ -425,7 +436,7 @@ export async function createPlan({
         producer,
         name,
         record: stateById.get(id),
-        requested,
+        requested: identified,
         deploymentId,
       });
       if (!rotates) continue;
@@ -546,7 +557,7 @@ function recordedCredentialVersions(
   const versions: Record<string, string> = {};
   for (const name of credentialNames(resource.schema)) {
     const marker = stateNode.output[name];
-    if (isCredentialMarker(marker)) {
+    if (isCredentialMarker(marker) && marker.$credential.version !== null) {
       versions[name] = shortVersion(marker.$credential.version);
     }
   }

@@ -402,14 +402,17 @@ it("fails for a credential that deploy cannot get, with deploy commands for the 
   const core =
     await vi.importActual<typeof import("@notation/core")>("@notation/core");
   planApp.mockRejectedValueOnce(
-    new core.UnobtainableCredentialError({
-      consumer: "app-key-secret",
-      producer: "app",
-      producerType: "github/App",
-      name: "privateKey",
-      instanceHash: "5d2e8b17",
-      version: "7b1e52c0",
-    }),
+    new core.UnobtainableCredentialError(
+      {
+        consumer: "app-key-secret",
+        producer: "app",
+        producerType: "github/App",
+        name: "privateKey",
+        instanceHash: "5d2e8b17",
+        version: "7b1e52c0",
+      },
+      { replace: [{ id: "queue", instanceHash: "0c4d9e21" }] },
+    ),
   );
   const logger = { ...console, info: () => undefined };
 
@@ -424,10 +427,10 @@ it("fails for a credential that deploy cannot get, with deploy commands for the 
       "app-key-secret needs app.privateKey, and deploy cannot get it. github/App issues privateKey once, at create.",
       "",
       "  Replace app, to issue a new value:",
-      "    notation deploy --config jobs.config.ts --stage prod --replace queue --replace app@5d2e8b17",
+      "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --replace app@5d2e8b17",
       "",
       "  Or pass a value that you hold:",
-      "    notation deploy --config jobs.config.ts --stage prod --replace queue --credential app.privateKey@7b1e52c0=APP_PRIVATE_KEY",
+      "    notation deploy --config jobs.config.ts --stage prod --replace queue@0c4d9e21 --credential app.privateKey@7b1e52c0=APP_PRIVATE_KEY",
     ].join("\n"),
   );
 });

@@ -3,7 +3,7 @@ import {
   createPlan,
   type Plan,
   type ReconcilerEventEmitter,
-  type ReplaceRequest,
+  type DeployRequest,
   type ResourceRegistry,
 } from "@notation/reconciler";
 import type { Deployment } from "src/config/deployment";
@@ -25,7 +25,7 @@ export type PlanAppOptions = {
   databasePath?: string;
   emit?: ReconcilerEventEmitter;
   /** The replaces and credentials to plan, as deploy would make them. */
-  requested?: ReplaceRequest;
+  requested?: DeployRequest;
 };
 
 export async function planApp({

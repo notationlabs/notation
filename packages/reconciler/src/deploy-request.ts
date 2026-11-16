@@ -31,7 +31,7 @@ export type CredentialTarget = {
  * What the user asked deploy to do beyond the code: the replaces of
  * `--replace`, and the values of `--credential`.
  */
-export type ReplaceRequest = {
+export type DeployRequest = {
   replace: ReplaceTarget[];
   /** IDs in `replace` whose class's `rejectChange` deploy skips. */
   overrideLossProtection?: string[];
@@ -102,13 +102,13 @@ export function parseCredentialTarget(value: string): CredentialTarget {
 }
 
 /** A credential's version as plan prints it: its first 8 characters. */
-export function shortVersion(version: string | null): string {
-  return version === null ? "none" : version.slice(0, 8);
+export function shortVersion(version: string): string {
+  return version.slice(0, 8);
 }
 
 /** The request's `--credential` for the credential, if it has one. */
 export function requestedCredential(
-  request: ReplaceRequest | undefined,
+  request: DeployRequest | undefined,
   id: string,
   name: string,
 ): CredentialTarget | undefined {
@@ -127,7 +127,7 @@ function primaryKeyNames(schema: Schema): string[] {
  * The request as flags, in a fixed order, with each repeated flag once.
  * Empty for no request.
  */
-export function formatRequest(request: ReplaceRequest | undefined): string {
+export function formatRequest(request: DeployRequest | undefined): string {
   const flags = [
     ...(request?.replace ?? [])
       .map(({ id, instanceHash }) =>
@@ -184,9 +184,52 @@ export function instanceHash(
     .slice(0, 8);
 }
 
+/**
+ * The request with the instance hash of each `--replace` and the version of
+ * each `--credential` that it leaves out, from the records in state. Plan
+ * prints it in a deploy command, as deploy requires them.
+ */
+export function withStateIdentifiers(
+  request: DeployRequest,
+  opts: {
+    resources: readonly BaseResource[];
+    records: readonly StateNode[];
+    deploymentId: string;
+  },
+): DeployRequest {
+  const record = (id: string) => {
+    const found = opts.records.find((node) => node.id === id);
+    return found && !isCreatingRecord(found) ? found : undefined;
+  };
+  return {
+    ...request,
+    replace: request.replace.map((target) => {
+      const resource = opts.resources.find(({ id }) => id === target.id);
+      const recorded = record(target.id);
+      if (target.instanceHash || !resource || !recorded) return target;
+      return {
+        ...target,
+        instanceHash: instanceHash(opts.deploymentId, resource, recorded),
+      };
+    }),
+    ...(request.credential
+      ? {
+          credential: request.credential.map((target) => {
+            const marker = record(target.id)?.output[target.name];
+            if (target.version || !isCredentialMarker(marker)) return target;
+            const { version } = marker.$credential;
+            return version === null
+              ? target
+              : { ...target, version: shortVersion(version) };
+          }),
+        }
+      : {}),
+  };
+}
+
 /** The options for `decideAction` when the request names the resource. */
 export function requestedReplace(
-  request: ReplaceRequest | undefined,
+  request: DeployRequest | undefined,
   id: string,
 ): RequestedReplace | undefined {
   if (!request?.replace.some((target) => target.id === id)) return undefined;
@@ -202,8 +245,8 @@ export function requestedReplace(
  * an instance hash that does not match. Deploy requires each hash, and plan
  * checks a hash when it is given.
  */
-export function assertReplaceRequest(
-  request: ReplaceRequest | undefined,
+export function assertDeployRequest(
+  request: DeployRequest | undefined,
   opts: {
     resources: BaseResource[];
     records: StateNode[];
@@ -272,7 +315,7 @@ export function assertReplaceRequest(
  * with a new value, and deploy would ignore the one that the flag passes.
  */
 export function assertNoPassedCredential(
-  request: ReplaceRequest | undefined,
+  request: DeployRequest | undefined,
   resource: BaseResource,
 ): void {
   const target = request?.credential?.find(({ id }) => id === resource.id);
@@ -288,7 +331,7 @@ export function assertNoPassedCredential(
  * at deploy.
  */
 function assertCredentialRequest(
-  request: ReplaceRequest,
+  request: DeployRequest,
   resourceById: Map<string, BaseResource>,
   recordById: Map<string, StateNode>,
   point: "plan" | "deploy",
@@ -329,14 +372,20 @@ function assertCredentialRequest(
         `${flag}: ${id} is not in state, so it has no value to set. Deploy creates it, and the create returns the value.`,
       );
     }
-    if (given === undefined) {
-      if (point === "plan") continue;
-      throw new Error(`${flag} has no version.`);
-    }
     const marker = record.output[name];
     const actual = isCredentialMarker(marker)
       ? marker.$credential.version
       : null;
+    // The version ties the flag to the credential of one stage.
+    if (actual === null) {
+      throw new Error(
+        `${flag}: state has no version of ${id}.${name}, so deploy cannot check that the flag is meant for this stage. Replace ${id} with --replace to issue a new value.`,
+      );
+    }
+    if (given === undefined) {
+      if (point === "plan") continue;
+      throw new Error(`${flag} has no version.`);
+    }
     if (given !== shortVersion(actual) && given !== actual) {
       throw new Error(
         `${id}.${name} is at version ${shortVersion(actual)} in this stage, not ${given}.`,

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Option, program } from "commander";
 import { compile } from "./compile";
-import { deploy, replaceRequest } from "./deploy";
+import { deploy, deployRequest } from "./deploy";
 import { destroy } from "./destroy";
 import { plan } from "./plan";
 import { resolveOutputMode } from "./output";
@@ -110,7 +110,7 @@ program
       resumeCommand: resumeCommand("deploy", options),
       compile: options.compile,
       driftDetection: options.driftDetection,
-      requested: replaceRequest(options),
+      requested: deployRequest(options),
       config: options.config,
     });
   });
@@ -151,7 +151,7 @@ program
     const deployment = resolveDeployment(project, { stage: options.stage });
     await plan(deployment, {
       output: resolveOutputMode(options),
-      requested: replaceRequest(options),
+      requested: deployRequest(options),
       config: options.config,
     });
   });
