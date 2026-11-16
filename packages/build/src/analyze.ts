@@ -1,5 +1,6 @@
 import path from "node:path";
 import {
+  declaredBy,
   freeReferences,
   isFunction,
   location,
@@ -129,7 +130,21 @@ function checkEntryOption(
       ? (value.name as string)
       : undefined;
   const imported = name !== undefined && table.imports.get(name);
-  if (name !== undefined && name === exported && !imported) return;
+  if (name !== undefined && name === exported && !imported) {
+    // TypeScript reports TS2449 for this, but the build may run without a
+    // type check, and the runtime bundle would read the class in its
+    // temporal dead zone.
+    const holder = table.module.body.find((statement) =>
+      declaredBy(statement).includes(name),
+    );
+    if (holder && holder.start > declaration.statement.start) {
+      return fail(
+        value,
+        `${option} is ${name}, which ${file} declares after ${declaration.name}. Declare the class before ${declaration.name}.`,
+      );
+    }
+    return;
+  }
   if (imported && (!exported || exported === name)) {
     return fail(
       value,

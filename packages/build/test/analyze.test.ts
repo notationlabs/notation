@@ -170,6 +170,11 @@ export function $worker(config) { return config; }`;
       `export default class Github {}\n${declare("class {}")}`,
       "entrypoint must name the class that github.ts declares and exports as its default. Pass entrypoint: Github.",
     ],
+    [
+      "a class declared after the declaration",
+      `${declare("Github")}export default class Github {}`,
+      "/project/runtime/github.ts:2:59: entrypoint is Github, which github.ts declares after $worker. Declare the class before $worker.",
+    ],
   ])("fails for %s", (_, source, message) => {
     expect(() => runWorker(source)).toThrow(message);
   });

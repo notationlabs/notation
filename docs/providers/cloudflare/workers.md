@@ -200,7 +200,12 @@ The build fails when `entrypoint` is not the class that the module exports as it
 runtime/github.ts:17:15: entrypoint must name the class that github.ts declares and exports as its default. Pass entrypoint: Github.
 ```
 
-- The class must have a name, and be declared before `$worker`. TypeScript fails with `TS2449` for a class declared after it.
+- The class must have a name, and be declared before `$worker`. The build fails for a class declared after it, as the Worker would read the class before its declaration runs, and throw at start:
+
+  ```text
+  runtime/github.ts:5:15: entrypoint is Github, which github.ts declares after $worker. Declare the class before $worker.
+  ```
+
 - The class must be declared in the Worker's module, as `export default class Github`, or as `class Github` with `export default Github` or `export { Github as default }`. The build doesn't follow imports or re-exports, so a class that the module imports, or a default export that it re-exports from another module, fails the build.
 - Only the default export can be bound. Cloudflare can also bind a named entrypoint, such as `export class Admin extends WorkerEntrypoint`, but `$worker` doesn't support it.
 - A class that is not a `WorkerEntrypoint`, such as a Durable Object class, type-checks as `entrypoint`. A Worker that binds it gets a `Fetcher`.
