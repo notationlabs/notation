@@ -153,6 +153,7 @@ export default class Github extends WorkerEntrypoint<WorkerEnv<typeof github>> {
   async receive(input: Input) {
     const key = await this.env.ROOT_KEY.get();
     // verify the signature, parse the event …
+    return { received: true };
   }
 }
 
@@ -352,10 +353,13 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import type { WorkerEnv } from "@notation/cloudflare/workers";
 import type { github } from "../infra/github";
 
+export type Input = { headers: Record<string, string>; body: string };
+
 export default class Github extends WorkerEntrypoint<WorkerEnv<typeof github>> {
   async receive(input: Input) {
     const key = await this.env.ROOT_KEY.get();
-    // …
+    // verify the signature, parse the event …
+    return { received: true };
   }
 }
 ```
@@ -394,7 +398,7 @@ const received = await channel.receive(input);
 
 `addBindings()` fails when:
 
-1. A name is bound twice, by `bindings` and `addBindings()`, or by two calls to `addBindings()`. A clash between two calls fails at the second call. A clash with `bindings` fails when the Worker reads its bindings, once the infra modules have loaded. Both errors name the location of each call:
+1. A name is bound twice, by `bindings` and `addBindings()`, or by two calls to `addBindings()`. A clash between two calls fails at the second call. A clash with `bindings` fails when the Worker reads its bindings, once the infra modules have loaded. Both errors name the location of the call to `addBindings()`. The error for two calls also names the location of the earlier call:
 
    ```text
    addBindings() at infra/main.ts:5 binds CHANNEL_GITHUB on $worker({ id: "router" }) in runtime/router.ts, which already binds CHANNEL_GITHUB in its bindings. Give one of the bindings another name.
