@@ -85,13 +85,13 @@ export const flags = kvJson({
 });
 ```
 
-| Option      | Notes                                                                                                              |
-| ----------- | ------------------------------------------------------------------------------------------------------------------ |
-| `id`        | Keys the document in state. The resource ID is `kv-json:<id>`. Use 1 to 64 letters, digits, hyphens or underscores |
-| `namespace` | The `KVNamespace` that holds the key                                                                               |
-| `key`       | The KV key                                                                                                         |
-| `schema`    | Checks the merged document at plan and deploy                                                                      |
-| `value`     | Optional. The first part of the document, before the contributions                                                 |
+| Option      | Notes                                                                                                                                                                       |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`        | Keys the document in state. The resource ID is `kv-json:<id>`. Use 1 to 64 letters, digits, hyphens or underscores. An ID such as `${id}-config` is checked when infra runs |
+| `namespace` | The `KVNamespace` that holds the key                                                                                                                                        |
+| `key`       | The KV key                                                                                                                                                                  |
+| `schema`    | Checks the merged document at plan and deploy                                                                                                                               |
+| `value`     | Optional. The first part of the document, before the contributions                                                                                                          |
 
 `kvJson()` returns a `KVJsonGroup`. `flags.schema` is the schema, and `flags.value` is the `kv.KVJsonValue` resource that writes the key.
 

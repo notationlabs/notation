@@ -22,8 +22,8 @@ export type ScheduleTarget = RuleTarget<null>;
 /**
  * Invokes a Lambda on a schedule. The schedule's resources are made when
  * infra has finished loading. A declaration can make its own schedule, with
- * `event: () => eventBridge.defineSchedule(options)`. `id` must be a
- * name-safe string literal; see `NameSafe`.
+ * `event: () => eventBridge.defineSchedule(options)`. `id` must be
+ * name-safe; see `NameSafe`.
  * @resource
  */
 export function schedule<const Id extends string>(

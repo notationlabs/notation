@@ -379,8 +379,7 @@ export const eventBridge = {
       /**
        * The function receives the events that match `pattern` on the bus.
        * The infra build makes the rule, and `decode()` validates each
-       * event's detail with `schema`. `id` must be a name-safe string
-       * literal; see `NameSafe`.
+       * event's detail with `schema`. `id` must be name-safe; see `NameSafe`.
        */
       defineRule<S extends StandardSchemaV1, const Id extends string>(
         options: Omit<RuleOptions, "id"> & {
@@ -400,7 +399,7 @@ export const eventBridge = {
   },
   /**
    * The function receives the events of a schedule, whose rule the infra
-   * build makes. `id` must be a name-safe string literal; see `NameSafe`.
+   * build makes. `id` must be name-safe; see `NameSafe`.
    */
   defineSchedule<const Id extends string>(
     options: Omit<ScheduleOptions, "id"> & { id: NameSafe<Id> },

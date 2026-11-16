@@ -249,8 +249,8 @@ function assertDeadLetterQueueType(
 }
 
 /**
- * Declares an SQS queue. `id` must be a name-safe string literal; see
- * `NameSafe`.
+ * Declares an SQS queue. `id` must be name-safe; see `NameSafe`. An id built
+ * from another, such as `${id}-dlq`, is checked when the queue is declared.
  * @resource runtime: schema
  */
 export function queue<

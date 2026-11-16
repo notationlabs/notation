@@ -335,8 +335,16 @@ test("jwtAuthorizer() takes the claims type explicitly", () => {
   ).toThrow('Invalid jwtAuthorizer() id "bad.id"');
 
   const id: string = "admins";
-  // @ts-expect-error a plain string can't be checked
-  jwtAuthorizer({ id, claims: Claims, ...config });
+  expect(jwtAuthorizer({ id, claims: Claims, ...config }).id).toBe(
+    "api-authorizer:user-api:admins",
+  );
+  expect(
+    jwtAuthorizer({ id: `${id}-auth`, claims: Claims, ...config }).id,
+  ).toBe("api-authorizer:user-api:admins-auth");
+  expect(() =>
+    // @ts-expect-error dots are not name-safe
+    jwtAuthorizer({ id: `${id}.auth`, claims: Claims, ...config }),
+  ).toThrow(`Invalid jwtAuthorizer() id "admins.auth"`);
 });
 
 test("withAuthorizer() of an authorizer on another api throws", () => {

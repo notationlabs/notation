@@ -38,7 +38,7 @@ type QueueConfig = {
 };
 ```
 
-`id` keys the queue in state, so changing it replaces the queue. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the queue's AWS name when it first creates the queue, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--orders-1a2b3c4d`, where the instance is 8 random hex characters.
+`id` keys the queue in state, so changing it replaces the queue. Use 1 to 64 letters, digits, hyphens and underscores. See [IDs](lambda.md#ids) for how TypeScript checks an ID. Deploy generates the queue's AWS name when it first creates the queue, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--orders-1a2b3c4d`, where the instance is 8 random hex characters.
 
 You can't set the queue's AWS name. See [AWS names](../../manual/project-config.md#aws-names).
 

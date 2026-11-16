@@ -102,8 +102,9 @@ export function isJwtAuthorizerGroup(
  * Declares a JWT authorizer on an API. Routes take it with
  * `router(api).withAuthorizer(authorizer)`, and a Lambda takes it with
  * `apiGateway.bind(api).defineRoute({ auth: authorizer })`. In the function,
- * the authorizer holds only its claims schema. `id` must be a name-safe
- * string literal; see `NameSafe`.
+ * the authorizer holds only its claims schema. `id` must be name-safe; see
+ * `NameSafe`. An id built from another, such as `${apiId}-auth`, is checked
+ * when the authorizer is declared.
  * @resource runtime: claims
  */
 export function jwtAuthorizer<

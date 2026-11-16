@@ -85,8 +85,8 @@ export class DefaultEventBusGroup extends EventBus {
 }
 
 /**
- * Declares a custom event bus. `id` must be a name-safe string literal; see
- * `NameSafe`. In a function, the bus is `{}`.
+ * Declares a custom event bus. `id` must be name-safe; see `NameSafe`. In a
+ * function, the bus is `{}`.
  * @resource runtime:
  */
 export function eventBus<const Id extends string>(

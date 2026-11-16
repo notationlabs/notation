@@ -74,7 +74,13 @@ In a runtime module, the ID is the declaration's `id`. The ID doesn't come from 
 
 Deploy generates the AWS names of the function and of its role when it first creates them, and keeps the names in state. The function is named `<app>--<stage>--<id>-<instance>` and its role `<app>--<stage>--<id>-role-<instance>`, where the instance is 8 random hex characters. For example, `$lambda({ id: "orders" })` is named `my-app--prod--orders-1a2b3c4d`. Each name has at most 64 characters, and a longer one is cut before the instance. See [Generated names](../../manual/project-config.md#generated-names).
 
-IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names. `$lambda` and `lambda()` only accept string literals that follow this rule, and throw at runtime if they get anything else. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, are two IDs.
+IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names. TypeScript checks an ID as far as its type allows:
+
+- A string literal, such as `"orders"`, must follow the whole rule.
+- A template literal, such as `` `${id}-worker` ``, must use only these characters outside its `${}` parts. The parts inside `${}` and the length are checked when infra runs. `` `${id}.worker` `` is a type error.
+- A value of type `string` is only checked when infra runs.
+
+This lets code that builds an ID from its caller's ID pass it on. `$lambda`, `lambda()` and the other functions that take an ID throw at runtime for an ID that breaks the rule. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, are two IDs.
 
 ## `lambda(config)`
 
