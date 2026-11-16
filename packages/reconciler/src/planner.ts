@@ -28,8 +28,6 @@ import { createBlocksDelete } from "./delete-cascade";
 import {
   assertNoHiddenCredential,
   credentialConsumers,
-  credentialsToMint,
-  credentialVersion,
   setRecordedOutput,
   takesCredential,
 } from "./credentials";
@@ -62,16 +60,12 @@ import {
   assertNoPassedCredential,
   assertReplaceRequest,
   instanceHash,
-  requestedCredential,
   requestedReplace,
   shortVersion,
   type ReplaceRequest,
 } from "./replace-request";
 import { readAndDecideSource } from "./sources";
-import {
-  UnobtainableCredentialError,
-  unobtainableCredential,
-} from "./unobtainable-credential";
+import { mintedCredentials, rotatesForCreate } from "./unobtainable-credential";
 import { assertSameType } from "./resource-type";
 import { createStepRunner, runOperation } from "./step-runner";
 
@@ -207,23 +201,6 @@ export async function createPlan({
     return { ...node, decision, ...(diff ? { diff } : {}) };
   };
 
-  // Throws for a credential that `consumer` needs, which deploy cannot get.
-  const unobtainable = (
-    consumer: BaseResource,
-    producer: BaseResource,
-    name: string,
-  ) =>
-    new UnobtainableCredentialError(
-      unobtainableCredential({
-        consumer,
-        producer,
-        name,
-        record: stateById.get(producer.id),
-        version: credentialVersion(producer, name),
-        deploymentId,
-      }),
-    );
-
   const planResource = async (
     resource: BaseResource,
     cycle: DeployUnit | undefined,
@@ -260,31 +237,23 @@ export async function createPlan({
 
     // As deploy does before it reaches the resources that take a credential
     // of this one. See `mintNeededCredentials`.
-    const rotates: string[] = [];
-    if (
+    const rotates =
       stateNode &&
       !isCreatingRecord(stateNode) &&
       keepsResource(action.decision)
-    ) {
-      for (const target of requested?.credential ?? []) {
-        if (target.id === resource.id) rotates.push(target.name);
-      }
-      const needed = credentialsToMint(
-        resource,
-        stateNode.output,
-        credentialConsumers(resource, resources).map((consumer) => ({
-          resource: consumer,
-          record: stateById.get(consumer.id),
-        })),
-      );
-      for (const { name, consumer } of needed) {
-        if (rotates.includes(name)) continue;
-        if (!resource.rotate?.[name]) {
-          throw unobtainable(consumer, resource, name);
-        }
-        rotates.push(name);
-      }
-    }
+        ? mintedCredentials({
+            producer: resource,
+            record: stateNode,
+            consumers: credentialConsumers(resource, resources).map(
+              (consumer) => ({
+                resource: consumer,
+                record: stateById.get(consumer.id),
+              }),
+            ),
+            requested,
+            deploymentId,
+          })
+        : [];
 
     const dependsOn = getDependencyIds(resource);
     const replaceFields =
@@ -451,10 +420,15 @@ export async function createPlan({
       const producerNode = at.list[at.index]!;
       if (isCredentialSource(producer)) continue;
       if (producerNode.rotates?.includes(name)) continue;
-      if (!producer.rotate?.[name]) {
-        if (requestedCredential(requested, id, name)) continue;
-        throw unobtainable(resourceById.get(node.id)!, producer, name);
-      }
+      const rotates = rotatesForCreate({
+        consumer: resourceById.get(node.id)!,
+        producer,
+        name,
+        record: stateById.get(id),
+        requested,
+        deploymentId,
+      });
+      if (!rotates) continue;
       producerNode.rotates = [...(producerNode.rotates ?? []), name];
       producer.setOutput({ ...producer.output, [name]: UNKNOWN_AFTER_APPLY });
       // Deploy updates the resources before this one that take the

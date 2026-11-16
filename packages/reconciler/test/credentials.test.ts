@@ -432,6 +432,28 @@ describe("a resource that is replaced and takes a credential", () => {
   });
 });
 
+describe("a deploy that cannot get a credential for a resource that it replaces", () => {
+  it("fails before it changes a resource that comes first", async () => {
+    const provider = createProvider();
+    const types = defineResources(provider, { rotate: false });
+    const runtime = createRuntime();
+    await runtime.deploy("first", declare(types, { secrets: ["a", "b"] }));
+    provider.calls.length = 0;
+    const [token, a] = declare(types, {
+      secrets: [{ name: "a", label: "changed" }],
+    });
+    const b = new types.Secret("secret:b", {
+      config: { name: "b2", Value: (token as any).credentials.Value },
+    });
+
+    await expect(
+      runtime.nextProcess("second", [token!, a!, b]),
+    ).rejects.toThrow("secret:b needs token.Value, and deploy cannot get it.");
+    expect(provider.calls).toEqual([]);
+    runtime.close();
+  });
+});
+
 describe("a plan with a resource that is replaced and takes a credential", () => {
   const renamed = (types: ReturnType<typeof defineResources>) => {
     const [token, a] = declare(types, { secrets: ["a"] });

@@ -1,13 +1,27 @@
-import { isCredentialSource } from "@notation/resource";
-import type { StateNode } from "@notation/state";
+import {
+  credentialNames,
+  findCredentialMarkers,
+  isCredentialSource,
+  type BaseResource,
+} from "@notation/resource";
+import { isCreatingRecord, type StateNode } from "@notation/state";
+import { credentialConsumers } from "../credentials";
 import { isCycle, orderDeployUnits } from "../cycles";
 import { assertDependenciesPresent } from "../dependency-graph";
 import { sweepSteps, sweptRecords } from "../orphan-sweep";
-import { assertOrphanDeleteAllowed, decideAction } from "../plan";
+import {
+  assertOrphanDeleteAllowed,
+  decideAction,
+  keepsResource,
+} from "../plan";
 import { loadUnit, planKnownParams } from "../planner";
 import { readRecordedOutputs } from "../recorded-outputs";
 import { assertReplaceRequest, requestedReplace } from "../replace-request";
 import { workflowRegistry, type ResourceRegistry } from "../resource-registry";
+import {
+  mintedCredentials,
+  rotatesForCreate,
+} from "../unobtainable-credential";
 import { reconcileCycle } from "./cycle";
 import { withDeploymentHold } from "./deployment-hold";
 import { reconcileResource, sweepOrphans } from "./reconcile";
@@ -92,9 +106,18 @@ async function checkReplaceRequest(opts: DurableDeployOptions): Promise<void> {
  * drift reads and on the outputs of dependencies that deploy creates again.
  * Neither is known yet, so the check would fail deploys that succeed. Plan
  * still checks before any change.
+ *
+ * A credential without `rotate` that deploy needs and cannot get is checked
+ * here as plan checks it, from the decisions without drift.
  */
 async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
   const recordedOutputs = await readRecordedOutputs(opts.resources, opts.state);
+  const records = new Map(
+    (await opts.state.values()).map((node) => [node.id, node]),
+  );
+  // The credentials that get a new value before deploy reaches the resources
+  // that take them, by the ID of their resource.
+  const renewed = new Map<string, readonly string[]>();
   for (const unit of orderDeployUnits(opts.resources)) {
     for (const resource of await loadUnit(unit, opts.state)) {
       const { stateNode, params } = await planKnownParams(
@@ -104,13 +127,34 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
         recordedOutputs,
       );
       // A source is never replaced, so no change to it is checked.
-      if (stateNode && !isCredentialSource(resource)) {
-        decideAction({
-          resource,
-          stateNode,
-          params,
-          requested: requestedReplace(opts.requested, resource.id),
-        });
+      if (isCredentialSource(resource)) continue;
+      const decision = stateNode
+        ? decideAction({
+            resource,
+            stateNode,
+            params,
+            requested: requestedReplace(opts.requested, resource.id),
+          }).decision
+        : "create";
+      renewed.set(
+        resource.id,
+        stateNode && !isCreatingRecord(stateNode) && keepsResource(decision)
+          ? mintedCredentials({
+              producer: resource,
+              record: stateNode,
+              consumers: credentialConsumers(resource, opts.resources).map(
+                (consumer) => ({
+                  resource: consumer,
+                  record: records.get(consumer.id),
+                }),
+              ),
+              requested: opts.requested,
+              deploymentId: opts.state.deploymentId,
+            })
+          : credentialNames(resource.schema),
+      );
+      if (!keepsResource(decision)) {
+        assertCredentialsForCreate(opts, resource, params, records, renewed);
       }
     }
   }
@@ -121,6 +165,35 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
     registry,
   )) {
     assertOrphanDeleteAllowed(registry, stateNode);
+  }
+}
+
+/**
+ * Throws for a credential that `resource` takes, and that deploy cannot get
+ * when it creates `resource` again. See `rotatesForCreate`.
+ */
+function assertCredentialsForCreate(
+  opts: DurableDeployOptions,
+  resource: BaseResource,
+  params: Record<string, unknown>,
+  records: ReadonlyMap<string, StateNode>,
+  renewed: Map<string, readonly string[]>,
+): void {
+  for (const { $credential } of findCredentialMarkers(params)) {
+    const { resource: id, name } = $credential;
+    const producer = opts.resources.find((candidate) => candidate.id === id);
+    if (!producer || isCredentialSource(producer)) continue;
+    // As in plan, a producer that comes later in a cycle is skipped.
+    if (!renewed.has(id) || renewed.get(id)!.includes(name)) continue;
+    const rotates = rotatesForCreate({
+      consumer: resource,
+      producer,
+      name,
+      record: records.get(id),
+      requested: opts.requested,
+      deploymentId: opts.state.deploymentId,
+    });
+    if (rotates) renewed.set(id, [...(renewed.get(id) ?? []), name]);
   }
 }
 

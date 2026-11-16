@@ -1,10 +1,13 @@
 import type { BaseResource } from "@notation/resource";
 import type { StateNode } from "@notation/state";
+import { credentialsToMint, credentialVersion } from "./credentials";
 import {
   formatCredential,
   instanceHash,
+  requestedCredential,
   shellQuote,
   shortVersion,
+  type ReplaceRequest,
 } from "./replace-request";
 
 export type UnobtainableCredential = {
@@ -89,6 +92,70 @@ export function unobtainableCredential(opts: {
       : {}),
     version: shortVersion(opts.version),
   };
+}
+
+/**
+ * The credentials of `producer` that deploy gives a new value before it
+ * reaches the resources that take them, as `mintNeededCredentials` does:
+ * each that `--credential` names, and each that `credentialsToMint` lists.
+ * Throws for a credential in that list without `rotate`. Plan and deploy's
+ * validate step call this for a resource that deploy keeps, and whose
+ * record is not "creating".
+ */
+export function mintedCredentials(opts: {
+  producer: BaseResource;
+  record: StateNode;
+  consumers: readonly { resource: BaseResource; record?: StateNode }[];
+  requested: ReplaceRequest | undefined;
+  deploymentId: string | undefined;
+}): string[] {
+  const { producer, record, requested, deploymentId } = opts;
+  const minted = (requested?.credential ?? [])
+    .filter((target) => target.id === producer.id)
+    .map((target) => target.name);
+  const needed = credentialsToMint(producer, record.output, opts.consumers);
+  for (const { name, consumer } of needed) {
+    if (minted.includes(name)) continue;
+    if (!producer.rotate?.[name]) {
+      throw new UnobtainableCredentialError(
+        unobtainableCredential({
+          consumer,
+          producer,
+          name,
+          record,
+          version: credentialVersion(producer, name),
+          deploymentId,
+        }),
+      );
+    }
+    minted.push(name);
+  }
+  return minted;
+}
+
+/**
+ * Whether deploy rotates a credential that `consumer` takes when deploy
+ * creates `consumer` again and holds no value for it, as
+ * `obtainCredentials` does. False for a credential that `--credential`
+ * names. Throws for any other credential without `rotate`.
+ */
+export function rotatesForCreate(opts: {
+  consumer: BaseResource;
+  producer: BaseResource;
+  name: string;
+  record: StateNode | undefined;
+  requested: ReplaceRequest | undefined;
+  deploymentId: string | undefined;
+}): boolean {
+  const { producer, name } = opts;
+  if (producer.rotate?.[name]) return true;
+  if (requestedCredential(opts.requested, producer.id, name)) return false;
+  throw new UnobtainableCredentialError(
+    unobtainableCredential({
+      ...opts,
+      version: credentialVersion(producer, name),
+    }),
+  );
 }
 
 /** A variable name for the plan error, such as `APP_PRIVATE_KEY`. */
