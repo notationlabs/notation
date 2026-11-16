@@ -513,6 +513,9 @@ export async function poll(
 ): Promise<Fetched> {
   const deadline = Date.now() + timeoutMs;
   let last: Fetched = { ok: false };
+  // A new hostname is often served within a second or two, so the wait
+  // starts short and doubles up to 3 seconds.
+  let delayMs = 500;
   while (Date.now() < deadline) {
     try {
       const response = await fetch(url, {
@@ -531,7 +534,8 @@ export async function poll(
       };
     }
     if (done(last)) return last;
-    await sleep(3_000);
+    await sleep(delayMs);
+    delayMs = Math.min(delayMs * 2, 3_000);
   }
   return last;
 }
