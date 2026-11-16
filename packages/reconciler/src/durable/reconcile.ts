@@ -72,6 +72,7 @@ import {
   staleCredentialMarkers,
   wasGivenCredentials,
 } from "../credentials";
+import { requestedReplace } from "../replace-request";
 import { mintNeededCredentials, obtainCredentials } from "./credentials";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
@@ -193,6 +194,11 @@ export async function* reconcileResource(
       : undefined,
   );
 
+  // A cycle reconciles a resource more than once, and each request replaces
+  // it once.
+  const requested = opts.reconciled.has(resource)
+    ? undefined
+    : requestedReplace(opts.requested, resource.id);
   let action = decideAction({
     resource,
     stateNode:
@@ -203,6 +209,7 @@ export async function* reconcileResource(
           }
         : session.node,
     params,
+    requested,
   });
 
   // Its own scope: when the gate fires, the operation that follows the drift
@@ -215,7 +222,7 @@ export async function* reconcileResource(
     if (action.decision === "noop") {
       action = decideDriftAction({ resource, params, driftRead });
     }
-  } else {
+  } else if (!requested) {
     action = yield* applyDriftDetection(driftStep, {
       action,
       driftDetection: opts.driftDetection,
@@ -819,6 +826,10 @@ async function* deleteBlockingDependents(
       continue;
     }
     if (!declared.rejectChange) continue;
+    // As in the planner. `validateKnownParams` already ran a requested
+    // dependent's `rejectChange` through `decideAction`, which skips it with
+    // --override-loss-protection.
+    if (requestedReplace(opts.requested, id)) continue;
     // A step, as deriveParams is user code and need not be deterministic.
     const params = yield* step.run(
       `params:${encodeURIComponent(id)}`,

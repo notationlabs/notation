@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createPlan } from "@notation/reconciler";
 import {
   ResourceCreationUnknownError,
   ResourceNotFoundError,
@@ -287,4 +288,80 @@ describe("R2Bucket", () => {
       AccountId: "acc",
     });
   });
+
+  describe("a requested replace", () => {
+    beforeEach(() => {
+      vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "acc");
+    });
+
+    it("fails, and names the flag that allows it", async () => {
+      await expect(
+        createPlan({
+          resources: [bucket],
+          state: stateWith(bucket, params),
+          driftDetection: false,
+          deploymentId: "app:prod",
+          requested: { replace: [{ id: "bucket:uploads" }] },
+        }),
+      ).rejects.toThrow(
+        "bucket:uploads: Replacing this R2 bucket deletes it and creates it again. Cloudflare deletes only an empty bucket, so the replace fails while the bucket has objects. Delete its objects first. To replace it, pass --override-loss-protection bucket:uploads with --replace.",
+      );
+    });
+
+    it("is planned with --override-loss-protection", async () => {
+      const plan = await createPlan({
+        resources: [bucket],
+        state: stateWith(bucket, params),
+        driftDetection: false,
+        deploymentId: "app:prod",
+        requested: {
+          replace: [{ id: "bucket:uploads" }],
+          overrideLossProtection: ["bucket:uploads"],
+        },
+      });
+
+      expect(plan.nodes[0]).toMatchObject({
+        id: "bucket:uploads",
+        decision: "replace",
+        replaceFields: [{ requested: true, known: true }],
+      });
+    });
+
+    it("is refused only when requested", () => {
+      const rejectChange = R2Bucket.rejectChange!;
+      expect(
+        rejectChange(params as any, params as any, {
+          replace: true,
+          requested: true,
+        }),
+      ).toBe(
+        "Replacing this R2 bucket deletes it and creates it again. Cloudflare deletes only an empty bucket, so the replace fails while the bucket has objects. Delete its objects first.",
+      );
+      expect(
+        rejectChange(params as any, params as any, { replace: true }),
+      ).toBeUndefined();
+      expect(
+        rejectChange(params as any, params as any, { replace: false }),
+      ).toBeUndefined();
+    });
+  });
 });
+
+function stateWith(resource: { id: string; type: string }, params: object) {
+  const record = {
+    version: 1,
+    id: resource.id,
+    type: resource.type,
+    provider: "@notation/cloudflare/resources",
+    config: {},
+    params,
+    output: params,
+    dependsOn: [],
+    lastOperation: "create" as const,
+    lastOperationAt: "2026-11-15T00:00:00.000Z",
+  } as any;
+  return {
+    get: async (id: string) => (id === resource.id ? record : undefined),
+    values: async () => [record],
+  };
+}

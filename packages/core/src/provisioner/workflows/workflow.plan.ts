@@ -3,6 +3,7 @@ import {
   createPlan,
   type Plan,
   type ReconcilerEventEmitter,
+  type ReplaceRequest,
   type ResourceRegistry,
 } from "@notation/reconciler";
 import { randomUUID } from "node:crypto";
@@ -25,6 +26,8 @@ export type PlanAppOptions = {
   runtime?: NodeDurableRuntime;
   databasePath?: string;
   emit?: ReconcilerEventEmitter;
+  /** The replaces to plan, as deploy would make them. */
+  requested?: ReplaceRequest;
 };
 
 export function planApp(opts: PlanAppOptions): Promise<Plan> {
@@ -44,6 +47,7 @@ async function plan({
   runtime: suppliedRuntime,
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
+  requested,
 }: PlanAppOptions): Promise<Plan> {
   const graph = await getResourceGraph(deployment.entryPoint, {
     app: deployment.app,
@@ -64,6 +68,8 @@ async function plan({
         emit,
         maxOperationAttempts,
         registry: mergeResourceRegistries(providerRegistry, registry),
+        requested,
+        deploymentId: runtime.deploymentId,
       });
     },
   );

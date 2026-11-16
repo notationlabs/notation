@@ -1,5 +1,11 @@
-import { beforeEach, expect, it, vi } from "vitest";
-import { deployApp, destroyApp, planApp } from "src/provisioner";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  assertSameRequest,
+  deployApp,
+  destroyApp,
+  formatRequest,
+  planApp,
+} from "src/provisioner";
 import { secretContext } from "src/secrets";
 
 const { getResourceGraph } = vi.hoisted(() => ({
@@ -69,4 +75,50 @@ it("deploys and plans in a secret context with the stage, the run ID and the pro
     },
   ]);
   expect(secretContext()).toBeUndefined();
+});
+
+describe("assertSameRequest", () => {
+  const saved = {
+    replace: [
+      { id: "role", instanceHash: "3c1f9a02" },
+      { id: "bucket", instanceHash: "9e04b7d1" },
+    ],
+    overrideLossProtection: ["bucket"],
+  };
+
+  it("allows a resume that leaves out the flags, or passes the same ones in any order", () => {
+    expect(() => assertSameRequest("e", saved, undefined)).not.toThrow();
+    expect(() =>
+      assertSameRequest("e", saved, {
+        replace: [...saved.replace].reverse(),
+        overrideLossProtection: ["bucket"],
+      }),
+    ).not.toThrow();
+  });
+
+  it("accepts a resume that repeats a flag", () => {
+    expect(() =>
+      assertSameRequest("e", saved, {
+        replace: [...saved.replace, saved.replace[0]!],
+        overrideLossProtection: ["bucket", "bucket"],
+      }),
+    ).not.toThrow();
+  });
+
+  it("refuses a resume with other flags", () => {
+    expect(() =>
+      assertSameRequest("e", saved, { replace: [saved.replace[0]!] }),
+    ).toThrow(
+      "Execution e was started with --replace bucket@9e04b7d1 --replace role@3c1f9a02 --override-loss-protection bucket. Leave out --replace, or pass the same flags.",
+    );
+    expect(() =>
+      assertSameRequest("e", undefined, { replace: [saved.replace[0]!] }),
+    ).toThrow(
+      "Execution e was started without --replace. Leave out --replace and --override-loss-protection.",
+    );
+  });
+
+  it("formats no request as no flags", () => {
+    expect(formatRequest(undefined)).toBe("");
+  });
 });

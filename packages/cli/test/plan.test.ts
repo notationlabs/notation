@@ -12,7 +12,11 @@ const { planApp } = vi.hoisted(() => ({
   planApp: vi.fn(async (): Promise<Plan> => ({ createdAt: "", nodes: [] })),
 }));
 
-vi.mock("@notation/core", () => ({
+vi.mock("@notation/core", async (importOriginal) => ({
+  formatRequest: (await importOriginal<typeof import("@notation/core")>())
+    .formatRequest,
+  shellQuote: (await importOriginal<typeof import("@notation/core")>())
+    .shellQuote,
   createLoggerReconcilerSubscriber: () => () => undefined,
   planApp,
   PROMPT_SOURCE: "prompt",
@@ -550,4 +554,94 @@ it("prints a resource at which deploy fails for want of a credential", async () 
   expect(lines).toContain(
     "    deploy fails here, as it holds no value for Value of token. The deploy after it replaces token",
   );
+});
+
+it("prints a requested replace, and the deploy command with the instance hash", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "lambda:orders:role",
+        type: "aws/lambda/LambdaIamRole",
+        decision: "replace",
+        replaceFields: [{ requested: true, known: true }],
+        replaceOrder: "create-first",
+        instanceHash: "3c1f9a02",
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "lambda:orders",
+        type: "aws/lambda/LambdaFunction",
+        decision: "update",
+        instanceHash: "9e04b7d1",
+        params: {},
+        dependsOn: ["lambda:orders:role"],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+  const requested = {
+    replace: [{ id: "lambda:orders:role" }],
+    overrideLossProtection: ["lambda:orders:role"],
+  };
+
+  await plan(deployment, {
+    logger,
+    requested,
+    config: "jobs.config.ts",
+  });
+
+  expect(planApp).toHaveBeenLastCalledWith(
+    expect.objectContaining({ requested }),
+  );
+  expect(lines.slice(1, 3)).toEqual([
+    "+/- replace aws/lambda/LambdaIamRole lambda:orders:role (create, then delete)",
+    "    replaced by --replace",
+  ]);
+  expect(lines.at(-1)).toBe(
+    "\nTo deploy this plan:\n  notation deploy --config jobs.config.ts --stage prod --replace lambda:orders:role@3c1f9a02 --override-loss-protection lambda:orders:role",
+  );
+});
+
+it("quotes a value in the deploy command that the shell would split or expand", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "queue:it's",
+        type: "test/plan/queue",
+        decision: "replace",
+        replaceFields: [{ requested: true, known: true }],
+        instanceHash: "3c1f9a02",
+        params: {},
+        dependsOn: [],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(
+    { ...deployment, stage: "pr 12" },
+    {
+      logger,
+      requested: { replace: [{ id: "queue:it's" }] },
+      config: "my app/notation.config.ts",
+    },
+  );
+
+  expect(lines.at(-1)).toBe(
+    "\nTo deploy this plan:\n  notation deploy --config 'my app/notation.config.ts' --stage 'pr 12' --replace 'queue:it'\\''s@3c1f9a02'",
+  );
+});
+
+it("prints no deploy command without a request", async () => {
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.join("\n")).not.toContain("To deploy this plan");
 });

@@ -5,6 +5,7 @@ import { sweepSteps, sweptRecords } from "../orphan-sweep";
 import { assertOrphanDeleteAllowed, decideAction } from "../plan";
 import { loadUnit, planKnownParams } from "../planner";
 import { readRecordedOutputs } from "../recorded-outputs";
+import { assertReplaceRequest, requestedReplace } from "../replace-request";
 import { workflowRegistry, type ResourceRegistry } from "../resource-registry";
 import { reconcileCycle } from "./cycle";
 import { withDeploymentHold } from "./deployment-hold";
@@ -21,10 +22,23 @@ export async function* deploy(
   // A step, so that a resumed execution does not run every resource's
   // deriveParams again.
   yield* step.run("notation:validate", async () => {
+    // Before `decideAction`, so that a wrong ID or hash fails with its own
+    // message, not a class's refusal of the replace. Outside the hold, this
+    // can fail with "not in state" while another deploy is in a delete-first
+    // replace of the target. That is accepted.
+    await checkReplaceRequest(opts);
     await validateKnownParams(opts);
     return null;
   });
   yield* withDeploymentHold(step, opts, async function* () {
+    // Again inside the hold, so that a deploy that waited for another one
+    // checks the hashes against the records that the other one left.
+    if (opts.requested) {
+      yield* step.run("notation:replace-request", async () => {
+        await checkReplaceRequest(opts);
+        return null;
+      });
+    }
     // Read once, inside the hold, so that every `~state` ref reads the
     // records as they were at the start of the deploy, and a resumed deploy
     // reads the same ones.
@@ -54,6 +68,16 @@ export async function* deploy(
   });
 }
 
+async function checkReplaceRequest(opts: DurableDeployOptions): Promise<void> {
+  if (!opts.requested) return;
+  assertReplaceRequest(opts.requested, {
+    resources: opts.resources,
+    records: await opts.state.values(),
+    deploymentId: opts.state.deploymentId,
+    point: "deploy",
+  });
+}
+
 /**
  * Checks every value deploy knows before it changes anything, as the planner
  * does, and runs each `rejectChange`, also for each orphan that the sweep
@@ -78,7 +102,14 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
         "deploy",
         recordedOutputs,
       );
-      if (stateNode) decideAction({ resource, stateNode, params });
+      if (stateNode) {
+        decideAction({
+          resource,
+          stateNode,
+          params,
+          requested: requestedReplace(opts.requested, resource.id),
+        });
+      }
     }
   }
   const registry = workflowRegistry(opts);

@@ -1,10 +1,13 @@
 import {
+  formatRequest,
   planApp,
   PROMPT_SOURCE,
   resolveDeploymentId,
+  shellQuote,
   type Deployment,
   type Plan,
   type PlanNode,
+  type ReplaceRequest,
 } from "@notation/core";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
@@ -14,6 +17,10 @@ import { redirectStdoutToStderr } from "./stdio";
 export type PlanCommandOptions = {
   output?: OutputMode;
   logger?: Logger;
+  /** The replaces to plan, from `--replace`. */
+  requested?: ReplaceRequest;
+  /** The `--config` path, for the deploy command that the plan prints. */
+  config?: string;
 };
 
 const decisionSymbols: Record<PlanNode["decision"], string> = {
@@ -49,7 +56,7 @@ export async function plan(
     const { restore } = redirectStdoutToStderr();
     try {
       await compile(deployment, { logger });
-      result = await planApp({ deployment, emit });
+      result = await planApp({ deployment, emit, requested: opts.requested });
     } finally {
       restore();
     }
@@ -59,8 +66,35 @@ export async function plan(
 
   await compile(deployment, { logger });
   logger.info(`Planning ${resolveDeploymentId(deployment)}\n`);
-  const result = await planApp({ deployment, emit });
+  const result = await planApp({
+    deployment,
+    emit,
+    requested: opts.requested,
+  });
   printPlanSummary(result, logger);
+  if (opts.requested) {
+    logger.info(
+      `\nTo deploy this plan:\n  notation deploy ${targetFlags(deployment, opts.config)} ${requestFlags(result, opts.requested)}`,
+    );
+  }
+}
+
+/** `--config` when it is given, and `--stage`, for a printed command. */
+export function targetFlags(deployment: Deployment, config?: string): string {
+  const stage = `--stage ${shellQuote(deployment.stage)}`;
+  return config === undefined
+    ? stage
+    : `--config ${shellQuote(config)} ${stage}`;
+}
+
+function requestFlags(result: Plan, requested: ReplaceRequest): string {
+  return formatRequest({
+    ...requested,
+    replace: requested.replace.map(({ id }) => ({
+      id,
+      instanceHash: findRecordNode(result, id)?.instanceHash,
+    })),
+  });
 }
 
 // A delete-first replace plans the record's retired instances before it, with
@@ -119,6 +153,10 @@ function printPlanSummary(result: Plan, logger: Logger) {
       );
     }
     for (const field of node.replaceFields ?? []) {
+      if (field.requested) {
+        logger.info("    replaced by --replace");
+        continue;
+      }
       if (field.credential) {
         logger.info(
           `    ${field.name} needs a new value, as a resource that takes it needs one, and it has no rotate operation`,

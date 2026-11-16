@@ -1,6 +1,7 @@
 import {
   diffParams,
   type BaseResource,
+  type ParamReplaceField,
   type ParamsDiffDisplay,
   type RejectChange,
   type RejectChangeContext,
@@ -9,6 +10,7 @@ import {
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
 import type { ReplaceOrder } from "./events";
+import type { RequestedReplace } from "./replace-request";
 import {
   resolveResourceClass,
   type ResourceRegistry,
@@ -114,6 +116,11 @@ export type PlanNode = {
    * takes it over.
    */
   mayTakeOver?: true;
+  /**
+   * The hash for `--replace <id>@<instance hash>`. Set for a resource in
+   * code that has a record.
+   */
+  instanceHash?: string;
   params: Record<string, unknown>;
   dependsOn: string[];
 };
@@ -149,12 +156,17 @@ export type ResourceAction =
       replaceFields: ReplaceField[];
     };
 
+/**
+ * Decides what deploy does with the resource. With `requested`, a resource
+ * that has a record is replaced, with the replace field `{ requested: true }`.
+ */
 export function decideAction(opts: {
   resource: BaseResource;
   stateNode?: StateNode;
   params: Record<string, unknown>;
+  requested?: RequestedReplace;
 }): ResourceAction {
-  const { resource, stateNode, params } = opts;
+  const { resource, stateNode, params, requested } = opts;
   // A create that left a "creating" record may or may not have made the
   // resource. Create runs again, and takes the resource over if the provider
   // reports that it already exists.
@@ -168,17 +180,36 @@ export function decideAction(opts: {
     params,
     { canUpdate: Boolean(resource.update) },
   );
-  assertChangeAllowed(
-    resource.id,
-    resource.rejectChange,
-    stateNode.params,
-    params,
-    { replace: replaceFields.length > 0 },
-  );
-
+  // Before `rejectChange`, so that a requested replace that also changes a
+  // param fails with the param's own message.
   if (replaceFields.length > 0) {
     assertReplaceAllowed(resource, stateNode.params, params, replaceFields);
-    return { decision: "replace", patch, diff, replaceFields };
+  }
+  if (!requested?.overrideLossProtection) {
+    assertChangeAllowed(
+      resource.id,
+      resource.rejectChange,
+      stateNode.params,
+      params,
+      {
+        replace: Boolean(requested) || replaceFields.length > 0,
+        ...(requested ? { requested: true as const } : {}),
+      },
+      requested
+        ? `To replace it, pass --override-loss-protection ${resource.id} with --replace.`
+        : undefined,
+    );
+  }
+
+  if (requested || replaceFields.length > 0) {
+    return {
+      decision: "replace",
+      patch,
+      diff,
+      replaceFields: requested
+        ? [...replaceFields, { requested: true, known: true }]
+        : replaceFields,
+    };
   }
   if (Object.keys(patch).length > 0) {
     return { decision: "update", patch, diff };
@@ -195,7 +226,7 @@ function assertReplaceAllowed(
   resource: BaseResource,
   previous: Record<string, unknown>,
   desired: Record<string, unknown>,
-  replaceFields: ReplaceField[],
+  replaceFields: ParamReplaceField[],
 ): void {
   for (const { name, known } of replaceFields) {
     const item = resource.schema[name];
@@ -208,16 +239,21 @@ function assertReplaceAllowed(
   }
 }
 
-/** Throws the message of `rejectChange`, if it returns one. */
+/**
+ * Throws the message of `rejectChange`, if it returns one, followed by
+ * `hint`.
+ */
 export function assertChangeAllowed(
   id: string,
   rejectChange: RejectChange<any> | undefined,
   previous: Record<string, unknown>,
   desired: Record<string, unknown> | undefined,
   context: RejectChangeContext,
+  hint?: string,
 ): void {
   const message = rejectChange?.(previous, desired, context);
-  if (message !== undefined) throw new Error(`${id}: ${message}`);
+  if (message === undefined) return;
+  throw new Error(hint ? `${id}: ${message} ${hint}` : `${id}: ${message}`);
 }
 
 /**

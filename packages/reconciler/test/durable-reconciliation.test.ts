@@ -35,6 +35,7 @@ import {
 } from "../src/resource-registry";
 import { ResourceTypeChangedError } from "../src/resource-type";
 import { ResourceCycleError } from "../src/cycles";
+import { instanceHash, type ReplaceRequest } from "../src/replace-request";
 
 const logger = pino({ level: "silent" });
 
@@ -6623,6 +6624,36 @@ describe("dependency cycles", () => {
     expect(await runtime.state.get("a")).toMatchObject({ dependsOn: ["b"] });
     runtime.close();
   });
+
+  it("replaces a requested member once, though deploy reconciles it in each pass", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const options: { requested?: ReplaceRequest } = {};
+    const runtime = createRuntime([a, b], "cycle-requested", options);
+    await runtime.run("cycle-requested-1");
+    calls.length = 0;
+
+    options.requested = {
+      replace: [
+        {
+          id: "b",
+          instanceHash: instanceHash(
+            "cycle-requested",
+            b,
+            (await runtime.state.get("b"))!,
+          ),
+        },
+      ],
+    };
+    await runtime.run("cycle-requested-2");
+
+    // b keeps its name, so a still binds it.
+    expect(calls).toEqual(["delete b", "create b [a]"]);
+    runtime.close();
+  });
 });
 
 describe("generated physical names", () => {
@@ -8480,6 +8511,396 @@ describe("refs that add no dependency", () => {
   });
 });
 
+describe("requested replace", () => {
+  /**
+   * Queues with generated names, so a replace creates first, and a mirror
+   * that takes its target's name. `beforeUpdate` runs at the start of each
+   * update.
+   */
+  function defineQueues(beforeUpdate?: () => Promise<void>) {
+    const calls: string[] = [];
+    const Queue = resource({ type: "test/durable/requested", provider: "test" })
+      // Cast: a resource declared without API types constrains every schema
+      // key to be a key of an `any` API schema, which no named key satisfies.
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+          physicalName: { maxLength: 64 },
+        },
+        target: {
+          presence: "optional",
+          propertyType: "param",
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async (params: any) => {
+          calls.push(`create ${params.name.replace(/-[0-9a-f]{8}$/, "")}`);
+        },
+        update: async (_key: any, patch: any) => {
+          await beforeUpdate?.();
+          calls.push(`update ${Object.keys(patch).join(",")}`);
+        },
+        delete: async (key: any) => {
+          calls.push(`delete ${key.name.replace(/-[0-9a-f]{8}$/, "")}`);
+        },
+      });
+    const orders = new Queue("orders", { config: {} as any });
+    const mirror = new Queue("mirror", { config: {} as any });
+    mirror.config.target = orders.outputRef("name");
+    return { calls, resources: [orders, mirror], orders, Queue };
+  }
+
+  async function deployed(deploymentId: string) {
+    const queues = defineQueues();
+    const options: {
+      requested?: ReplaceRequest;
+      emit?: (event: ReconcilerEvent) => void;
+    } = {};
+    const runtime = createRuntime(queues.resources, deploymentId, options);
+    await runtime.run(`${deploymentId}-1`);
+    queues.calls.length = 0;
+    const hash = instanceHash(
+      deploymentId,
+      queues.orders,
+      (await runtime.state.get("orders"))!,
+    );
+    return { ...queues, runtime, options, hash };
+  }
+
+  it("replaces an unchanged resource create-first and updates its dependent, and a deploy without the flag replaces nothing", async () => {
+    const { calls, runtime, options, hash } = await deployed("requested");
+    const before = await runtime.state.get("orders");
+    const events: ReconcilerEvent[] = [];
+    options.emit = (event) => void events.push(event);
+    options.requested = {
+      replace: [{ id: "orders", instanceHash: hash }],
+    };
+
+    await runtime.run("requested-2");
+
+    expect(calls).toEqual([
+      "create shop--prod--orders",
+      "update target",
+      "delete shop--prod--orders",
+    ]);
+    const after = await runtime.state.get("orders");
+    expect(after!.params.name).not.toBe(before!.params.name);
+    expect(await runtime.state.get("mirror")).toMatchObject({
+      params: { target: after!.params.name },
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: "reconciler.deploy.decision",
+        resourceId: "orders",
+        decision: "replace",
+        replaceFields: [{ requested: true, known: true }],
+        replaceOrder: "create-first",
+      }),
+    );
+
+    calls.length = 0;
+    options.requested = undefined;
+    await runtime.run("requested-3");
+    expect(calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("fails before any change without the hash, or with a hash that does not match", async () => {
+    const { calls, runtime, options, hash } = await deployed("requested-hash");
+
+    options.requested = { replace: [{ id: "orders" }] };
+    await expect(runtime.run("requested-hash-2")).rejects.toThrow(
+      "--replace orders has no instance hash.",
+    );
+    options.requested = {
+      replace: [{ id: "orders", instanceHash: "00000000" }],
+    };
+    await expect(runtime.run("requested-hash-3")).rejects.toThrow(
+      `orders has the instance hash ${hash} in this stage, not 00000000.`,
+    );
+    expect(calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("fails a wrong hash with its own message on a class that refuses the replace", async () => {
+    const Bucket = resource({
+      type: "test/durable/protected",
+      provider: "test",
+    })
+      // Cast: as in `defineQueues`.
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => undefined,
+        rejectChange: (_previous: any, _desired: any, context: any) =>
+          context.requested ? "Replacing this bucket deletes it." : undefined,
+      });
+    const bucket = new Bucket("bucket", { config: { name: "b" } as any });
+    const options: { requested?: ReplaceRequest } = {};
+    const runtime = createRuntime([bucket], "requested-protected", options);
+    await runtime.run("requested-protected-1");
+
+    options.requested = {
+      replace: [{ id: "bucket", instanceHash: "00000000" }],
+    };
+    await expect(runtime.run("requested-protected-2")).rejects.toThrow(
+      /^bucket has the instance hash [0-9a-f]{8} in this stage, not 00000000\.$/,
+    );
+    runtime.close();
+  });
+
+  it("checks the hash inside the hold, so a deploy that waited with the same request fails", async () => {
+    let block = false;
+    let unblock!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      unblock = resolve;
+    });
+    let started!: () => void;
+    const updateStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const { calls, resources, orders, Queue } = defineQueues(async () => {
+      if (!block) return;
+      block = false;
+      started();
+      await blocked;
+    });
+    // Deployed before orders, so that the first deploy holds the deployment
+    // while orders still has its first instance.
+    const early = new Queue("early", { config: {} as any });
+    const deploymentId = "requested-concurrent";
+    const options: { requested?: ReplaceRequest } = {};
+    const runtime = createRuntime([early, ...resources], deploymentId, options);
+    await runtime.run(`${deploymentId}-1`);
+    calls.length = 0;
+    const hash = instanceHash(
+      deploymentId,
+      orders,
+      (await runtime.state.get("orders"))!,
+    );
+    options.requested = { replace: [{ id: "orders", instanceHash: hash }] };
+    early.config.target = "elsewhere";
+
+    block = true;
+    const first = runtime.run(`${deploymentId}-a`);
+    await updateStarted;
+    await runtime.run(`${deploymentId}-b`);
+    unblock();
+    await first;
+
+    const replaced = instanceHash(
+      deploymentId,
+      orders,
+      (await runtime.state.get("orders"))!,
+    );
+    await expect(runtime.run(`${deploymentId}-b`)).rejects.toThrow(
+      `orders has the instance hash ${replaced} in this stage, not ${hash}.`,
+    );
+    expect(calls).toEqual([
+      "update target",
+      "create shop--prod--orders",
+      "update target",
+      "delete shop--prod--orders",
+    ]);
+    runtime.close();
+  });
+
+  it("gives a stage's hash only to that stage", async () => {
+    const dev = await deployed("shop:dev");
+    const prod = await deployed("shop:prod");
+
+    expect(dev.hash).not.toBe(prod.hash);
+    prod.options.requested = {
+      replace: [{ id: "orders", instanceHash: dev.hash }],
+    };
+    await expect(prod.runtime.run("shop:prod-2")).rejects.toThrow(
+      `orders has the instance hash ${prod.hash} in this stage, not ${dev.hash}.`,
+    );
+    dev.runtime.close();
+    prod.runtime.close();
+  });
+
+  it("takes the same decisions when an execution resumes after the replacement was created", async () => {
+    const queues = defineQueues();
+    const deploymentId = "requested-resume";
+    const options: { requested?: ReplaceRequest; crashAfterStep?: string } = {};
+    const runtime = createRuntime(queues.resources, deploymentId, {
+      ...options,
+      crashAfterStep:
+        "notation:deploy:orders:replace:create:create:remote:effect:0",
+      get requested() {
+        return options.requested;
+      },
+    });
+    await runtime.run("requested-resume-1");
+    queues.calls.length = 0;
+    options.requested = {
+      replace: [
+        {
+          id: "orders",
+          instanceHash: instanceHash(
+            deploymentId,
+            queues.orders,
+            (await runtime.state.get("orders"))!,
+          ),
+        },
+      ],
+    };
+
+    await expect(runtime.run("requested-resume-2")).rejects.toThrow(
+      "simulated process crash",
+    );
+    expect(queues.calls).toEqual(["create shop--prod--orders"]);
+    await runtime.run("requested-resume-2");
+
+    expect(queues.calls).toEqual([
+      "create shop--prod--orders",
+      "update target",
+      "delete shop--prod--orders",
+    ]);
+    runtime.close();
+  });
+
+  /**
+   * A delete-first bucket whose class refuses a replace, and a binding whose
+   * records block the bucket's delete, whose class also refuses a replace.
+   */
+  function defineBuckets() {
+    const calls: string[] = [];
+    const refuse = (_previous: any, _desired: any, context: any) =>
+      context.replace ? "Replacing this deletes data." : undefined;
+    const Bucket = resource({
+      type: "test/durable/requested-bucket",
+      provider: "test",
+    })
+      // Cast: as in `defineQueues`.
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async (params: any) => {
+          calls.push(`create bucket ${params.name}`);
+        },
+        delete: async (key: any) => {
+          calls.push(`delete bucket ${key.name}`);
+        },
+        rejectChange: refuse,
+      });
+    const Binding = resource({
+      type: "test/durable/requested-binding",
+      provider: "test",
+      blocksDeleteOf: [Bucket.type],
+    })
+      // Cast: as in `defineQueues`.
+      .defineSchema({
+        bucket: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async (params: any) => {
+          calls.push(`create binding ${params.bucket}`);
+        },
+        delete: async (key: any) => {
+          calls.push(`delete binding ${key.bucket}`);
+        },
+        rejectChange: refuse,
+      });
+    const bucket = new Bucket("bucket", { config: { name: "b" } as any });
+    const binding = new Binding("binding", {
+      config: { bucket: bucket.outputRef("name") } as any,
+    });
+    return { calls, bucket, binding };
+  }
+
+  async function targets(
+    runtime: ReturnType<typeof createRuntime>,
+    deploymentId: string,
+    resources: BaseResource[],
+  ) {
+    return Promise.all(
+      resources.map(async (resource) => ({
+        id: resource.id,
+        instanceHash: instanceHash(
+          deploymentId,
+          resource,
+          (await runtime.state.get(resource.id))!,
+        ),
+      })),
+    );
+  }
+
+  it("replaces delete-first a resource whose class refuses the replace, with --override-loss-protection", async () => {
+    const { calls, bucket } = defineBuckets();
+    const deploymentId = "requested-override";
+    const options: { requested?: ReplaceRequest } = {};
+    const runtime = createRuntime([bucket], deploymentId, options);
+    await runtime.run(`${deploymentId}-1`);
+    calls.length = 0;
+    const replace = await targets(runtime, deploymentId, [bucket]);
+
+    options.requested = { replace };
+    await expect(runtime.run(`${deploymentId}-2`)).rejects.toThrow(
+      "bucket: Replacing this deletes data. To replace it, pass --override-loss-protection bucket with --replace.",
+    );
+    expect(calls).toEqual([]);
+
+    options.requested = { replace, overrideLossProtection: ["bucket"] };
+    await runtime.run(`${deploymentId}-3`);
+    expect(calls).toEqual(["delete bucket b", "create bucket b"]);
+    runtime.close();
+  });
+
+  it("deletes a requested dependent that blocks the delete of another replaced resource, and creates it again once", async () => {
+    const { calls, bucket, binding } = defineBuckets();
+    const deploymentId = "requested-blocking";
+    const options: { requested?: ReplaceRequest } = {};
+    const runtime = createRuntime([bucket, binding], deploymentId, options);
+    await runtime.run(`${deploymentId}-1`);
+    calls.length = 0;
+    const replace = await targets(runtime, deploymentId, [bucket, binding]);
+
+    // The binding's own refusal, with the flag that overrides it.
+    options.requested = { replace, overrideLossProtection: ["bucket"] };
+    await expect(runtime.run(`${deploymentId}-2`)).rejects.toThrow(
+      "binding: Replacing this deletes data. To replace it, pass --override-loss-protection binding with --replace.",
+    );
+    expect(calls).toEqual([]);
+
+    options.requested = {
+      replace,
+      overrideLossProtection: ["bucket", "binding"],
+    };
+    await runtime.run(`${deploymentId}-3`);
+    expect(calls).toEqual([
+      "delete binding b",
+      "delete bucket b",
+      "create bucket b",
+      "create binding b",
+    ]);
+    runtime.close();
+  });
+});
+
 function createRuntime(
   resources: BaseResource[],
   deploymentId: string,
@@ -8495,6 +8916,7 @@ function createRuntime(
     driftDetection?: boolean;
     dryRun?: boolean;
     emit?: (event: ReconcilerEvent) => void;
+    requested?: ReplaceRequest;
   } = {},
 ) {
   const database = createSqliteDb({ path: ":memory:" });
@@ -8528,6 +8950,8 @@ function createRuntime(
       emit: options.emit,
       maxOperationAttempts: options.maxOperationAttempts,
       nameScope: { app: "shop", stage: "prod" },
+      // Read at execution time, as is `dryRun`.
+      requested: options.requested,
     });
   });
   const destroy = workflow(async function* (step, event) {

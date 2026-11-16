@@ -14,6 +14,7 @@ import {
   DurableStateBackend,
   type DurableStep,
 } from "@notation/reconciler/durable";
+import type { DurableValue } from "@notation/resource";
 import pino, { type Logger } from "pino";
 import { filePaths } from "src/utils/paths";
 import {
@@ -52,6 +53,13 @@ export type NodeDurableRuntimeOptions = {
 export type RunWorkflowOptions = {
   workflowId: string;
   executionId: string;
+  /**
+   * Saved with a new execution. A resume gets the params that the execution
+   * started with, not these.
+   */
+  params?: Record<string, DurableValue>;
+  /** Called with the saved params on a resume. Throws to refuse it. */
+  assertResumable?: (saved: Record<string, unknown>) => void;
 };
 
 /** Resident durable runtime used by Notation application commands. */
@@ -148,11 +156,16 @@ export class NodeDurableRuntime {
    * deployment and workflow, so a reused ID cannot replay one workflow's
    * recorded steps inside another.
    */
-  async #admit({ workflowId, executionId }: RunWorkflowOptions): Promise<void> {
+  async #admit({
+    workflowId,
+    executionId,
+    params,
+    assertResumable,
+  }: RunWorkflowOptions): Promise<void> {
     const admission = await this.#runtime.executions.admit({
       executionId,
       workflowId,
-      params: { deploymentId: this.deploymentId },
+      params: { ...params, deploymentId: this.deploymentId },
       context: new Map(),
     });
     if (admission.status === "accepted") return;
@@ -184,6 +197,7 @@ export class NodeDurableRuntime {
         { cause: record.outcome.error },
       );
     }
+    assertResumable?.(record.params ?? {});
   }
 
   close(): void {
@@ -279,20 +293,23 @@ export async function runDurableWorkflow(
     runtime?: NodeDurableRuntime;
     databasePath?: string;
     executionId: string;
-  },
+  } & Pick<RunWorkflowOptions, "params" | "assertResumable">,
   body: (
     step: DurableStep,
     executionId: string,
     runtime: NodeDurableRuntime,
+    params: Record<string, unknown>,
   ) => AsyncGenerator<any, void, any>,
 ): Promise<void> {
   await withRuntime(opts, async (runtime) => {
     const handler = workflow(async function* (step, event) {
-      yield* body(step, event.executionId, runtime);
+      yield* body(step, event.executionId, runtime, event.params ?? {});
     });
     await runtime.run(createWorkflowRouter({ [opts.workflowId]: handler }), {
       workflowId: opts.workflowId,
       executionId: opts.executionId,
+      params: opts.params,
+      assertResumable: opts.assertResumable,
     });
   });
 }

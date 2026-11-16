@@ -935,10 +935,13 @@ export type RejectChange<Params> = (
 export type RejectChangeContext = {
   /**
    * True when deploy deletes the resource and creates it again: a param
-   * that forces replacement changed, or a resource that it depends on is
-   * replaced and its type blocks that resource's delete.
+   * that forces replacement changed, a resource that it depends on is
+   * replaced and its type blocks that resource's delete, or the user asked
+   * for the replace.
    */
   replace: boolean;
+  /** Set when the user asked for the replace with `--replace`. */
+  requested?: true;
 };
 
 /**

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Option, program } from "commander";
 import { compile } from "./compile";
-import { deploy } from "./deploy";
+import { deploy, replaceRequest } from "./deploy";
 import { destroy } from "./destroy";
 import { plan } from "./plan";
 import { resolveOutputMode } from "./output";
@@ -38,6 +38,21 @@ const stageOption = [
 const jsonOption = [
   "--json",
   "stream reconciler events as NDJSON (the default when stdout is not a terminal)",
+] as const;
+const collect = (value: string, previous: string[] = []) => [
+  ...previous,
+  value,
+];
+const replaceOption = (hash: string) =>
+  [
+    `--replace <id${hash}>`,
+    `replace the resource with this ID in state, as for a param that forces replacement (repeatable)`,
+    collect,
+  ] as const;
+const overrideLossProtectionOption = [
+  "--override-loss-protection <id>",
+  "replace a resource that --replace names, though its class refuses the replace (repeatable)",
+  collect,
 ] as const;
 const prettyOption = () =>
   new Option(
@@ -78,6 +93,8 @@ program
   .option("--execution-id <id>", "resume a durable execution")
   .option("--no-compile", "deploy the existing build without compiling")
   .option("--no-drift-detection", "skip drift detection")
+  .option(...replaceOption("@hash"))
+  .option(...overrideLossProtectionOption)
   .addOption(
     new Option(
       "--prompt-secrets",
@@ -93,6 +110,8 @@ program
       resumeCommand: resumeCommand("deploy", options),
       compile: options.compile,
       driftDetection: options.driftDetection,
+      requested: replaceRequest(options),
+      config: options.config,
       // Without --json, a person may still be at the terminal.
       promptSecrets: options.promptSecrets || options.json !== true,
     });
@@ -126,10 +145,16 @@ program
     "print the plan as JSON (the default when stdout is not a terminal)",
   )
   .addOption(prettyOption())
+  .option(...replaceOption("[@hash]"))
+  .option(...overrideLossProtectionOption)
   .action(async (options) => {
     const project = await load(options);
     const deployment = resolveDeployment(project, { stage: options.stage });
-    await plan(deployment, { output: resolveOutputMode(options) });
+    await plan(deployment, {
+      output: resolveOutputMode(options),
+      requested: replaceRequest(options),
+      config: options.config,
+    });
   });
 
 program

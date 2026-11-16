@@ -37,7 +37,7 @@ export function containsUnknownAfterApply(value: unknown): boolean {
  * A field that forces replacement. `known: false` means the desired value, or
  * part of it, is unknown after apply, so the field may force replacement.
  */
-export type ReplaceField = {
+export type ParamReplaceField = {
   name: string;
   known: boolean;
   /**
@@ -46,7 +46,16 @@ export type ReplaceField = {
    * operation, so the resource is replaced.
    */
   credential?: true;
+  requested?: never;
 };
+
+/**
+ * What forces a replacement: a field, or the user's request with
+ * `--replace`, which names no field.
+ */
+export type ReplaceField =
+  | ParamReplaceField
+  | { requested: true; known: true; name?: never; credential?: never };
 
 export type ParamsDiffDisplay = {
   added: Record<string, unknown>;
@@ -60,7 +69,7 @@ export type ParamsDiff = {
   /** Names of changed fields. */
   changed: string[];
   /** Fields that force replacement. */
-  replaceFields: ReplaceField[];
+  replaceFields: ParamReplaceField[];
   /** For plan display. */
   diff: ParamsDiffDisplay;
 };
@@ -104,7 +113,7 @@ export function diffParams(
   >;
 
   const changed: string[] = [];
-  const replaceFields: ReplaceField[] = [];
+  const replaceFields: ParamReplaceField[] = [];
   for (const [name, item] of Object.entries(schema)) {
     if (!isComparable(item)) continue;
     const unknown = containsUnknownAfterApply(desiredComparable[name]);

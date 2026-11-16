@@ -1,6 +1,7 @@
 import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { accountId, cloudflareCreate } from "src/api/client";
+import { refuseReplace } from "src/resources/refuse-replace";
 import {
   createNamespace,
   deleteNamespace,
@@ -136,6 +137,10 @@ export const KVNamespace = kvNamespaceSchema.defineOperations({
       if (!isNotFound(error)) throw error;
     }
   },
+
+  rejectChange: refuseReplace(
+    "Replacing this KV namespace would delete it and its keys.",
+  ),
 
   deriveParams: () => ({ AccountId: accountId() }),
 });

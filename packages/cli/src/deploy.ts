@@ -1,13 +1,17 @@
 import {
   deployApp,
+  formatRequest,
+  parseReplaceTarget,
   resolveDeploymentId,
   type Deployment,
+  type ReplaceRequest,
   type SecretPrompt,
 } from "@notation/core";
 import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
 import { createEventRenderer, type OutputMode } from "./output";
+import { targetFlags } from "./plan";
 import { canPrompt, terminalSecretPrompt } from "./prompt";
 
 export type DeployCommandOptions = {
@@ -28,6 +32,10 @@ export type DeployCommandOptions = {
   promptSecrets?: boolean;
   /** Defaults to the prompt that `secretPrompt` picks. */
   promptSecret?: SecretPrompt;
+  /** The replaces from `--replace` and `--override-loss-protection`. */
+  requested?: ReplaceRequest;
+  /** The `--config` path, for the plan command that a missing hash prints. */
+  config?: string;
 };
 
 export async function deploy(
@@ -37,6 +45,7 @@ export async function deploy(
   const logger = opts.logger ?? defaultLogger;
   const output = opts.output ?? "pretty";
   const emit = createEventRenderer(output, logger);
+  assertHashesGiven(deployment, opts);
 
   if (opts.compile !== false) {
     await compile(deployment, { logger });
@@ -55,6 +64,7 @@ export async function deploy(
     emit,
     executionId,
     driftDetection: opts.driftDetection,
+    requested: opts.requested,
     promptSecret:
       opts.promptSecret ??
       secretPrompt({
@@ -77,4 +87,40 @@ export function secretPrompt(opts: {
   if (opts.json && !opts.promptSecrets) return undefined;
   if (!canPrompt()) return undefined;
   return terminalSecretPrompt();
+}
+
+/**
+ * Throws if a `--replace` has no instance hash, with the plan command that
+ * prints the deploy command with the hash. Skipped on a resume, so that
+ * `assertSameRequest` reports a request that differs from the saved one.
+ */
+function assertHashesGiven(
+  deployment: Deployment,
+  opts: DeployCommandOptions,
+): void {
+  if (opts.executionId !== undefined) return;
+  const missing = opts.requested?.replace.find(
+    (target) => target.instanceHash === undefined,
+  );
+  if (!missing) return;
+  throw new Error(
+    `--replace ${missing.id} needs the instance hash, as --replace ${missing.id}@<instance hash>. Run notation plan ${targetFlags(deployment, opts.config)} ${formatRequest(opts.requested)} to print the deploy command with the hash.`,
+  );
+}
+
+/**
+ * Reads `--replace` and `--override-loss-protection`. Undefined when neither
+ * is given, so that a resume uses the request that the execution saved.
+ */
+export function replaceRequest(options: {
+  replace?: string[];
+  overrideLossProtection?: string[];
+}): ReplaceRequest | undefined {
+  if (!options.replace && !options.overrideLossProtection) return undefined;
+  return {
+    replace: (options.replace ?? []).map(parseReplaceTarget),
+    ...(options.overrideLossProtection
+      ? { overrideLossProtection: options.overrideLossProtection }
+      : {}),
+  };
 }
