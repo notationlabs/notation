@@ -7,6 +7,7 @@ import {
 import { assertId, type IdOption } from "@notation/utils";
 import type { Json } from "src/json";
 import type { KVNamespaceInstance } from "src/resources/kv/kv-namespace";
+import type { JsonValue } from "src/workers/declaration";
 import {
   KVJsonValue,
   type KVJsonValueInstance,
@@ -22,10 +23,19 @@ export type JsonPartial<T> = T extends readonly unknown[]
     ? { [K in keyof T]?: JsonPartial<T[K]> }
     : T;
 
-/** A schema whose input type is JSON. Its output type can be any type. */
-type JsonInputSchema = StandardSchemaV1<Json, unknown>;
+type JsonInputSchema = StandardSchemaV1<unknown, unknown>;
 
 type Input<S extends JsonInputSchema> = StandardSchemaV1.InferInput<S>;
+
+/**
+ * `S` when the input type of the schema `S` is JSON, and an error otherwise.
+ * It uses `JsonValue` rather than `Json`, so an input typed as an interface
+ * passes. Its output type can be any type.
+ */
+type JsonSchemaCheck<S extends JsonInputSchema> =
+  Input<S> extends JsonValue<Input<S>>
+    ? S
+    : S & { "~error": "The input type of the schema must be JSON" };
 
 export type KVJsonConfig<S extends JsonInputSchema = JsonInputSchema> = {
   /**
@@ -43,7 +53,7 @@ export type KVJsonConfig<S extends JsonInputSchema = JsonInputSchema> = {
    * merged. Import it from a shared module, so that a Worker can pass it to
    * `readKVJson()`. Its input type must be JSON.
    */
-  schema: S;
+  schema: JsonSchemaCheck<S>;
   /** The first part of the document, before the contributions. */
   value?: JsonPartial<Input<S>>;
 };

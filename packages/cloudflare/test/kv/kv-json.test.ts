@@ -14,7 +14,10 @@ import {
 import { NodeDurableRuntime, runDurableWorkflow } from "@notation/core";
 import { createPlan, createResourceRegistry } from "@notation/reconciler";
 import * as durable from "@notation/reconciler/durable";
-import { collectResourceGraph } from "@notation/resource";
+import {
+  collectResourceGraph,
+  type StandardSchemaV1,
+} from "@notation/resource";
 import { kvJson, type JsonPartial } from "src/kv";
 import { KVJsonValue } from "src/resources/kv/kv-json-value";
 import { KVNamespace } from "src/resources/kv/kv-namespace";
@@ -307,19 +310,22 @@ describe("kvJson()", () => {
     expect(values.get("flags")).toBe('{"features":{},"namespace":"ns1"}');
   });
 
-  it("plans a drift update, and writes the key again, when the stored text isn't JSON", async () => {
-    await deploy("first", twoContributions);
-    values.set("flags", "not json");
+  it.each(["not json", "[1e999]"])(
+    "plans a drift update, and writes the key again, when the stored text is %j",
+    async (stored) => {
+      await deploy("first", twoContributions);
+      values.set("flags", stored);
 
-    const node = await plan(twoContributions, true);
-    expect(node.decision).toBe("drift-update");
+      const node = await plan(twoContributions, true);
+      expect(node.decision).toBe("drift-update");
 
-    await deploy("second", twoContributions);
-    expect(JSON.parse(values.get("flags")!)).toEqual({
-      features: { invoices: true, uploads: true },
-      limits: { uploadMb: 50 },
-    });
-  });
+      await deploy("second", twoContributions);
+      expect(JSON.parse(values.get("flags")!)).toEqual({
+        features: { invoices: true, uploads: true },
+        limits: { uploadMb: 50 },
+      });
+    },
+  );
 
   it("keeps the schema on the group", async () => {
     let schema: unknown;
@@ -355,6 +361,21 @@ describe("kvJson()", () => {
         });
       }),
     ).rejects.toThrow(`kvJson() "flags" requires a schema`);
+  });
+
+  it("accepts a schema whose input is an interface, and refuses one whose input isn't JSON", async () => {
+    interface Limits {
+      uploadMb: number;
+      label?: string;
+    }
+    const limits = {} as StandardSchemaV1<Limits, Limits>;
+    const dates = {} as StandardSchemaV1<{ at: Date }, { at: Date }>;
+    const declare = (namespace: InstanceType<typeof KVNamespace>) => {
+      kvJson({ id: "limits", namespace, key: "limits", schema: limits });
+      // @ts-expect-error A Date isn't JSON.
+      kvJson({ id: "dates", namespace, key: "dates", schema: dates });
+    };
+    expectTypeOf(declare).toBeFunction();
   });
 
   it("types each contribution as a partial of the schema's input", () => {

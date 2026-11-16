@@ -144,19 +144,19 @@ The error names the `kvJson()` call, not the contribution. The path, `features.i
 
 Notation checks the document at three points:
 
-| Point       | What is checked                                                                        |
-| ----------- | -------------------------------------------------------------------------------------- |
-| Declaration | Nothing. A later contribution can still supply a field that the schema requires        |
-| Plan        | The merged document. Fields that hold an output ref that is not known yet are left out |
-| Deploy      | The merged document, with every output ref filled in, before deploy changes anything   |
+| Point       | What is checked                                                                                                                        |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Declaration | Nothing. A later contribution can still supply a field that the schema requires                                                        |
+| Plan        | The merged document. Fields that hold an output ref that is not known yet are left out                                                 |
+| Deploy      | The known fields before deploy changes anything, and the whole document, with every output ref filled in, before deploy writes the key |
 
 **The schema only checks the document.** Deploy writes the merged document as it is, not the schema's output. A default in the schema applies in the Worker, but deploy does not write it.
 
-Deploy also refuses a value that `JSON.stringify` would change, such as `NaN`, a `Date`, a sparse array, or a key set to `undefined`. The stored text is at most 25 MiB.
+Deploy also refuses a value that `JSON.stringify` would change, such as `NaN`, a `Date`, a sparse array, a key set to `undefined`, or a key named `__proto__`. The stored text is at most 25 MiB.
 
 ### Drift
 
-Plan reads the key and compares the parsed document with the merged document. When the key holds text that is not JSON, plan reads it as a JSON string. That string differs from the document, so plan shows an update and deploy writes the key again.
+Plan reads the key and compares the parsed document with the merged document. When the key holds text that is not JSON, or JSON that deploy would refuse, such as `[1e999]`, plan reads it as a JSON string. That string differs from the document, so plan shows an update and deploy writes the key again.
 
 ## Reading the document in a Worker
 
@@ -216,3 +216,4 @@ A change to the schema changes no param, so it plans no update by itself. The ne
 - **Moving a key from `KVValue` to `kvJson()` fails.** Deploy creates the document before it deletes the `KVValue`, and create refuses a key that exists. Remove the `KVValue` in one deploy and declare the document in the next, or give the document another key.
 - **A change to `id` with the same `key` fails** for the same reason: a new `id` is a new resource. Change the `key` with the `id`, or remove the document in one deploy and declare it again in the next.
 - **State holds the document twice**, in the params and in the outputs. Keep large documents in R2.
+- **A check of an unknown field waits for deploy.** A field that holds a ref to an output that the same deploy creates is checked only before deploy writes the key. When a function contribution reads such an output, the whole document is checked then. Deploy can then fail after it has changed other resources.

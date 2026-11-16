@@ -89,4 +89,23 @@ describe("KVJsonValue", () => {
       Value: "not json",
     });
   });
+
+  it("reads text that parses to a value the validator refuses as a JSON string", async () => {
+    mockFetch(() => text("[1e999]"));
+
+    await expect(kvJsonValue.read!(key)).resolves.toEqual({
+      ...key,
+      Value: "[1e999]",
+    });
+  });
+
+  it("reads text too long to be a JSON string within 25 MiB as a short string", async () => {
+    const stored = "\n".repeat(13 * 1024 * 1024);
+    mockFetch(() => text(stored));
+
+    const result = (await kvJsonValue.read!(key)) as { Value: unknown };
+    expect(result.Value).toBe(
+      `<${stored.length} characters that are not a valid JSON value>`,
+    );
+  });
 });

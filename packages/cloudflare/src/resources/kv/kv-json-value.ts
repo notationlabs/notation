@@ -38,17 +38,28 @@ const kvJsonValueSchema = resource<KVJsonValueSchema>(
   },
 } as const);
 
-// Text that is not JSON reads as a JSON string. It differs from the value in
-// code, so plan shows an update and deploy writes the key again. A read that
-// threw would stop every deploy until the key was fixed by hand.
+const jsonValidator = jsonSchema()["~standard"];
+
+// `jsonSchema` validates synchronously.
+const isJson = (value: unknown): boolean =>
+  !(jsonValidator.validate(value) as { issues?: unknown }).issues;
+
+// Read must return a value that the class validator accepts, or plan fails.
+// Text that is not JSON, or that parses to a value the validator refuses,
+// such as `[1e999]`, reads as a JSON string. Text too long to be a JSON
+// string within 25 MiB reads as a short string that names its length. Both
+// differ from the value in code, so plan shows an update and deploy writes
+// the key again. A read that threw would stop every deploy until the key was
+// fixed by hand.
 const jsonEncoding: KVEncoding<Json> = {
   encode: (value) => sortedJson.encode(value),
   decode: (text) => {
     try {
-      return sortedJson.decode(text) as Json;
-    } catch {
-      return text;
-    }
+      const value = sortedJson.decode(text);
+      if (isJson(value)) return value as Json;
+    } catch {}
+    if (isJson(text)) return text;
+    return `<${text.length} characters that are not a valid JSON value>`;
   },
 };
 

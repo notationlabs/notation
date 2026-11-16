@@ -65,6 +65,12 @@ describe("jsonSchema", () => {
     ]);
   });
 
+  it("refuses an own key named __proto__", () => {
+    expect(issuesOf(JSON.parse('{"a":{"__proto__":{"b":1}}}'))).toEqual([
+      "a.__proto__: The key __proto__ isn't supported. Use another key",
+    ]);
+  });
+
   it("refuses a bigint and a symbol", () => {
     expect(issuesOf({ a: 1n, b: Symbol("b") })).toEqual([
       "a: A bigint isn't JSON",

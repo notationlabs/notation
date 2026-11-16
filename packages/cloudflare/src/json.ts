@@ -20,8 +20,9 @@ const MAX_BYTES = 25 * 1024 * 1024;
 /**
  * A validator of JSON values that `JSON.stringify` writes as they are. It
  * fails a value that `JSON.stringify` would change or drop, such as `NaN`,
- * a `Date`, a sparse array, or `undefined` at any depth. It also fails a
- * value whose text from `sortedJson.encode` is longer than 25 MiB in UTF-8.
+ * a `Date`, a sparse array, or `undefined` at any depth. It also fails an
+ * object key named `__proto__`, and a value whose text from
+ * `sortedJson.encode` is longer than 25 MiB in UTF-8.
  */
 export function jsonSchema(): StandardSchemaV1<Json, Json> {
   return {
@@ -48,11 +49,7 @@ export function jsonSchema(): StandardSchemaV1<Json, Json> {
   };
 }
 
-function collectIssues(
-  value: unknown,
-  path: string[],
-  issues: Issue[],
-): void {
+function collectIssues(value: unknown, path: string[], issues: Issue[]): void {
   const fail = (message: string) => issues.push({ message, path });
   switch (typeof value) {
     case "string":
@@ -101,6 +98,15 @@ function collectIssues(
       fail(`A ${name} isn't JSON. Only plain objects are`);
     } else {
       for (const [key, entry] of Object.entries(value)) {
+        // An assignment to `__proto__` sets the prototype, so the encoder and
+        // the merge of contributions would lose the key.
+        if (key === "__proto__") {
+          issues.push({
+            message: "The key __proto__ isn't supported. Use another key",
+            path: [...path, key],
+          });
+          continue;
+        }
         collectIssues(entry, [...path, key], issues);
       }
     }
