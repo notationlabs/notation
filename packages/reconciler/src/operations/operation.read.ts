@@ -1,6 +1,7 @@
 import {
   isCredentialMarker,
   ResourceNotFoundError,
+  ResourceOperationPendingError,
   validateValues,
   type BaseResource,
   type DurableObject,
@@ -19,11 +20,20 @@ import {
 import { runPendingOperation } from "./operation.pending";
 import { omitCredentials } from "../credentials";
 
+export type ReadOptions = {
+  /**
+   * Reads again after this many milliseconds when the read throws a
+   * `ResourceNotFoundError`, up to `maxOperationAttempts` reads.
+   */
+  retryNotFoundMs?: number;
+};
+
 export async function* readResourceOperation(
   step: StepRunner,
   params: ResolvedResourceParams,
+  options?: ReadOptions,
 ): AsyncGenerator<unknown, Record<string, unknown>, unknown> {
-  return (yield* readRemoteOperation(step, params)).output;
+  return (yield* readRemoteOperation(step, params, options)).output;
 }
 
 /**
@@ -34,6 +44,7 @@ export async function* readResourceOperation(
 export async function* readRemoteOperation(
   step: StepRunner,
   params: ResolvedResourceParams,
+  options?: ReadOptions,
 ): AsyncGenerator<
   unknown,
   { output: Record<string, unknown>; remote?: Record<string, unknown> },
@@ -62,18 +73,31 @@ export async function* readRemoteOperation(
     const remote = yield* runPendingOperation(
       step,
       "read:remote",
-      async (context) =>
-        // The step records what this returns, and state records the read.
-        omitCredentials(
-          params.resource,
-          params.resource.toResult(
-            await params.resource.read!(
-              params.resource.key,
-              context,
-              params.resourceParams,
+      async (context) => {
+        try {
+          // The step records what this returns, and state records the read.
+          return omitCredentials(
+            params.resource,
+            params.resource.toResult(
+              await params.resource.read!(
+                params.resource.key,
+                context,
+                params.resourceParams,
+              ),
             ),
-          ),
-        ),
+          );
+        } catch (error) {
+          const retryAfterMs = options?.retryNotFoundMs;
+          if (retryAfterMs === undefined || !ResourceNotFoundError.is(error)) {
+            throw error;
+          }
+          throw new ResourceOperationPendingError(error.message, {
+            cause: error,
+            retryAfterMs,
+            callbackContext: context,
+          });
+        }
+      },
       params.maxOperationAttempts,
     );
     // RFC 0009 will keep a resource whose read is malformed as it is. Until

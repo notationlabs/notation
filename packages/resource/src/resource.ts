@@ -189,6 +189,8 @@ export interface BaseResource {
   readonly deleteTakesDependents?: boolean;
   /** See `DefineResourceMeta.replaceCreatesFirst`. */
   readonly replaceCreatesFirst?: boolean;
+  /** See `DefineResourceMeta.readLagsCreate`. */
+  readonly readLagsCreate?: boolean;
   /** See `ResourceOperationsOptions.rejectChange`. */
   readonly rejectChange?: RejectChange<any>;
   /**
@@ -298,6 +300,7 @@ export abstract class Resource<
   abstract provider: string;
   declare readonly deleteTakesDependents?: boolean;
   declare readonly replaceCreatesFirst?: boolean;
+  declare readonly readLagsCreate?: boolean;
   abstract schema: Schema;
   abstract create: (
     params: T["params"],
@@ -922,6 +925,14 @@ export type DefineResourceMeta = {
    */
   replaceCreatesFirst?: boolean;
   /**
+   * Set when the provider can report a new resource as not found for a
+   * while after `create` returns. Deploy then reads the resource again
+   * after a create when the read throws `ResourceNotFoundError`, every 2
+   * seconds, up to `maxOperationAttempts` reads. With the default of 30,
+   * that is about a minute. Without the flag, that read fails the create.
+   */
+  readLagsCreate?: boolean;
+  /**
    * The package or package subpath that exports this class, such as
    * `@notation/aws/resources`. Stored in state, so the class can be loaded
    * after its type is removed from code.
@@ -1159,6 +1170,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             static blocksDeleteOf = meta.blocksDeleteOf ?? [];
             deleteTakesDependents = meta.deleteTakesDependents ?? false;
             replaceCreatesFirst = meta.replaceCreatesFirst ?? false;
+            readLagsCreate = meta.readLagsCreate ?? false;
             static rejectChange = opts.rejectChange;
             get rejectChange() {
               return SimpleResource.rejectChange;
