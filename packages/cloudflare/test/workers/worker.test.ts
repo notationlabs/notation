@@ -383,32 +383,6 @@ describe("$worker", () => {
     ]);
   });
 
-  it("fails for a ~state ref", async () => {
-    await expect(
-      collect(() => {
-        const uploads = new r2.R2Bucket("uploads", {
-          config: {
-            BucketName: "uploads",
-            Jurisdiction: "default",
-            StorageClass: "Standard",
-          },
-        });
-        inWorker(
-          $worker({
-            id: "api",
-            compatibilityDate,
-            bindings: () => ({
-              BUCKET: uploads["~state"].outputRef("BucketName") as any,
-            }),
-          }),
-          "runtime/api.ts",
-        );
-      }),
-    ).rejects.toThrow(
-      `$worker({ id: "api" }) in runtime/api.ts binds BUCKET to a ~state ref of uploads.`,
-    );
-  });
-
   it("fails for an R2 bucket whose jurisdiction is an output ref", async () => {
     await expect(
       collect(() => {

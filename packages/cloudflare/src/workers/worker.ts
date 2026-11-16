@@ -12,6 +12,7 @@ import {
   ResourceGroup,
   type CredentialRef,
   type DeepInput,
+  type OutputRef,
   type Resolved,
 } from "@notation/resource";
 import * as std from "@notation/std/resources";
@@ -125,16 +126,10 @@ export type WorkerGroupConfig = WorkerGroupCode & {
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotectedNamespaces?: string[];
   /** The namespaces that the Worker binds on other Workers. */
-  boundNamespaces: BoundNamespaceInput[];
+  boundNamespaces: DeepInput<cloudflare.workers.BoundNamespace>[];
   /** The containers of the hosted namespaces. */
   containers?: WorkerGroupContainer[];
   url: boolean;
-};
-
-type BoundNamespaceInput = {
-  [K in keyof cloudflare.workers.BoundNamespace]: DeepInput<
-    cloudflare.workers.BoundNamespace[K]
-  >;
 };
 
 /** The image and the container application of a hosted namespace. */
@@ -646,7 +641,7 @@ type ResolvedBindings = {
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotected: Set<string>;
-  bound: BoundNamespaceInput[];
+  bound: { id: string; className: string; scriptName: OutputRef<string> }[];
   /** For each hosted namespace, the other Workers that bind it. */
   transferSources: { id: string; binders: Entry[] }[];
   /** The Workers that the Worker binds as services, itself included. */
@@ -674,14 +669,9 @@ function resolveBindings(
     containers: [],
   };
   for (const [name, value] of Object.entries(self.bindings())) {
-    if (isOutputRef(value) && value.credential) {
+    if (isOutputRef(value) && value.kind === "credential") {
       resolved.secrets[name] = value as CredentialRef<string>;
       continue;
-    }
-    if (isOutputRef(value) && value.state) {
-      throw new Error(
-        `${self.describe()} binds ${name} to a ~state ref of ${value.resource.id}. A Worker can bind an output ref, but not a ~state ref.`,
-      );
     }
     if (typeof value === "string" || isOutputRef(value) || isDerived(value)) {
       resolved.bindings.push({ type: "plain_text", name, text: value });
