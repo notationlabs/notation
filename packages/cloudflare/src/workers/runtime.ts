@@ -5,16 +5,13 @@ import type {
   Worker,
 } from "./declaration";
 import type { DurableObjectDeclarationConfig } from "./durable-object";
-import type { WorkerSecretConfig } from "./secret";
 import type { WorkerDeclarationConfig } from "./worker";
 
 // The runtime build resolves `@notation/cloudflare/workers` to this module,
 // so it exports the same names as `index.ts`.
 
 export type * from "./declaration";
-export { secretsStore } from "./secrets-store";
 export { json } from "./json";
-export type { WorkerSecretConfig } from "./secret";
 
 /** Declares nothing at runtime. The Worker reads its bindings from `env`. */
 export function $worker<const Id extends string, B extends Bindings = {}>(
@@ -42,8 +39,4 @@ export class WorkerGroup {
 
 export function isWorkerGroup(_value: unknown): false {
   return false;
-}
-
-export function workerSecret(_config: WorkerSecretConfig): never {
-  throw infraOnly("workerSecret");
 }

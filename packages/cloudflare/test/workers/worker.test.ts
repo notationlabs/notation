@@ -14,6 +14,7 @@ import {
   declaredIn,
   ownPhysicalName,
   type BaseResource,
+  type OutputRef,
   type RecordedOutputs,
   type ResourceGraph,
   generatedPhysicalName,
@@ -34,13 +35,12 @@ import {
   $worker,
   isWorkerGroup,
   json,
-  workerSecret,
   type WorkerEnv,
   type WorkerGroup,
 } from "src/workers";
 import * as runtime from "src/workers/runtime";
-import { kv, r2 } from "src/resources";
-import { env } from "@notation/std/sources";
+import { kv, r2, secretsStore, tokens } from "src/resources";
+import { TestSource } from "../fixtures/test-source";
 
 const projectDir = "/some/project";
 const compatibilityDate = "2026-10-12";
@@ -270,6 +270,95 @@ describe("$worker", () => {
       { type: "kv_namespace", name: "CACHE", namespace_id: "ns1" },
       { type: "json", name: "CONFIG", json: { retries: 3 } },
     ]);
+  });
+
+  it("binds a credential as a secret, and a SecretsStoreSecret from its store, and uploads after the secret", async () => {
+    let apiKey!: InstanceType<typeof TestSource>;
+    let token!: InstanceType<typeof tokens.AccountToken>;
+    let stored!: InstanceType<typeof secretsStore.SecretsStoreSecret>;
+    const graph = await collect(() => {
+      apiKey = new TestSource("api-key", { config: { key: "API_KEY" } });
+      token = new tokens.AccountToken("deploy-token", {
+        config: {
+          Policies: [
+            {
+              effect: "allow",
+              permissionGroups: ["Workers Scripts Write"],
+              resources: { "com.cloudflare.api.account.acc": "*" },
+            },
+          ],
+        },
+      });
+      const store = new secretsStore.SecretsStore("store");
+      stored = new secretsStore.SecretsStoreSecret("deploy-token-secret", {
+        config: { Value: token.credentials.Value },
+        dependencies: { store },
+      });
+      inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({
+            API_KEY: apiKey.credentials.value,
+            DEPLOY_TOKEN: stored,
+          }),
+        }),
+        "runtime/api.ts",
+      );
+    });
+    const api = group(graph, "api");
+
+    const secret = api.script.config.Secrets?.API_KEY as unknown as OutputRef;
+    expect(Object.keys(api.script.config.Secrets ?? {})).toEqual(["API_KEY"]);
+    expect(secret.resource).toBe(apiKey);
+    expect(secret.path).toEqual(["value"]);
+    expect(api.script.getDependencies()).toEqual(
+      expect.arrayContaining([apiKey, stored]),
+    );
+    const marker = {
+      $credential: { resource: "api-key", name: "value", version: "v1" },
+    };
+    apiKey.setOutput({ revision: "r1", value: marker } as any);
+    stored.setOutput({ StoreId: "store", Name: "shop--dev--x-1" } as any);
+    expect(await deployParams(api, [])).toMatchObject({
+      Bindings: [
+        {
+          type: "secrets_store_secret",
+          name: "DEPLOY_TOKEN",
+          store_id: "store",
+          secret_name: "shop--dev--x-1",
+        },
+      ],
+      Secrets: { API_KEY: marker },
+    });
+  });
+
+  it("leaves Secrets out of a Worker that binds no credential", async () => {
+    const graph = await collect(() => {
+      inWorker($worker({ id: "api", compatibilityDate }), "runtime/api.ts");
+    });
+
+    expect(group(graph, "api").script.config.Secrets).toBeUndefined();
+  });
+
+  it("fails for an output of a resource that is not a credential", async () => {
+    await expect(
+      collect(() => {
+        const cache = new kv.KVNamespace("cache", {
+          config: { Title: "cache" },
+        });
+        inWorker(
+          $worker({
+            id: "api",
+            compatibilityDate,
+            bindings: () => ({ CACHE_ID: cache.outputRef("NamespaceId") }),
+          }),
+          "runtime/api.ts",
+        );
+      }),
+    ).rejects.toThrow(
+      `$worker({ id: "api" }) in runtime/api.ts binds CACHE_ID to the output NamespaceId of cache, which is not a credential.`,
+    );
   });
 
   it("hosts a namespace whose class its module exports", async () => {
@@ -1241,7 +1330,8 @@ describe("WorkerEnv", () => {
     type _ = Env["MISSING"];
   });
 
-  it("types R2, KV, JSON and Worker secret bindings", () => {
+  it("types R2, KV, JSON, Secrets Store secret and credential bindings", () => {
+    const apiKey = {} as InstanceType<typeof TestSource>;
     const worker = runtime.$worker({
       id: "api",
       compatibilityDate,
@@ -1249,7 +1339,8 @@ describe("WorkerEnv", () => {
         UPLOADS: {} as InstanceType<typeof r2.R2Bucket>,
         CACHE: {} as InstanceType<typeof kv.KVNamespace>,
         CONFIG: runtime.json({ retries: 3, regions: ["weur"] }),
-        API_KEY: {} as ReturnType<typeof workerSecret>,
+        STORED: {} as InstanceType<typeof secretsStore.SecretsStoreSecret>,
+        API_KEY: apiKey.credentials.value,
       }),
     });
     type Env = WorkerEnv<typeof worker>;
@@ -1260,6 +1351,7 @@ describe("WorkerEnv", () => {
       retries: number;
       regions: string[];
     }>();
+    expectTypeOf<Env["STORED"]>().toEqualTypeOf<cf.SecretsStoreSecret>();
     expectTypeOf<Env["API_KEY"]>().toEqualTypeOf<string>();
   });
 

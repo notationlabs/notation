@@ -64,7 +64,7 @@ const key = { AccountId: "acc", TokenId: "t1" };
 
 const tokenWith = (Policies: ReturnType<typeof policy>[]) =>
   new AccountToken("token:deploy", {
-    config: { Name: params.Name, Policies },
+    config: { Policies },
   });
 
 const token = tokenWith(policies);
@@ -385,7 +385,7 @@ describe("AccountToken", () => {
 
     const tokenWithConfig = (config: Record<string, unknown>) =>
       new AccountToken("token:deploy", {
-        config: { Name: params.Name, Policies: policies, ...config },
+        config: { Policies: policies, ...config },
       });
 
     // A resource that has deployed, with outputs for the token's config to use.

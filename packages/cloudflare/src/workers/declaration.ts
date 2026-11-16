@@ -1,6 +1,7 @@
 import type * as cf from "@cloudflare/workers-types";
 import type { KVNamespaceInstance } from "src/resources/kv/kv-namespace";
 import type { R2BucketInstance } from "src/resources/r2/r2-bucket";
+import type { SecretsStoreSecretInstance } from "src/resources/secrets-store/secrets-store-secret";
 
 // The runtime build also loads this module, so it must only import types.
 
@@ -17,22 +18,6 @@ export interface DurableObjectDeclaration<
    * with an `id` is not accepted as a namespace.
    */
   readonly "~durableObject": { class: C };
-}
-
-/**
- * A secret that `secretsStore.bind()` binds, from `secret()` or
- * `accountToken()`. The hook gives the resource whose outputs say where the
- * secret is.
- */
-export interface BindableSecret {
-  "~secret"(): {
-    outputRef(key: "StoreId" | "Name" | "SecretId"): string;
-  };
-}
-
-/** A Secrets Store secret binding, from `secretsStore.bind(secret)`. */
-export interface SecretsStoreSecretBinding {
-  readonly "~secretsStoreSecret": BindableSecret;
 }
 
 /** A JSON binding, from `json(value)`. */
@@ -61,22 +46,17 @@ export type JsonValue<T> = T extends string | number | boolean | null
       ? { [K in keyof T]: JsonValue<T[K]> }
       : never;
 
-/** A secret declared with `workerSecret()`. */
-export interface WorkerSecret {
-  readonly "~workerSecret": true;
-}
-
 /**
  * A value that a Worker can bind: a Durable Object namespace, another Worker
- * (a service binding), a secret from `secretsStore.bind()` or
- * `workerSecret()`, an R2 bucket, a KV namespace, a value from `json()` or a
- * string (plain text).
+ * (a service binding), a credential of a resource (a Worker secret), a
+ * `SecretsStoreSecret`, an R2 bucket, a KV namespace, a value from `json()`
+ * or a string (plain text). A credential is typed `string`, so the type
+ * does not tell it from plain text.
  */
 export type BindingValue =
   | string
   | DurableObjectDeclaration<any>
-  | SecretsStoreSecretBinding
-  | WorkerSecret
+  | SecretsStoreSecretInstance
   | R2BucketInstance
   | KVNamespaceInstance
   | JsonBinding<any>
@@ -105,16 +85,16 @@ type ClassOf<V> = V extends DurableObjectDeclaration<infer C> ? C : never;
 type BindingType<V> =
   V extends DurableObjectDeclaration<any>
     ? NamespaceOf<ClassOf<V>>
-    : V extends SecretsStoreSecretBinding
-      ? cf.SecretsStoreSecret
-      : V extends { readonly "~worker": unknown }
-        ? cf.Fetcher
-        : V extends JsonBinding<infer T>
-          ? T
-          : V extends R2BucketInstance
-            ? cf.R2Bucket
-            : V extends KVNamespaceInstance
-              ? cf.KVNamespace
+    : V extends { readonly "~worker": unknown }
+      ? cf.Fetcher
+      : V extends JsonBinding<infer T>
+        ? T
+        : V extends R2BucketInstance
+          ? cf.R2Bucket
+          : V extends KVNamespaceInstance
+            ? cf.KVNamespace
+            : V extends SecretsStoreSecretInstance
+              ? cf.SecretsStoreSecret
               : string;
 
 /** The `env` type of a Worker's handlers: `WorkerEnv<typeof worker>`. */

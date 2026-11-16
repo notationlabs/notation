@@ -11,6 +11,4 @@ export {
   type WorkerDeclarationConfig,
   type WorkerGroupConfig,
 } from "./worker";
-export { secretsStore } from "./secrets-store";
 export { json } from "./json";
-export { workerSecret, type WorkerSecretConfig } from "./secret";

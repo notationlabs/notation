@@ -21,9 +21,10 @@ type Probe = {
   codes: number[];
 };
 
-describeE2e("accountToken()", () => {
+describeE2e("a Worker that binds a SecretsStoreSecret", () => {
   const project = useProject({ accountTokens: true });
-  const name = `${project.scope}probe`;
+  // Deploy names the token and its secrets from their ids, with an instance.
+  const name = `${project.scope}probe-token-`;
   const accountResource = `com.cloudflare.api.account.${accountId}`;
 
   // `more` is code that follows the token's declaration.
@@ -31,39 +32,29 @@ describeE2e("accountToken()", () => {
     project.write(
       "infra/tokens.ts",
       `
-      import { ResourceGroup } from "@notation/resource";
       import * as cloudflare from "@notation/cloudflare/resources";
-      import { accountToken } from "@notation/cloudflare/tokens";
 
-      export const probeToken = accountToken({
-        id: "probe",
-        ${options}
+      const store = new cloudflare.secretsStore.SecretsStore("secrets-store");
+
+      const probeToken = new cloudflare.tokens.AccountToken("probe-token", {
+        config: { ${options} },
       });
+
+      export const probeTokenSecret = new cloudflare.secretsStore.SecretsStoreSecret(
+        "probe-token-secret",
+        { config: { Value: probeToken.credentials.Value }, dependencies: { store } },
+      );
       ${more}
       `,
     );
   }
 
-  // A second secret that takes the token's value. A deployment declares
-  // resources only through a group, so the secret sits in one.
+  // A second secret that takes the token's value.
   const copySecret = `
-    class CopyGroup extends ResourceGroup {
-      constructor() {
-        super("e2e/tokenCopy", "copy");
-        this.add(
-          new cloudflare.secretsStore.SecretsStoreSecret("secret:copy", {
-            config: {
-              Name: "${name}-copy",
-              StageScoped: true,
-              Value: probeToken.token.credentials.Value,
-            },
-            dependencies: { store: probeToken.secret.dependencies.store },
-          }),
-        );
-      }
-    }
-
-    new CopyGroup();
+    new cloudflare.secretsStore.SecretsStoreSecret("probe-token-copy", {
+      config: { Value: probeToken.credentials.Value },
+      dependencies: { store },
+    });
   `;
 
   // The Worker reads the token from its binding, verifies it, and reads the
@@ -73,13 +64,13 @@ describeE2e("accountToken()", () => {
     project.write(
       "runtime/probe.ts",
       `
-      import { $worker, secretsStore, type WorkerHandler } from "@notation/cloudflare/workers";
-      import { probeToken } from "../infra/tokens";
+      import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
+      import { probeTokenSecret } from "../infra/tokens";
 
       export const worker = $worker({
         id: "probe",
         compatibilityDate: "2026-10-12",
-        bindings: () => ({ TOKEN: secretsStore.bind(probeToken), ACCOUNT_ID: "${accountId}" }),
+        bindings: () => ({ TOKEN: probeTokenSecret, ACCOUNT_ID: "${accountId}" }),
       });
 
       export default {
@@ -118,7 +109,9 @@ describeE2e("accountToken()", () => {
 
   async function theToken(): Promise<AccountTokenSummary> {
     const tokens = await tokensWithPrefix(name);
-    expect(tokens.map((token) => token.name)).toEqual([name]);
+    expect(tokens.map((token) => token.name)).toEqual([
+      expect.stringMatching(/^[^.]+-[0-9a-f]{8}$/),
+    ]);
     const response = await api<AccountTokenSummary>(
       "GET",
       `/tokens/${tokens[0]!.id}`,
@@ -157,8 +150,8 @@ describeE2e("accountToken()", () => {
 
   it("creates a token with its condition, and binds its value to a Worker", async () => {
     writeInfra(`
-      policies: [${policy(["Account Settings Read"])}],
-      condition: { requestIp: { notIn: ["192.0.2.0/24"] } },
+      Policies: [${policy(["Account Settings Read"])}],
+      Condition: { requestIp: { notIn: ["192.0.2.0/24"] } },
     `);
     writeWorker();
     await project.notation("deploy");
@@ -168,7 +161,7 @@ describeE2e("accountToken()", () => {
     expect(token.status).toBe("active");
     expect(token.condition?.request_ip?.not_in).toEqual(["192.0.2.0/24"]);
     expect(token.expires_on ?? undefined).toBeUndefined();
-    expect(await secretsWithPrefix(name)).toMatchObject([{ name }]);
+    expect(await secretsWithPrefix(`${name}secret-`)).toHaveLength(1);
 
     const result = await probe(works);
     expect(result).toMatchObject({
@@ -181,8 +174,8 @@ describeE2e("accountToken()", () => {
 
   it("updates the policies and condition in place, and the token keeps its value", async () => {
     writeInfra(`
-      policies: [${policy(["Account Settings Read", "Workers Scripts Read"])}],
-      condition: { requestIp: { in: ["192.0.2.0/24"] } },
+      Policies: [${policy(["Account Settings Read", "Workers Scripts Read"])}],
+      Condition: { requestIp: { in: ["192.0.2.0/24"] } },
     `);
     await project.notation("deploy");
 
@@ -203,7 +196,7 @@ describeE2e("accountToken()", () => {
   });
 
   it("removes the condition, and the token works again with the same value", async () => {
-    writeInfra(`policies: [${policy(["Account Settings Read"])}],`);
+    writeInfra(`Policies: [${policy(["Account Settings Read"])}],`);
     await project.notation("deploy");
 
     const token = await theToken();
@@ -223,14 +216,17 @@ describeE2e("accountToken()", () => {
   // Deploy no longer holds the token's value, so the new secret can only get
   // one by a roll of the token.
   it("rolls the token when a second secret takes its value, and updates the first secret", async () => {
-    writeInfra(`policies: [${policy(["Account Settings Read"])}],`, copySecret);
+    writeInfra(`Policies: [${policy(["Account Settings Read"])}],`, copySecret);
     await project.notation("deploy");
 
     const token = await theToken();
     expect(token.id).toBe(tokenId);
     expect(
       (await secretsWithPrefix(name)).map((secret) => secret.name).sort(),
-    ).toEqual([name, `${name}-copy`]);
+    ).toEqual([
+      expect.stringMatching(/probe-token-copy-[0-9a-f]{8}$/),
+      expect.stringMatching(/probe-token-secret-[0-9a-f]{8}$/),
+    ]);
 
     const result = await probe(
       (probe) => works(probe) && probe.sha256 !== sha256,

@@ -207,23 +207,6 @@ export async function listScriptSecretNames(
 }
 
 /**
- * Creates or replaces the Worker's secret, and deploys a new version of the
- * Worker with it. Fails if the Worker doesn't exist.
- */
-export async function putScriptSecret(
-  account: string,
-  scriptName: string,
-  name: string,
-  value: string,
-): Promise<void> {
-  await cloudflare("PUT", `${scriptPath(account, scriptName)}/secrets`, {
-    name,
-    text: value,
-    type: "secret_text",
-  });
-}
-
-/**
  * Deletes the Worker's secret. Succeeds if the Worker or the secret is gone.
  */
 export async function deleteScriptSecret(
@@ -236,15 +219,6 @@ export async function deleteScriptSecret(
   } catch (error) {
     if (!isNotFound(error) && !isBindingNotFound(error)) throw error;
   }
-}
-
-/** The names of the account's Workers. */
-export async function listScriptNames(account: string): Promise<string[]> {
-  const scripts = await cloudflare<{ id: string }[]>(
-    "GET",
-    `/accounts/${encodeURIComponent(account)}/workers/scripts`,
-  );
-  return (scripts ?? []).map((script) => script.id);
 }
 
 /**

@@ -14,6 +14,8 @@ import {
 } from "../e2e";
 
 const SECRET_KEY = "NOTATION_E2E_ORDER_SECRET";
+// Deploy never sets it, so the value of its source can't be loaded.
+const UNSET_KEY = "NOTATION_E2E_UNSET_SECRET";
 
 describeE2e("$worker with a Worker secret, during deploy", () => {
   const project = useProject();
@@ -56,14 +58,18 @@ describeE2e("$worker with a Worker secret, during deploy", () => {
     project.write(
       "infra/main.ts",
       `
-      import { workerSecret } from "@notation/cloudflare/workers";
-      import { env } from "@notation/std/sources";
+      import { sources } from "@notation/std/resources";
 
-      export const token = workerSecret({ id: "token", source: env, key: "${SECRET_KEY}" });
-      export const ciToken = workerSecret({ id: "ci-token" });
+      export const token = new sources.Env("token", {
+        config: { key: "${SECRET_KEY}" },
+      }).credentials.value;
+      export const unset = new sources.Env("unset", {
+        config: { key: "${UNSET_KEY}" },
+      }).credentials.value;
       `,
     );
     process.env[SECRET_KEY] = secret;
+    delete process.env[UNSET_KEY];
   });
 
   afterAll(() => {
@@ -165,24 +171,22 @@ describeE2e("$worker with a Worker secret, during deploy", () => {
     expect(name).toBe(before.name);
   });
 
-  it("creates no Worker when deploy stops at a secret without a source", async () => {
-    writeWorker("new-ci", { version: "v1", bind: "ciToken" });
+  it("creates no Worker when the value of its secret can't be loaded", async () => {
+    writeWorker("new-unset", { version: "v1", bind: "unset" });
 
-    // There is no terminal for the prompt.
     await expect(project.notation("deploy")).rejects.toThrow();
 
-    expect(await workerName("new-ci")).toBeUndefined();
+    expect(await workerName("new-unset")).toBeUndefined();
     // Deploy covers every Worker of the project, so the next tests need this
-    // one to deploy without a prompt.
-    writeWorker("new-ci", { version: "v1" });
+    // one to deploy.
+    writeWorker("new-unset", { version: "v1" });
   });
 
-  it("uploads nothing when a live Worker gains a secret without a source", async () => {
-    writeWorker("ci", { version: "v1" });
-    const before = await deployWatching("ci", "v1:missing");
+  it("uploads nothing when a live Worker gains a secret whose value can't be loaded", async () => {
+    writeWorker("unset", { version: "v1" });
+    const before = await deployWatching("unset", "v1:missing");
 
-    writeWorker("ci", { version: "v2", bind: "ciToken" });
-    // There is no terminal for the prompt.
+    writeWorker("unset", { version: "v2", bind: "unset" });
     await expect(project.notation("deploy")).rejects.toThrow();
     expect(
       (await poll(project.url(before.name), { done: () => true })).body,

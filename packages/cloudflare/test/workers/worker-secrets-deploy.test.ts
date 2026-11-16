@@ -1,15 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   NodeDurableRuntime,
-  Redacted,
   runDurableWorkflow,
-  runWithSecretContext,
   setConfigFile,
-  type SecretPrompt,
-  type Source,
 } from "@notation/core";
 import {
   createPlan,
@@ -20,8 +17,8 @@ import * as durable from "@notation/reconciler/durable";
 import { collectResourceGraph, declaredIn } from "@notation/resource";
 import * as std from "@notation/std/resources";
 import * as cloudflare from "src/resources";
-import { $worker, workerSecret } from "src/workers";
-import type { WorkerSecretGroup } from "src/workers/secret";
+import { $worker } from "src/workers";
+import { loads, sourceValues, TestSource } from "../fixtures/test-source";
 
 const compatibilityDate = "2026-10-12";
 const scope = { app: "shop", stage: "dev" };
@@ -135,28 +132,25 @@ function fakeCloudflare() {
   });
 }
 
-const vault: Source = {
-  name: "vault",
-  has: async () => true,
-  get: async () => new Redacted("sk_live"),
-};
-
 // The bindings of the Worker "api" in the next collect.
-let bindings: "none" | "both" | "sourced" | "prompted";
+let bindings: "none" | "both" | "apiKey" | "admin";
 let workerId: string;
 
 const declareWorker = () => {
-  const apiKey = workerSecret({ id: "api-key", source: vault, key: "API_KEY" });
-  const admin = workerSecret({ id: "admin" });
-  const all = { API_KEY: apiKey, ADMIN: admin };
-  const chosen: Record<string, WorkerSecretGroup> =
+  const apiKey = new TestSource("api-key", { config: { key: "API_KEY" } });
+  const admin = new TestSource("admin", { config: { key: "ADMIN" } });
+  const all = {
+    API_KEY: apiKey.credentials.value,
+    ADMIN: admin.credentials.value,
+  };
+  const chosen: Record<string, string> =
     bindings === "none"
       ? {}
       : bindings === "both"
         ? all
-        : bindings === "sourced"
-          ? { API_KEY: apiKey }
-          : { ADMIN: admin };
+        : bindings === "apiKey"
+          ? { API_KEY: all.API_KEY }
+          : { ADMIN: all.ADMIN };
   declaredIn(
     $worker({
       id: workerId,
@@ -177,64 +171,57 @@ const collect = () => collectResourceGraph(infra, { scope });
 const registry = createResourceRegistry([
   cloudflare.workers.WorkerScript,
   std.fs.File,
-  std.sources.SourceValue,
 ]);
 
-function deploy(executionId: string, prompt?: SecretPrompt) {
-  return runWithSecretContext(
-    { stage: "dev", runId: executionId, prompt },
-    async () => {
-      const { resources } = await collect();
-      await runDurableWorkflow(
-        { workflowId: "deploy", runtime, executionId },
-        (step, id) =>
-          durable.deploy(step, {
-            executionId: id,
-            resources,
-            registry,
-            state: runtime.state,
-            nameScope: scope,
-            emit: (event) => void events.push(event),
-          }),
-      );
-    },
+async function deploy(executionId: string) {
+  const { resources } = await collect();
+  await runDurableWorkflow(
+    { workflowId: "deploy", runtime, executionId },
+    (step, id) =>
+      durable.deploy(step, {
+        executionId: id,
+        resources,
+        registry,
+        state: runtime.state,
+        nameScope: scope,
+        emit: (event) => void events.push(event),
+      }),
   );
 }
 
-function destroy(executionId: string) {
-  return runWithSecretContext(
-    { stage: "dev", runId: executionId },
-    async () => {
-      const { resources } = await collect();
-      await runDurableWorkflow(
-        { workflowId: "destroy", runtime, executionId },
-        (step, id) =>
-          durable.destroy(step, {
-            executionId: id,
-            resources,
-            registry,
-            state: runtime.state,
-            emit: (event) => void events.push(event),
-          }),
-      );
-    },
+async function destroy(executionId: string) {
+  const { resources } = await collect();
+  await runDurableWorkflow(
+    { workflowId: "destroy", runtime, executionId },
+    (step, id) =>
+      durable.destroy(step, {
+        executionId: id,
+        resources,
+        registry,
+        state: runtime.state,
+        emit: (event) => void events.push(event),
+      }),
   );
 }
 
 async function decisions() {
-  const planned = await runWithSecretContext(
-    { stage: "dev", runId: "plan" },
-    async () => {
-      const { resources } = await collect();
-      return createPlan({ resources, state: runtime.state, registry });
-    },
-  );
+  const { resources } = await collect();
+  const planned = await createPlan({
+    resources,
+    state: runtime.state,
+    registry,
+    nameScope: scope,
+  });
   return Object.fromEntries(
     planned.nodes.map((node) => [node.id, node.decision]),
   );
 }
 
-const prompt = async () => "typed";
+// Gives the value of `key` a new revision. Deploy holds a value for the life
+// of the process, by its version, so each revision is unique, and no test
+// finds the value of another.
+const setValue = (key: string, value: string) =>
+  sourceValues.set(key, { value, revision: randomUUID() });
 
 async function writeBundle(code: string) {
   const bundle = path.join(directory, "dist/runtime/api/index.mjs");
@@ -261,6 +248,10 @@ beforeEach(async () => {
   events = [];
   bindings = "both";
   workerId = "api";
+  sourceValues.clear();
+  setValue("API_KEY", "sk_live");
+  setValue("ADMIN", "hunter2");
+  loads.length = 0;
   infra = declareWorker;
   vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "acc");
   vi.stubEnv("CLOUDFLARE_API_TOKEN", "token");
@@ -276,8 +267,8 @@ afterEach(async () => {
 });
 
 describe("a Worker with secrets", () => {
-  it("uploads the code with its secrets in one request, and records where each value comes from", async () => {
-    await deploy("first", prompt);
+  it("uploads the code with its secrets in one request, and records a marker for each value", async () => {
+    await deploy("first");
 
     const name = onlyWorker();
     expect(name).toMatch(/^shop--dev--api-[0-9a-f]{8}$/);
@@ -285,21 +276,28 @@ describe("a Worker with secrets", () => {
     expect(workers.get(name)!.secrets).toEqual(
       new Map([
         ["API_KEY", "sk_live"],
-        ["ADMIN", "typed"],
+        ["ADMIN", "hunter2"],
       ]),
     );
     const record = await runtime.state.get("worker:api");
     expect(record?.params.Secrets).toEqual({
-      ADMIN: { Secret: "admin", Source: "prompt" },
+      ADMIN: {
+        $credential: {
+          resource: "admin",
+          name: "value",
+          version: expect.any(String),
+        },
+      },
       API_KEY: {
-        Secret: "api-key",
-        Source: "vault",
-        Key: "API_KEY",
-        Version: expect.any(String),
+        $credential: {
+          resource: "api-key",
+          name: "value",
+          version: expect.any(String),
+        },
       },
     });
     const values = await runtime.state.values();
-    expect(JSON.stringify(values)).not.toMatch(/sk_live|typed/);
+    expect(JSON.stringify(values)).not.toMatch(/sk_live|hunter2/);
 
     expect((await decisions())["worker:api"]).toBe("noop");
   });
@@ -310,7 +308,7 @@ describe("a Worker with secrets", () => {
     const name = onlyWorker();
     log = [];
 
-    bindings = "sourced";
+    bindings = "apiKey";
     expect((await decisions())["worker:api"]).toBe("update");
     await deploy("second");
 
@@ -318,47 +316,51 @@ describe("a Worker with secrets", () => {
     expect(log).toEqual([`upload ${name} with API_KEY`]);
   });
 
-  it("sends a secret without a source only when the Worker doesn't have it", async () => {
-    await deploy("first", prompt);
+  it("sends only the secrets whose credential has a new version, and keeps the others", async () => {
+    await deploy("first");
     const name = onlyWorker();
     log = [];
 
     await writeBundle("export default { fetch: () => new Response('v2') };\n");
-    const asked = vi.fn(prompt);
-    await deploy("second", asked);
+    await deploy("second");
+    expect(log).toEqual([`upload ${name}`]);
 
-    expect(asked).not.toHaveBeenCalled();
-    expect(log).toEqual([`upload ${name} with API_KEY`]);
-    expect(workers.get(name)!.secrets.get("ADMIN")).toBe("typed");
+    setValue("API_KEY", "sk_rotated");
+    expect((await decisions())["worker:api"]).toBe("update");
+    loads.length = 0;
+    await deploy("third");
+
+    expect(loads).toEqual(["API_KEY"]);
+    expect(log).toEqual([`upload ${name}`, `upload ${name} with API_KEY`]);
+    expect(workers.get(name)!.secrets).toEqual(
+      new Map([
+        ["API_KEY", "sk_rotated"],
+        ["ADMIN", "hunter2"],
+      ]),
+    );
   });
 
   it("sends a secret deleted outside notation again on the next deploy", async () => {
-    await deploy("first", prompt);
+    await deploy("first");
     const name = onlyWorker();
     workers.get(name)!.secrets.delete("ADMIN");
-    workers.get(name)!.secrets.delete("API_KEY");
     log = [];
 
     expect((await decisions())["worker:api"]).toBe("drift-update");
-    const asked = vi.fn(async () => "typed again");
-    await deploy("second", asked);
+    await deploy("second");
 
-    expect(asked).toHaveBeenCalledOnce();
-    expect(log).toEqual([`upload ${name} with ADMIN,API_KEY`]);
-    expect(workers.get(name)!.secrets.get("ADMIN")).toBe("typed again");
+    expect(log).toEqual([`upload ${name} with ADMIN`]);
+    expect(workers.get(name)!.secrets.get("ADMIN")).toBe("hunter2");
   });
 
   it("deletes a removed secret after the upload, and keeps the name when the last secret goes", async () => {
-    await deploy("first", prompt);
+    await deploy("first");
     const name = onlyWorker();
     log = [];
 
-    bindings = "sourced";
+    bindings = "apiKey";
     await deploy("second");
-    expect(log).toEqual([
-      `upload ${name} with API_KEY`,
-      `delete secret ADMIN on ${name}`,
-    ]);
+    expect(log).toEqual([`upload ${name}`, `delete secret ADMIN on ${name}`]);
 
     log = [];
     bindings = "none";
@@ -369,12 +371,12 @@ describe("a Worker with secrets", () => {
   });
 
   it("gives a Worker whose id changes a new name with its secrets, and sweeps the old one", async () => {
-    await deploy("first", prompt);
+    await deploy("first");
     const before = onlyWorker();
     log = [];
 
     workerId = "web";
-    await deploy("second", prompt);
+    await deploy("second");
 
     const after = onlyWorker();
     expect(after).toMatch(/^shop--dev--web-[0-9a-f]{8}$/);
@@ -384,19 +386,8 @@ describe("a Worker with secrets", () => {
     ]);
   });
 
-  it("creates no Worker when a secret without a source has no value", async () => {
-    bindings = "prompted";
-    await expect(deploy("first")).rejects.toThrow(
-      "Secret `admin` isn't set for stage dev",
-    );
-
-    expect(workers.size).toBe(0);
-    expect(log).toEqual([]);
-    expect(await runtime.state.get("worker:api")).toBeUndefined();
-  });
-
   it("destroys the Worker with its secrets in one delete", async () => {
-    await deploy("first", prompt);
+    await deploy("first");
     const name = onlyWorker();
     log = [];
 
@@ -409,7 +400,7 @@ describe("a Worker with secrets", () => {
 
 describe("a gradual rollout", () => {
   it("fails a deploy that would upload the Worker during a rollout, and uploads nothing", async () => {
-    await deploy("first", prompt);
+    await deploy("first");
     const name = onlyWorker();
     log = [];
     deployments.set(name, [
@@ -430,7 +421,7 @@ describe("a gradual rollout", () => {
   });
 
   it("fails a change of a secret alone during a rollout", async () => {
-    await deploy("first", prompt);
+    await deploy("first");
     const name = onlyWorker();
     log = [];
     deployments.set(name, [
@@ -442,13 +433,13 @@ describe("a gradual rollout", () => {
       },
     ]);
 
-    bindings = "sourced";
+    bindings = "apiKey";
     await expect(deploy("second")).rejects.toThrow("is in a gradual rollout");
     expect(log).toEqual([]);
   });
 
   it("uploads when the latest deployment has one version", async () => {
-    await deploy("first", prompt);
+    await deploy("first");
     const name = onlyWorker();
     log = [];
     deployments.set(name, [
@@ -463,6 +454,6 @@ describe("a gradual rollout", () => {
 
     await writeBundle("export default { fetch: () => new Response('v2') };\n");
     await deploy("second");
-    expect(log).toEqual([`upload ${name} with API_KEY`]);
+    expect(log).toEqual([`upload ${name}`]);
   });
 });

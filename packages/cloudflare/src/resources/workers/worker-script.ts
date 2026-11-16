@@ -2,7 +2,6 @@ import * as v from "valibot";
 import crypto from "node:crypto";
 import * as nodeFs from "node:fs/promises";
 import path from "node:path";
-import { PROMPT_SOURCE } from "@notation/core";
 import { fromProjectRoot } from "@notation/core/paths";
 import {
   isUnknownAfterApply,
@@ -13,7 +12,6 @@ import {
   type ResourceDeletion,
 } from "@notation/resource";
 import type { fs } from "@notation/std/resources";
-import { getValue } from "@notation/std/sources";
 import { accountId, cloudflareCreate } from "src/api/client";
 import { matchesWorkerNames, workerNameRule } from "src/id";
 import {
@@ -35,7 +33,6 @@ import {
   type ScriptUpload,
   type SecretTextBinding,
 } from "src/api/workers";
-import { secretValueFromSchema, type SecretValueFrom } from "src/secrets/value";
 
 export type { DurableObjectExport };
 
@@ -92,11 +89,14 @@ type WorkerScriptParams = {
   CompatibilityFlags?: string[];
   Bindings?: WorkerBinding[];
   /**
-   * The `secret_text` bindings by name, with the source of each value. Each
-   * upload sends the values, except a prompted value that the Worker already
-   * has. An update deletes a secret that is no longer listed here.
+   * The `secret_text` bindings by name, each a credential of another
+   * resource, such as `source.credentials.value`. State holds a marker in
+   * place of each value. A create sends every secret. An update sends only
+   * the secrets whose credential has a new version, as Cloudflare keeps a
+   * secret that an upload leaves out, and deletes a secret that is no longer
+   * listed here.
    */
-  Secrets?: Record<string, SecretValueFrom>;
+  Secrets?: Record<string, string>;
   DurableObjectNamespaces?: HostedNamespace[];
   /**
    * The ids of hosted namespaces that set `protect: false`. A later plan
@@ -280,7 +280,8 @@ const workerScriptSchema = workerScript.defineSchema({
   Secrets: {
     propertyType: "param",
     presence: "optional",
-    value: v.record(v.string(), secretValueFromSchema),
+    sensitive: true,
+    value: v.record(v.string(), v.string()),
   },
   DurableObjectNamespaces: {
     propertyType: "param",
@@ -321,7 +322,7 @@ export const WorkerScript = workerScriptSchema
       if (found.transfers.length > 0) {
         throw new Error(newHostError(params, found.transfers));
       }
-      const secrets = await secretBindings(params, false);
+      const secrets = secretBindings(params.Secrets);
       await cloudflareCreate(async () => {
         await upload(params, [], found, secrets);
         await waitUntilReadable(params.AccountId, params.ScriptName);
@@ -358,14 +359,15 @@ export const WorkerScript = workerScriptSchema
     // An upload sets the whole Worker, so the patch is not used. The upload
     // compares the namespaces in state with the new ones, to rename, delete
     // or move those that changed. An upload keeps a secret that it leaves
-    // out, so a removed secret is deleted after the upload. A name that the
-    // upload binds another way is not deleted, as Cloudflare's delete might
-    // remove that binding too.
+    // out, so it sends only the secrets that have a value here, and a
+    // removed secret is deleted after the upload. A name that the upload
+    // binds another way is not deleted, as Cloudflare's delete might remove
+    // that binding too.
     update: async (_key, _patch, params, state) => {
       await assertNoRollout(params);
       const previous = state.DurableObjectNamespaces ?? [];
       const found = await findTransfers(params, previous);
-      const secrets = await secretBindings(params, true);
+      const secrets = secretBindings(params.Secrets);
       await upload(params, previous, found, secrets);
       await waitUntilSecretsListed(
         params.AccountId,
@@ -434,8 +436,8 @@ async function assertNoRollout(params: WorkerScriptParams): Promise<void> {
 /** The entries of `secrets` whose secret the Worker has. */
 async function presentSecrets(
   key: { AccountId: string; ScriptName: string },
-  secrets: Record<string, SecretValueFrom>,
-): Promise<Record<string, SecretValueFrom>> {
+  secrets: Record<string, string>,
+): Promise<Record<string, string>> {
   const names = await listScriptSecretNames(key.AccountId, key.ScriptName);
   return Object.fromEntries(
     Object.entries(secrets).filter(([name]) => names.has(name)),
@@ -443,28 +445,15 @@ async function presentSecrets(
 }
 
 /**
- * Reads the value of each secret in `Secrets` from its source. Skips a
- * prompted secret that the Worker already has, so that a value given at an
- * earlier prompt is kept.
+ * A `secret_text` binding for each secret that has a value. In the params of
+ * an update, a secret whose credential has the version in state has none.
  */
-async function secretBindings(
-  params: WorkerScriptParams,
-  // False for the create of a new Worker, which has no secrets to keep.
-  exists: boolean,
-): Promise<SecretTextBinding[]> {
-  const entries = Object.entries(params.Secrets ?? {});
-  const kept =
-    exists &&
-    entries.some(([, valueFrom]) => valueFrom.Source === PROMPT_SOURCE)
-      ? await listScriptSecretNames(params.AccountId, params.ScriptName)
-      : new Set<string>();
-  const bindings: SecretTextBinding[] = [];
-  for (const [name, valueFrom] of entries) {
-    if (valueFrom.Source === PROMPT_SOURCE && kept.has(name)) continue;
-    const value = (await getValue(valueFrom.Secret)).unwrap();
-    bindings.push({ type: "secret_text", name, text: value });
-  }
-  return bindings;
+function secretBindings(
+  secrets: Record<string, string | undefined> = {},
+): SecretTextBinding[] {
+  return Object.entries(secrets).flatMap(([name, text]) =>
+    text === undefined ? [] : [{ type: "secret_text" as const, name, text }],
+  );
 }
 
 /**

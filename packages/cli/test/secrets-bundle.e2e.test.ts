@@ -35,38 +35,50 @@ const write = (file: string, contents: string) => {
   writeFileSync(path.join(root, file), contents);
 };
 
-it("keeps a secret's source out of the bundle of a Worker that binds it", async () => {
+it("keeps the resources of a Worker's secrets out of its bundle", async () => {
   write("infra/main.ts", `export {};`);
   write(
     "infra/secrets.ts",
     `
-    import { secret } from "@notation/cloudflare/secrets-store";
-    import { dotenv, env } from "@notation/std/sources";
+    import * as cloudflare from "@notation/cloudflare/resources";
 
-    export const stripeKey = secret({ id: "stripe-key", source: env, key: "STRIPE_KEY" });
-    export const webhook = secret({ id: "webhook", source: dotenv(".env"), key: "WEBHOOK" });
-    export const admin = secret({ id: "admin" });
+    const store = new cloudflare.secretsStore.SecretsStore("store");
+    const token = new cloudflare.tokens.AccountToken("deploy-token", {
+      config: {
+        Policies: [
+          {
+            effect: "allow",
+            permissionGroups: ["Workers Scripts Write"],
+            resources: { "com.cloudflare.api.account.acc": "*" },
+          },
+        ],
+      },
+    });
+    export const tokenValue = token.credentials.Value;
+    export const tokenSecret = new cloudflare.secretsStore.SecretsStoreSecret(
+      "deploy-token-secret",
+      { config: { Value: token.credentials.Value }, dependencies: { store } },
+    );
     `,
   );
   write(
     "runtime/api.ts",
     `
-    import { $worker, secretsStore, type WorkerHandler } from "@notation/cloudflare/workers";
-    import { admin, stripeKey, webhook } from "../infra/secrets";
+    import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
+    import { tokenSecret, tokenValue } from "../infra/secrets";
 
     export const worker = $worker({
       id: "api",
       compatibilityDate: "2026-10-12",
       bindings: () => ({
-        STRIPE_KEY: secretsStore.bind(stripeKey),
-        WEBHOOK: secretsStore.bind(webhook),
-        ADMIN: secretsStore.bind(admin),
+        DEPLOY_TOKEN: tokenSecret,
+        TOKEN_TEXT: tokenValue,
       }),
     });
 
     export default {
       async fetch(request, env) {
-        return new Response(String(Boolean(await env.STRIPE_KEY.get())));
+        return new Response(String(Boolean(await env.DEPLOY_TOKEN.get()) && env.TOKEN_TEXT));
       },
     } satisfies WorkerHandler<typeof worker>;
     `,
@@ -80,5 +92,7 @@ it("keeps a secret's source out of the bundle of a Worker that binds it", async 
     path.join(root, "dist/runtime/api/index.mjs"),
     "utf8",
   );
-  expect(bundle).not.toMatch(/@notation\/(core|std)|process\.env|SourceValue/);
+  expect(bundle).not.toMatch(
+    /@notation\/(core|std|resource)|process\.env|AccountToken|SecretsStoreSecret/,
+  );
 }, 60_000);

@@ -3,14 +3,7 @@ import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  declareSecret,
-  PROMPT_SOURCE,
-  Redacted,
-  runWithSecretContext,
-  setConfigFile,
-  type Source,
-} from "@notation/core";
+import { setConfigFile } from "@notation/core";
 import {
   collectResourceGraph,
   ResourceAlreadyExistsError,
@@ -1310,15 +1303,7 @@ describe("rejectChange", () => {
 });
 
 describe("WorkerScript secrets", () => {
-  const vault: Source = {
-    name: "vault",
-    has: async () => true,
-    get: async () => new Redacted("sk_from_vault"),
-  };
-  const secrets = {
-    API_KEY: { Secret: "api-key", Source: "vault", Key: "API_KEY" },
-    ADMIN: { Secret: "admin", Source: PROMPT_SOURCE },
-  };
+  const secrets = { API_KEY: "sk_live", ADMIN: "hunter2" };
   const withSecrets = { ...params, Secrets: secrets };
   const isSecretsList = (call: Call) =>
     call.method === "GET" && call.url.endsWith("/app--dev--api/secrets");
@@ -1328,19 +1313,6 @@ describe("WorkerScript secrets", () => {
       isSecretsList(call)
         ? ok(names.map((name) => ({ name, type: "secret_text" })))
         : respond(call);
-
-  // Runs `fn` as deploy does, with both secrets declared.
-  const deploying = <T>(
-    fn: () => Promise<T>,
-    prompt: () => Promise<string> = async () => "typed",
-  ) =>
-    runWithSecretContext({ stage: "dev", runId: "run", prompt }, async () => {
-      await collectResourceGraph(() => {
-        declareSecret({ id: "api-key", source: vault, key: "API_KEY" });
-        declareSecret({ id: "admin" });
-      });
-      return fn();
-    });
 
   const secretBindings = async (call: Call) =>
     (await uploadedMetadata(call)).metadata.bindings.filter(
@@ -1352,57 +1324,58 @@ describe("WorkerScript secrets", () => {
   it("sends each secret in the upload that creates the Worker, without listing the secrets before it", async () => {
     mockFetch(untilUploaded(withSecretList(["API_KEY", "ADMIN"])));
 
-    await deploying(() => script.create(withSecrets));
+    await script.create(withSecrets);
 
     const putIndex = calls.findIndex((call) => call.method === "PUT");
     expect(calls.findIndex(isSecretsList)).toBeGreaterThan(putIndex);
     expect(await secretBindings(upload())).toEqual([
-      { type: "secret_text", name: "API_KEY", text: "sk_from_vault" },
-      { type: "secret_text", name: "ADMIN", text: "typed" },
+      { type: "secret_text", name: "API_KEY", text: "sk_live" },
+      { type: "secret_text", name: "ADMIN", text: "hunter2" },
     ]);
     expect((await uploadedMetadata(upload())).metadata.keep_bindings).toEqual([
       "secret_text",
     ]);
   });
 
-  it("leaves a secret without a source out of an update when the Worker has it, without asking", async () => {
+  it("sends only the secrets that an update receives a value for, and keeps the others", async () => {
     mockFetch(withSecretList(["ADMIN", "API_KEY"]));
-    const prompt = vi.fn(async () => "typed");
+    const changed = { ...params, Secrets: { API_KEY: "sk_rotated" } };
 
-    await deploying(
-      () => script.update!(params as any, {} as any, withSecrets, withSecrets),
-      prompt,
+    await script.update!(
+      params as any,
+      {} as any,
+      {
+        ...params,
+        Secrets: { API_KEY: "sk_rotated", ADMIN: undefined },
+      } as any,
+      changed,
     );
 
-    expect(prompt).not.toHaveBeenCalled();
     expect(await secretBindings(upload())).toEqual([
-      { type: "secret_text", name: "API_KEY", text: "sk_from_vault" },
+      { type: "secret_text", name: "API_KEY", text: "sk_rotated" },
+    ]);
+    expect((await uploadedMetadata(upload())).metadata.keep_bindings).toEqual([
+      "secret_text",
     ]);
     const putIndex = calls.findIndex((call) => call.method === "PUT");
-    expect(calls.slice(0, putIndex).filter(isSecretsList)).toHaveLength(1);
-  });
-
-  it("doesn't list the secrets before the upload of an update when every secret has a source", async () => {
-    mockFetch(withSecretList(["API_KEY"]));
-    const sourced = { ...params, Secrets: { API_KEY: secrets.API_KEY } };
-
-    await deploying(() =>
-      script.update!(params as any, {} as any, sourced, sourced),
-    );
-
-    const putIndex = calls.findIndex((call) => call.method === "PUT");
     expect(calls.slice(0, putIndex).some(isSecretsList)).toBe(false);
+    expect(requests().filter((call) => call.method === "DELETE")).toHaveLength(
+      0,
+    );
   });
 
   it("doesn't list the secrets after an upload that sends none", async () => {
     mockFetch(withSecretList(["ADMIN"]));
-    const prompted = { ...params, Secrets: { ADMIN: secrets.ADMIN } };
 
-    await deploying(() =>
-      script.update!(params as any, {} as any, prompted, prompted),
+    await script.update!(
+      params as any,
+      {} as any,
+      { ...params, Secrets: { ADMIN: undefined } } as any,
+      { ...params, Secrets: { ADMIN: "hunter2" } },
     );
 
-    expect(calls.filter(isSecretsList)).toHaveLength(1);
+    expect(await secretBindings(upload())).toEqual([]);
+    expect(calls.filter(isSecretsList)).toHaveLength(0);
   });
 
   describe("list of the secrets after the upload", () => {
@@ -1428,25 +1401,30 @@ describe("WorkerScript secrets", () => {
       mockFetch((call) => {
         if (!isSecretsList(call)) return ok({});
         lists += 1;
-        const names = lists <= 2 ? ["API_KEY"] : ["API_KEY", "ADMIN"];
+        const names = lists <= 1 ? ["API_KEY"] : ["API_KEY", "ADMIN"];
         return ok(names.map((name) => ({ name, type: "secret_text" })));
       });
 
-      const updated = deploying(() =>
-        script.update!(params as any, {} as any, withSecrets, params),
+      const updated = script.update!(
+        params as any,
+        {} as any,
+        withSecrets,
+        params,
       );
       await settle(updated);
 
       await expect(updated).resolves.toBeUndefined();
-      const putIndex = calls.findIndex((call) => call.method === "PUT");
-      expect(calls.slice(putIndex).filter(isSecretsList)).toHaveLength(2);
+      expect(calls.filter(isSecretsList)).toHaveLength(2);
     });
 
     it("fails when the list still lacks a sent secret 15 seconds after the upload", async () => {
       mockFetch(withSecretList(["API_KEY"]));
 
-      const updated = deploying(() =>
-        script.update!(params as any, {} as any, withSecrets, params),
+      const updated = script.update!(
+        params as any,
+        {} as any,
+        withSecrets,
+        params,
       );
       await settle(updated);
 
@@ -1456,36 +1434,14 @@ describe("WorkerScript secrets", () => {
     });
   });
 
-  it("asks for a secret without a source that the Worker doesn't have", async () => {
-    let uploaded = false;
-    mockFetch((call) => {
-      if (call.method === "PUT") uploaded = true;
-      return withSecretList(uploaded ? ["API_KEY", "ADMIN"] : ["API_KEY"])(
-        call,
-      );
-    });
-
-    await deploying(() =>
-      script.update!(params as any, {} as any, withSecrets, params),
-    );
-
-    expect(
-      (await secretBindings(upload())).map(
-        (binding: { name: string }) => binding.name,
-      ),
-    ).toEqual(["API_KEY", "ADMIN"]);
-  });
-
   it("deletes each secret that state has and the params don't, after the upload", async () => {
     mockFetch(withSecretList(["API_KEY"]));
 
-    await deploying(() =>
-      script.update!(
-        params as any,
-        {} as any,
-        { ...params, Secrets: { API_KEY: secrets.API_KEY } },
-        withSecrets,
-      ),
+    await script.update!(
+      params as any,
+      {} as any,
+      { ...params, Secrets: { API_KEY: "sk_live" } },
+      withSecrets,
     );
 
     expect(
@@ -1506,12 +1462,10 @@ describe("WorkerScript secrets", () => {
         ...params.Bindings,
         { type: "plain_text" as const, name: "ADMIN", text: "visible" },
       ],
-      Secrets: { API_KEY: secrets.API_KEY },
+      Secrets: { API_KEY: "sk_live" },
     };
 
-    await deploying(() =>
-      script.update!(params as any, {} as any, plain, withSecrets),
-    );
+    await script.update!(params as any, {} as any, plain, withSecrets);
 
     expect(
       requests()
@@ -1537,7 +1491,7 @@ describe("WorkerScript secrets", () => {
     );
 
     expect((read as { Secrets?: unknown }).Secrets).toEqual({
-      API_KEY: secrets.API_KEY,
+      API_KEY: "sk_live",
     });
   });
 
@@ -1552,20 +1506,6 @@ describe("WorkerScript secrets", () => {
 
     expect((read as { Secrets?: unknown }).Secrets).toBeUndefined();
     expect(calls.some(isSecretsList)).toBe(false);
-  });
-
-  it("uploads nothing when a value can't be read", async () => {
-    mockFetch(untilUploaded());
-
-    await expect(
-      deploying(
-        () => script.create(withSecrets),
-        async () => {
-          throw new Error("no terminal");
-        },
-      ),
-    ).rejects.toThrow();
-    expect(requests().some((call) => call.method === "PUT")).toBe(false);
   });
 });
 

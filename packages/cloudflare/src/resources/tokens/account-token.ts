@@ -5,6 +5,7 @@ import {
   resolveOutputRefs,
   resource,
   ResourceNotFoundError,
+  type PhysicalNameRule,
 } from "@notation/resource";
 import { sortedJson } from "@notation/utils";
 import { accountId, cloudflareCreate } from "src/api/client";
@@ -22,6 +23,11 @@ import {
 } from "src/api/tokens";
 
 export const TOKEN_NAME_MAX_LENGTH = 120;
+
+/** The rule of a token's generated name, `<app>--<stage>--<id>-<instance>`. */
+export const tokenNameRule: PhysicalNameRule = {
+  maxLength: TOKEN_NAME_MAX_LENGTH,
+};
 
 const policySchema = v.strictObject({
   effect: v.picklist(["allow", "deny"]),
@@ -120,6 +126,7 @@ const accountTokenSchema = accountToken.defineSchema({
       v.minLength(1),
       v.maxLength(TOKEN_NAME_MAX_LENGTH),
     ),
+    physicalName: tokenNameRule,
   },
   Policies: {
     propertyType: "param",
@@ -161,7 +168,8 @@ const accountTokenSchema = accountToken.defineSchema({
 } as const);
 
 /**
- * An account-owned API token. Its value is the credential `Value`, which
+ * An account-owned API token, which deploy names
+ * `<app>--<stage>--<id>-<instance>`. Its value is the credential `Value`, which
  * another resource takes with `token.credentials.Value`. State never holds
  * the value.
  *

@@ -1,43 +1,40 @@
 import * as v from "valibot";
-import { PROMPT_SOURCE } from "@notation/core";
-import { resource, ResourceNotFoundError } from "@notation/resource";
-import { getValue } from "@notation/std/sources";
 import {
-  createSecret,
+  resource,
+  ResourceNotFoundError,
+  type PhysicalNameRule,
+} from "@notation/resource";
+import {
   deleteSecret,
   findSecretByName,
-  setSecretValue,
+  writeSecret,
 } from "src/api/secrets-store";
-import { secretValueFromSchema, type SecretValueFrom } from "src/secrets/value";
 import type { SecretsStoreInstance } from "./secrets-store";
 
-export { secretValueFromSchema, type SecretValueFrom };
+// Cloudflare rejects a name of more than 255 characters with
+// `secret_name_too_long`.
+export const SECRET_NAME_MAX_LENGTH = 255;
+
+/** The rule of a secret's generated name, `<app>--<stage>--<id>-<instance>`. */
+export const secretNameRule: PhysicalNameRule = {
+  maxLength: SECRET_NAME_MAX_LENGTH,
+};
 
 type SecretsStoreSecretParams = {
   AccountId: string;
   StoreId: string;
   Name: string;
   /**
-   * True when the name is `<app>--<stage>--<id>`. Delete then deletes the
-   * secret. A secret with an explicit name was adopted, so delete leaves it.
-   */
-  StageScoped: boolean;
-  /** Where the value comes from. Set this or `Value`. */
-  ValueFrom?: SecretValueFrom;
-  /**
    * The value, from a credential of another resource, such as
    * `token.credentials.Value`. State holds a marker in its place.
    */
-  Value?: string;
+  Value: string;
 };
 
 export type SecretsStoreSecretSchema = {
   Key: { AccountId: string; StoreId: string; Name: string };
   CreateParams: SecretsStoreSecretParams;
-  UpdateParams: Pick<
-    SecretsStoreSecretParams,
-    "StageScoped" | "ValueFrom" | "Value"
-  >;
+  UpdateParams: Pick<SecretsStoreSecretParams, "Value">;
   ReadResult: { SecretId: string };
 };
 
@@ -71,20 +68,11 @@ const secretsStoreSecretSchema = secretsStoreSecret.defineSchema({
     immutable: true,
     primaryKey: true,
     value: v.pipe(v.string(), v.nonEmpty()),
-  },
-  StageScoped: {
-    propertyType: "param",
-    presence: "required",
-    value: v.boolean(),
-  },
-  ValueFrom: {
-    propertyType: "param",
-    presence: "optional",
-    value: secretValueFromSchema,
+    physicalName: secretNameRule,
   },
   Value: {
     propertyType: "param",
-    presence: "optional",
+    presence: "required",
     sensitive: true,
     value: v.string(),
   },
@@ -96,40 +84,26 @@ const secretsStoreSecretSchema = secretsStoreSecret.defineSchema({
 } as const);
 
 /**
- * Writes the secret's value: `Value`, or the value that `getValue` fetches
- * for `ValueFrom`. It creates the secret, or overwrites the value of the one
- * that exists. A secret whose value comes from the prompt is written only
- * when it is missing, so that a value set with `notation secret set` is
- * kept.
- */
-async function writeValue(params: SecretsStoreSecretParams): Promise<void> {
-  const { AccountId, StoreId, Name, ValueFrom } = params;
-  const existing = await findSecretByName(AccountId, StoreId, Name);
-  if (existing && ValueFrom?.Source === PROMPT_SOURCE) return;
-  const value = params.Value ?? (await getValue(ValueFrom!.Secret)).unwrap();
-  if (existing) {
-    await setSecretValue(AccountId, StoreId, existing.id, value);
-  } else {
-    await createSecret(AccountId, StoreId, Name, value);
-  }
-}
-
-/**
- * A reference to a secret in a Cloudflare Secrets Store. Its record holds
- * where the secret is and where its value comes from, and never the value.
+ * A secret in a Cloudflare Secrets Store, which holds the value of a
+ * credential of another resource. Deploy names it
+ * `<app>--<stage>--<id>-<instance>`. Its record holds where the secret is,
+ * and never the value.
  *
- * Create and update write the value. A change to `ValueFrom`, such as a new
- * version from the source, updates the secret. So does a new value of the
- * credential that `Value` takes. A change to `StageScoped` only changes the
- * record. Read finds the secret by
- * name, so a secret recreated outside notation shows as a changed
- * `SecretId`, and a deleted one as drift, which the next deploy creates
- * again.
+ * Create writes the value. It overwrites the value of a secret that has the
+ * name already, as after a create whose outcome was unknown. Update writes
+ * the value when the credential has a new version. Read finds the secret by name, so a secret recreated outside
+ * notation shows as a changed `SecretId`, and a deleted one as drift, which
+ * the next deploy creates again.
  */
 export const SecretsStoreSecret = secretsStoreSecretSchema
   .defineOperations({
     create: async (params) => {
-      await writeValue(params);
+      await writeSecret(
+        params.AccountId,
+        params.StoreId,
+        params.Name,
+        params.Value,
+      );
     },
 
     read: async (key) => {
@@ -144,29 +118,21 @@ export const SecretsStoreSecret = secretsStoreSecretSchema
       return { ...key, SecretId: secret.id };
     },
 
-    update: async (_key, patch, params) => {
-      if (patch.ValueFrom || patch.Value !== undefined) {
-        await writeValue(params);
-      }
+    // `Value` is undefined unless the credential has a new version.
+    update: async (key, patch) => {
+      if (patch.Value === undefined) return;
+      await writeSecret(key.AccountId, key.StoreId, key.Name, patch.Value);
     },
 
-    delete: async (key, state) => {
-      if (!state.StageScoped) return;
+    delete: async (key) => {
       await deleteSecret(key.AccountId, key.StoreId, key.Name);
     },
   })
   .requireDependencies<SecretsStoreSecretDependencies>()
-  .deriveParams(async ({ id, config, deps }) => {
-    if ((config.ValueFrom === undefined) === (config.Value === undefined)) {
-      throw new Error(
-        `${id} needs either ValueFrom or Value, and not both. ValueFrom names a source, and Value takes a credential of another resource.`,
-      );
-    }
-    return {
-      AccountId: deps.store.output.AccountId,
-      StoreId: deps.store.output.StoreId,
-    };
-  });
+  .deriveParams(async ({ deps }) => ({
+    AccountId: deps.store.output.AccountId,
+    StoreId: deps.store.output.StoreId,
+  }));
 
 export type SecretsStoreSecretInstance = InstanceType<
   typeof SecretsStoreSecret

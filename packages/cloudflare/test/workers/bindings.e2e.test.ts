@@ -6,6 +6,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { api, describeE2e, poll, runPrefix, useProject } from "../e2e";
 
 const SECRET_KEY = "NOTATION_E2E_WORKER_SECRET";
+const ADMIN_KEY = "NOTATION_E2E_WORKER_ADMIN";
 
 describeE2e("$worker bindings", () => {
   const project = useProject();
@@ -18,8 +19,8 @@ describeE2e("$worker bindings", () => {
   let workerName: string;
 
   // "/check" writes and reads through the R2 and KV bindings, and returns
-  // the JSON binding. "/secret" returns the sourced secret, and "/admin" the
-  // secret without a source, or "unset".
+  // the JSON binding. "/secret" returns the API_KEY secret, and "/admin" the
+  // ADMIN secret, or "unset".
   const writeWorker = ({ bindAdmin }: { bindAdmin: boolean }) =>
     project.write(
       "runtime/api.ts",
@@ -73,8 +74,7 @@ describeE2e("$worker bindings", () => {
       "infra/main.ts",
       `
       import { kv, r2 } from "@notation/cloudflare/resources";
-      import { workerSecret } from "@notation/cloudflare/workers";
-      import { env } from "@notation/std/sources";
+      import { sources } from "@notation/std/resources";
 
       export const uploads = new r2.R2Bucket("uploads", {
         config: { BucketName: "${bucketName}", Jurisdiction: "default", StorageClass: "Standard" },
@@ -82,8 +82,12 @@ describeE2e("$worker bindings", () => {
       export const cache = new kv.KVNamespace("cache", {
         config: { Title: "${runPrefix}-bindings-cache" },
       });
-      export const apiKey = workerSecret({ id: "api-key", source: env, key: "${SECRET_KEY}" });
-      export const admin = workerSecret({ id: "admin" });
+      export const apiKey = new sources.Env("api-key", {
+        config: { key: "${SECRET_KEY}" },
+      }).credentials.value;
+      export const admin = new sources.Env("admin", {
+        config: { key: "${ADMIN_KEY}" },
+      }).credentials.value;
       `,
     );
     writeWorker({ bindAdmin: false });
@@ -91,6 +95,7 @@ describeE2e("$worker bindings", () => {
 
   afterAll(() => {
     delete process.env[SECRET_KEY];
+    delete process.env[ADMIN_KEY];
   });
 
   // The state and journal are kept under .notation in the project.
@@ -109,7 +114,7 @@ describeE2e("$worker bindings", () => {
       done: (fetched) => fetched.body === expected,
     });
 
-  it("deploys a Worker that binds an R2 bucket, a KV namespace, a JSON value and a secret", async () => {
+  it("deploys a Worker that binds an R2 bucket, a KV namespace, a JSON value and a credential", async () => {
     process.env[SECRET_KEY] = secrets[0];
     await project.notation("deploy");
     const names = await project.workerNames();
@@ -140,12 +145,10 @@ describeE2e("$worker bindings", () => {
     });
   });
 
-  it("keeps a secret set with notation secret set, and doesn't ask for it at deploy", async () => {
+  it("adds a secret that the Worker starts to bind, and keeps the other", async () => {
     writeWorker({ bindAdmin: true });
-    await project.notation(["secret", "set", "admin"], { input: `${admin}\n` });
+    process.env[ADMIN_KEY] = admin;
 
-    // There is no terminal, so deploy fails if it asks for the value. The
-    // upload of the new code keeps both secrets.
     await project.notation("deploy");
 
     expect(await fetchPath("/admin", admin)).toMatchObject({

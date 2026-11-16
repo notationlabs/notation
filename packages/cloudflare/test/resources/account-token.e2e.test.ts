@@ -11,27 +11,29 @@ import {
 
 describeE2e("cloudflare/tokens/AccountToken", () => {
   const project = useProject({ stage: "token", accountTokens: true });
-  const name = `${project.scope}raw`;
+  // Deploy names the token and the secret from their ids, with an instance.
+  const name = `${project.scope}token-raw-`;
+  const secretName = `${project.scope}secret-raw-`;
 
   // A deployment declares resources only through a group, so the token sits
-  // in one, with a secret in the account's Secrets Store that takes its
-  // value.
+  // in one, with the account's Secrets Store and a secret that takes the
+  // token's value.
   function writeInfra(config: string) {
     project.write(
       "infra/main.ts",
       `
       import { ResourceGroup } from "@notation/resource";
       import * as cloudflare from "@notation/cloudflare/resources";
-      import { SecretsStoreGroup } from "@notation/cloudflare/secrets-store";
 
       class TokenGroup extends ResourceGroup {
         constructor() {
           super("e2e/token", "raw");
-          const { store } = new SecretsStoreGroup();
+          const store = this.add(
+            new cloudflare.secretsStore.SecretsStore("secrets-store"),
+          );
           const token = this.add(
             new cloudflare.tokens.AccountToken("token:raw", {
               config: {
-                Name: "${name}",
                 Policies: [
                   {
                     effect: "allow",
@@ -45,11 +47,7 @@ describeE2e("cloudflare/tokens/AccountToken", () => {
           );
           this.add(
             new cloudflare.secretsStore.SecretsStoreSecret("secret:raw", {
-              config: {
-                Name: "${name}",
-                StageScoped: true,
-                Value: token.credentials.Value,
-              },
+              config: { Value: token.credentials.Value },
               dependencies: { store },
             }),
           );
@@ -65,7 +63,9 @@ describeE2e("cloudflare/tokens/AccountToken", () => {
   // so the token is read on its own.
   async function theToken(): Promise<AccountTokenSummary> {
     const tokens = await tokensWithPrefix(name);
-    expect(tokens.map((token) => token.name)).toEqual([name]);
+    expect(tokens.map((token) => token.name)).toEqual([
+      expect.stringMatching(/-[0-9a-f]{8}$/),
+    ]);
     const response = await api<AccountTokenSummary>(
       "GET",
       `/tokens/${tokens[0]!.id}`,
@@ -103,7 +103,9 @@ describeE2e("cloudflare/tokens/AccountToken", () => {
     expect(token.condition?.request_ip?.not_in).toEqual(["192.0.2.1/32"]);
     expect(seconds(token.expires_on)).toBe("2030-01-01T00:00:00Z");
     expect(seconds(token.not_before)).toBe("2026-01-01T00:00:00Z");
-    expect(await secretsWithPrefix(name)).toMatchObject([{ name }]);
+    expect(await secretsWithPrefix(secretName)).toMatchObject([
+      { name: expect.stringMatching(/-[0-9a-f]{8}$/) },
+    ]);
   });
 
   it("leaves the token alone on a deploy with the same config", async () => {
@@ -146,6 +148,6 @@ describeE2e("cloudflare/tokens/AccountToken", () => {
     await project.notation("destroy");
 
     expect(await tokensWithPrefix(name)).toEqual([]);
-    expect(await secretsWithPrefix(name)).toEqual([]);
+    expect(await secretsWithPrefix(secretName)).toEqual([]);
   });
 });
