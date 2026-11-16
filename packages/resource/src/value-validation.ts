@@ -154,17 +154,10 @@ export function validateValues(
   values: Record<string, unknown>,
   point: ValidationPoint,
   isUnknown: (value: unknown) => boolean = () => false,
-): void | Promise<void> {
-  return validateWithChecks(subject, values, point, isUnknown, true);
-}
-
-// `validateValues`. With `runChecks` unset, the subject's checks do not run.
-function validateWithChecks(
-  subject: ValidationSubject,
-  values: Record<string, unknown>,
-  point: ValidationPoint,
-  isUnknown: (value: unknown) => boolean,
-  runChecks: boolean,
+  options: {
+    /** Set to `false` to skip the subject's checks. */
+    checks?: boolean;
+  } = {},
 ): void | Promise<void> {
   const pending: Promise<void>[] = [];
   try {
@@ -174,7 +167,7 @@ function validateWithChecks(
       const unknowns = findUnknownPaths(value, isUnknown);
       if (unknowns.some((path) => path.length === 0)) continue;
       const check =
-        runChecks &&
+        options.checks !== false &&
         CHECK_POINTS.has(point) &&
         !(
           point === "declaration" &&
@@ -183,7 +176,9 @@ function validateWithChecks(
         )
           ? subject.checks?.[field]
           : undefined;
-      const validate = (validator: StandardSchemaV1) => {
+      const validate = (
+        validator: StandardSchemaV1,
+      ): Promise<void> | undefined => {
         const result = runValidator(validator, value, unknowns.length > 0);
         if (result instanceof Promise) {
           return result.then((settled) =>
@@ -191,16 +186,17 @@ function validateWithChecks(
           );
         }
         assertValid(subject, field, point, knownIssues(result, unknowns));
+        return undefined;
       };
-      const validated = validate(item.value);
-      if (!check) {
-        if (validated) pending.push(validated);
-      } else if (validated) {
-        pending.push(validated.then(() => validate(check)));
-      } else {
-        const checked = validate(check);
-        if (checked) pending.push(checked);
+      // The check runs only once the class's validator has passed.
+      let validated: Promise<void> | undefined;
+      for (const validator of [item.value, check]) {
+        if (!validator) continue;
+        validated = validated
+          ? validated.then(() => validate(validator))
+          : validate(validator);
       }
+      if (validated) pending.push(validated);
     }
   } catch (error) {
     // Nothing awaits the async checks started before this failure, so their
@@ -329,12 +325,12 @@ export async function validateParams(
   assertParamFields(subject, params);
   assertRequiredParams(subject, params);
   // A credential's value was checked when its resource returned it.
-  await validateWithChecks(
+  await validateValues(
     subject,
     params,
     point,
     (value) => isUnknownAfterApply(value) || isCredentialMarker(value),
-    !options.partial,
+    { checks: !options.partial },
   );
 }
 

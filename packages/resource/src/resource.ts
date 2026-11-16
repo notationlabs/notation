@@ -29,7 +29,6 @@ import type { DurableObject } from "./durable-value";
 import { UNKNOWN_AFTER_APPLY, toComparableParams } from "./diff-params";
 import {
   captureCallSiteLazily,
-  lazyStrings,
   sortContributions,
   type CollectContext,
   type ContributedValues,
@@ -68,30 +67,21 @@ export type { Schema, SchemaItem, DefineResourceApiSchema };
 
 export type ResourceType = `${string}/${string}/${string}`;
 
-/**
- * The options a resource takes after its ID. `P` holds the params that
- * `checks` can name.
- */
-export type ResourceOpts<C, D, P = C> = OptionalIfAllPropertiesOptional<
-  "config",
-  C
-> &
+/** The options a resource takes after its ID. */
+export type ResourceOpts<C, D> = OptionalIfAllPropertiesOptional<"config", C> &
   OptionalIfAllPropertiesOptional<"dependencies", D> & {
     /** See `ParamChecks`. */
-    checks?: ResourceChecks<P>;
+    checks?: { [K in keyof C]?: StandardSchemaV1 };
   };
-
-/** A validator for each of some params, by param name. See `ParamChecks`. */
-export type ResourceChecks<P> = { [K in keyof P]?: StandardSchemaV1 };
 
 /**
  * The arguments a resource takes after its ID. The options can be left out
  * when neither config nor dependencies has a required property.
  */
-export type ResourceArgs<C, D, P = C> =
-  {} extends ResourceOpts<C, D, P>
-    ? [opts?: ResourceOpts<C, D, P>]
-    : [opts: ResourceOpts<C, D, P>];
+export type ResourceArgs<C, D> =
+  {} extends ResourceOpts<C, D>
+    ? [opts?: ResourceOpts<C, D>]
+    : [opts: ResourceOpts<C, D>];
 
 /**
  * The object types a resource's schema gives rise to.
@@ -360,7 +350,7 @@ export abstract class Resource<
     }: {
       config?: C;
       dependencies?: D;
-      checks?: ResourceChecks<T["params"]>;
+      checks?: { [K in keyof C]?: StandardSchemaV1 };
     } = {},
   ) {
     this.id = id;
@@ -833,7 +823,7 @@ export abstract class Resource<
       {
         resourceId: this.id,
         param: key,
-        contributors: lazyStrings(items.map((item) => item.contributor)),
+        contributors: items.map((item) => item.contributor),
       },
     );
   }
@@ -1118,7 +1108,7 @@ export type ResourceClass<
   C extends Record<string, any> = T["params"],
   IntrinsicParams extends Partial<T["params"]> = {},
 > = {
-  new (id: string, ...args: ResourceArgs<C, D, T["params"]>): Resource<T, D, C>;
+  new (id: string, ...args: ResourceArgs<C, D>): Resource<T, D, C>;
   readonly type: ResourceType;
   /** See `DefineResourceMeta.blocksDeleteOf`. */
   readonly blocksDeleteOf: readonly ResourceType[];
@@ -1214,7 +1204,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
               args?: {
                 config?: NoInfer<C>;
                 dependencies?: NoInfer<D>;
-                checks?: ResourceChecks<T["params"]>;
+                checks?: { [K in keyof C]?: StandardSchemaV1 };
               },
             ) {
               super(id, args);

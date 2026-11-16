@@ -100,13 +100,14 @@ export function diffParams(
 ): ParamsDiff {
   const previousComparable = toComparableParams(schema, previous);
   const desiredComparable = toComparableParams(schema, desired);
-  const patch = diff(previousComparable, desiredComparable) as Record<
+  const previousForDiff = nullKindChanges(
+    previousComparable,
+    desiredComparable,
+  ) as Record<string, unknown>;
+  const patch = diff(previousForDiff, desiredComparable) as Record<
     string,
     unknown
   >;
-  const kindChanges = findKindChanges(previousComparable, desiredComparable);
-  for (const path of kindChanges)
-    patch[path[0]!] ??= desiredComparable[path[0]!];
 
   const changed: string[] = [];
   const replaceFields: ParamReplaceField[] = [];
@@ -129,99 +130,36 @@ export function diffParams(
     patch,
     changed,
     replaceFields,
-    diff: withKindChanges(
-      toDisplayDiff(detailedDiff(previousComparable, desiredComparable)),
-      kindChanges,
-      desiredComparable,
-    ),
+    diff: toDisplayDiff(detailedDiff(previousForDiff, desiredComparable)),
   };
 }
 
-type Path = readonly string[];
-
 /**
- * The paths at which one side holds an array and the other holds an object
- * that is not an array. `deep-object-diff` compares both by their keys, so it
- * finds no change between `{}` and `[]`, or between `{ "0": "x" }` and
- * `["x"]`. The search stops at the first such path on each branch.
+ * Copies `previous` with `null` at each path where one side holds an array and
+ * the other holds an object that is not an array. `deep-object-diff` compares
+ * both by their keys, so it finds no change between `{}` and `[]`, or between
+ * `{ "0": "x" }` and `["x"]`. Against `null` it reports the desired value as
+ * updated at that path, with nothing added or deleted beneath it.
  */
-function findKindChanges(
-  previous: unknown,
-  desired: unknown,
-  path: Path = [],
-  found: Path[] = [],
-): Path[] {
-  if (!isObject(previous) || !isObject(desired)) return found;
-  if (Array.isArray(previous) !== Array.isArray(desired)) {
-    found.push(path);
-    return found;
-  }
+function nullKindChanges(previous: unknown, desired: unknown): unknown {
+  if (!isObject(previous) || !isObject(desired)) return previous;
+  if (Array.isArray(previous) !== Array.isArray(desired)) return null;
+  const copy: Record<string, unknown> = Array.isArray(previous)
+    ? ([...previous] as unknown as Record<string, unknown>)
+    : { ...previous };
   for (const [key, entry] of Object.entries(desired)) {
     if (key in previous) {
-      findKindChanges(
+      copy[key] = nullKindChanges(
         (previous as Record<string, unknown>)[key],
         entry,
-        [...path, key],
-        found,
       );
     }
   }
-  return found;
+  return copy;
 }
 
 function isObject(value: unknown): value is object {
   return value !== null && typeof value === "object";
-}
-
-/**
- * Shows each kind change as an update to the desired value at its path, in
- * place of the added and deleted keys that `detailedDiff` found under it.
- */
-function withKindChanges(
-  display: ParamsDiffDisplay,
-  kindChanges: Path[],
-  desired: Record<string, unknown>,
-): ParamsDiffDisplay {
-  for (const path of kindChanges) {
-    removeAt(display.added, path);
-    removeAt(display.deleted, path);
-    removeAt(display.updated, path);
-    setAt(display.updated, path, toJsonSafe(valueAt(desired, path)));
-  }
-  return display;
-}
-
-function valueAt(root: unknown, path: Path): unknown {
-  let value = root;
-  for (const key of path) value = (value as Record<string, unknown>)[key];
-  return value;
-}
-
-function setAt(root: Record<string, unknown>, path: Path, value: unknown) {
-  let target = root;
-  for (const key of path.slice(0, -1)) {
-    if (!isObject(target[key])) target[key] = {};
-    target = target[key] as Record<string, unknown>;
-  }
-  target[path[path.length - 1]!] = value;
-}
-
-// Deletes the entry at `path`, and then each parent that is left empty.
-function removeAt(root: Record<string, unknown>, path: Path): void {
-  const parents: Record<string, unknown>[] = [];
-  let target = root;
-  for (const key of path.slice(0, -1)) {
-    if (!isObject(target[key])) return;
-    parents.push(target);
-    target = target[key] as Record<string, unknown>;
-  }
-  delete target[path[path.length - 1]!];
-  for (let index = parents.length - 1; index >= 0; index--) {
-    const key = path[index]!;
-    const child = parents[index]![key] as Record<string, unknown>;
-    if (Object.keys(child).length > 0) return;
-    delete parents[index]![key];
-  }
 }
 
 function isComparable(item: SchemaItem): boolean {
@@ -241,9 +179,8 @@ export function changedKeys(
   before: Record<string, unknown>,
   after: Record<string, unknown>,
 ): string[] {
-  const keys = new Set(Object.keys(diff(before, after)));
-  for (const path of findKindChanges(before, after)) keys.add(path[0]!);
-  return [...keys].sort();
+  const previous = nullKindChanges(before, after) as Record<string, unknown>;
+  return Object.keys(diff(previous, after)).sort();
 }
 
 function toDisplayDiff(diffResult: {

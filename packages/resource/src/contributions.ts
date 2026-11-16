@@ -11,8 +11,11 @@ import {
 export type CollectContext = {
   resourceId: string;
   param: string;
-  /** The contributor of each item, in the same order as the items. */
-  contributors: string[];
+  /**
+   * Returns the contributor of each item, in the same order as the items.
+   * Each call can format a stack, so call one only when a message needs it.
+   */
+  contributors: (() => string)[];
 };
 
 /**
@@ -37,22 +40,6 @@ export type Contribution =
       deps: Record<string, BaseResource>;
       contributor: () => string;
     };
-
-/**
- * An array whose entries are found by calling `getters` on first read. Each
- * getter is called at most once.
- */
-export function lazyStrings(getters: (() => string)[]): string[] {
-  const strings: string[] = [];
-  getters.forEach((get, index) => {
-    let value: string | undefined;
-    Object.defineProperty(strings, index, {
-      get: () => (value ??= get()),
-      enumerable: true,
-    });
-  });
-  return strings;
-}
 
 export class ContributionConflictError extends Error {
   constructor(
@@ -229,7 +216,7 @@ export function mergeContributions<T>(
   // for an error, as reading it can format a stack.
   const owners = new Map<string, number>();
   const contributorAt = (index: number): string =>
-    context.contributors[index] ?? "an unnamed contributor";
+    context.contributors[index]?.() ?? "an unnamed contributor";
 
   const ownerOf = (path: string[]): string => {
     for (let length = path.length; length > 0; length -= 1) {
