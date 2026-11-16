@@ -402,6 +402,7 @@ const received = await channel.receive(input);
 
 2. It is called from an `onEvaluationEnd` callback. The Workers read their bindings once the infra modules have loaded, so `addBindings()` must be called while they load, such as in the function that declares what it binds. Only engine and package code registers such callbacks, so the error names the location of the call, which points at the package to fix.
 3. The first argument isn't a Worker from `$worker` or `worker()`.
+4. It is called while no resource graph is being collected, or with a Worker that was declared in another resource graph, such as one collected earlier by the same process.
 
 ## `$durableObject(config)`
 

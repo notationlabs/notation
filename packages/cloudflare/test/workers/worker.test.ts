@@ -1309,6 +1309,36 @@ describe("addBindings", () => {
     );
   });
 
+  it("fails while no resource graph is being collected", async () => {
+    let router!: ReturnType<typeof $worker>;
+    await collect(() => {
+      router = inWorker(
+        $worker({ id: "router", compatibilityDate }),
+        "runtime/router.ts",
+      );
+    });
+    expect(() => addBindings(router, { A: "a" })).toThrow(
+      /^addBindings\(\) at \S*worker\.test\.ts:\d+ was called for \$worker\(\{ id: "router" \}\) in runtime\/router\.ts while no resource graph is being collected\./,
+    );
+  });
+
+  it("fails for a Worker from another resource graph", async () => {
+    let router!: ReturnType<typeof $worker>;
+    await collect(() => {
+      router = inWorker(
+        $worker({ id: "router", compatibilityDate }),
+        "runtime/router.ts",
+      );
+    });
+    await expect(
+      collect(() => {
+        addBindings(router, { A: "a" });
+      }),
+    ).rejects.toThrow(
+      /^addBindings\(\) at \S*worker\.test\.ts:\d+ was called for \$worker\(\{ id: "router" \}\) in runtime\/router\.ts, which was declared in another resource graph\./,
+    );
+  });
+
   it("throws in a Worker", () => {
     const router = runtime.$worker({ id: "router", compatibilityDate });
     expect(() => runtime.addBindings(router, { A: "a" })).toThrow(

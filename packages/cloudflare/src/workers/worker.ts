@@ -570,6 +570,17 @@ export function addBindings(
       `addBindings() at ${at()} takes a Worker from $worker or worker() as its first argument.`,
     );
   }
+  const workers = declaredWorkers();
+  if (!workers) {
+    throw new Error(
+      `addBindings() at ${at()} was called for ${entry.describe()} while no resource graph is being collected. Call it from an infra module, while the infra modules load.`,
+    );
+  }
+  if (!workers.includes(entry)) {
+    throw new Error(
+      `addBindings() at ${at()} was called for ${entry.describe()}, which was declared in another resource graph. Pass a Worker that is declared in the resource graph being collected.`,
+    );
+  }
   if (evaluationEnded()) {
     throw new Error(
       `addBindings() was called for ${entry.describe()} from an onEvaluationEnd callback, at ${at()}. Bindings are read once the infra modules have loaded, so addBindings() must be called while they load, such as in the function that declares what it binds.`,
