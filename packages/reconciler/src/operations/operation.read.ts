@@ -66,7 +66,6 @@ export async function* readRemoteOperation(
       yield* emitLifecycleEvent(params, "read", "skip", {
         reason: "read-not-implemented",
       });
-      yield* emitLifecycleEvent(params, "read", "success");
       return { output: merged as Record<string, unknown> };
     }
 
