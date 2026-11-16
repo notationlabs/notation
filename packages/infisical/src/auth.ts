@@ -2,6 +2,10 @@ import { apiUrl, request } from "./api";
 
 type LoginResponse = { accessToken: string; expiresIn?: number };
 
+// The lifetime assumed for a token when the login response has no
+// `expiresIn`.
+const DEFAULT_LIFETIME_SECONDS = 600;
+
 const logins = new Map<string, { token: Promise<string>; expiresAt: number }>();
 
 /**
@@ -34,7 +38,7 @@ export function cachedAccessToken(site: string): Promise<string> {
   const entry = { token: Promise.resolve(""), expiresAt: Infinity };
   entry.token = login(site).then(
     (response) => {
-      entry.expiresAt = Date.now() + ((response.expiresIn ?? 0) * 1000) / 2;
+      entry.expiresAt = Date.now() + ((response.expiresIn ?? DEFAULT_LIFETIME_SECONDS) * 1000) / 2;
       return response.accessToken;
     },
     (error) => {
@@ -48,8 +52,6 @@ export function cachedAccessToken(site: string): Promise<string> {
 
 async function login(site: string): Promise<LoginResponse> {
   const env = process.env;
-  if (env.INFISICAL_TOKEN) return { accessToken: env.INFISICAL_TOKEN };
-
   const clientId = env.INFISICAL_UNIVERSAL_AUTH_CLIENT_ID;
   const clientSecret = env.INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET;
   if (clientId || clientSecret) {
