@@ -1,11 +1,11 @@
 import fs from "node:fs/promises";
 import { parseEnv } from "node:util";
 import * as v from "valibot";
-import { fromProjectRoot } from "@notation/core";
+import { fromProjectRoot } from "@notation/core/paths";
 import { credentialSourceResource } from "@notation/resource";
 import { isErrorWithCode } from "@notation/utils";
 import { loadLocalValue, localRevision, lookup } from "./local-value";
-import { trackValidator, type Track } from "./track";
+import { trackValidator, type Track } from "../../track";
 
 export type DotenvSchema = {
   Params: { path: string; key: string; track?: Track };

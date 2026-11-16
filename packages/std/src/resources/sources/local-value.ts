@@ -3,7 +3,7 @@ import type {
   CredentialSourceReadContext,
 } from "@notation/resource";
 import { recordSecretValue } from "@notation/utils";
-import { trackRevision, type Track } from "./track";
+import { trackRevision, type Track } from "../../track";
 
 // An empty value counts as not set.
 export function lookup(value: string | undefined): string | undefined {

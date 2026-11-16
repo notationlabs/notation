@@ -3,7 +3,8 @@ import {
   collectResourceGraph,
   type BaseCredentialSource,
 } from "@notation/resource";
-import { Env, trackRevision, type Track } from "src/resources/sources";
+import { Env } from "src/resources/sources";
+import { trackRevision, type Track } from "src/track";
 
 const scope = { app: "shop", stage: "prod" };
 

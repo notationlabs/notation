@@ -1,7 +1,7 @@
 import * as v from "valibot";
 import { credentialSourceResource } from "@notation/resource";
 import { loadLocalValue, localRevision, lookup } from "./local-value";
-import { trackValidator, type Track } from "./track";
+import { trackValidator, type Track } from "../../track";
 
 export type EnvSchema = {
   Params: { key: string; track?: Track };

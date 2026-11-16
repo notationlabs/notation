@@ -1,11 +1,16 @@
 import * as v from "valibot";
 import { credentialSourceResource } from "@notation/resource";
-import { sources } from "@notation/std/resources";
+import {
+  assertTrackKey,
+  trackRevision,
+  trackValidator,
+  type Track,
+} from "@notation/std/track";
 import { recordSecretValue } from "@notation/utils";
 import { getSecret, where, type SecretAddress } from "./client";
 
 export type InfisicalSecretSchema = {
-  Params: SecretAddress & { track?: sources.Track };
+  Params: SecretAddress & { track?: Track };
   Value: string;
 };
 
@@ -70,7 +75,7 @@ export const InfisicalSecret = credentialSourceResource<InfisicalSecretSchema>({
     track: {
       propertyType: "param",
       presence: "optional",
-      value: sources.trackValidator,
+      value: trackValidator,
     },
     revision: {
       propertyType: "computed",
@@ -83,16 +88,19 @@ export const InfisicalSecret = credentialSourceResource<InfisicalSecretSchema>({
     // The revision is one of: `<id>:<version>` for a secret without
     // references, the execution ID for a secret with a reference, or an
     // `hmac:` or `scrypt:` hash with `track`. `loadCredential` tells the
-    // formats apart.
+    // formats apart. With the execution ID, `loadCredential` fetches the
+    // current value with each reference replaced, so the value is not fixed
+    // for the revision: consumers written before and after a resumed deploy
+    // can get different values.
     read: async (params, context) => {
       if (params.track) {
-        sources.assertTrackKey(params.track);
+        assertTrackKey(params.track);
         const secret = await getSecret(params, {
           expandSecretReferences: true,
         });
         recordSecretValue(secret.secretValue);
         return {
-          revision: await sources.trackRevision(
+          revision: await trackRevision(
             params.track,
             context,
             secret.secretValue,
@@ -123,7 +131,7 @@ export const InfisicalSecret = credentialSourceResource<InfisicalSecretSchema>({
         assertNotEmpty(state, secret.secretValue);
         if (
           state.track &&
-          (await sources.trackRevision(
+          (await trackRevision(
             state.track,
             context,
             secret.secretValue,
