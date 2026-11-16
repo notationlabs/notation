@@ -1,6 +1,6 @@
 import { Redacted, type Source, type SourceContext } from "@notation/core";
-import { apiUrl, request, siteUrl } from "./api";
-import { accessToken } from "./auth";
+import { apiUrl, request, siteUrl } from "../api";
+import { accessToken } from "../auth";
 
 export type InfisicalOptions = {
   /** The ID of the Infisical project. */

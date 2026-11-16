@@ -7,6 +7,10 @@
     "./sources": {
       "types": "./dist/sources/index.d.ts",
       "default": "./dist/sources/index.js"
+    },
+    "./resources": {
+      "types": "./dist/resources/index.d.ts",
+      "default": "./dist/resources/index.js"
     }
   },
   "files": [
@@ -18,11 +22,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@notation/core": "workspace:*"
-  },
-  "devDependencies": {
+    "@notation/core": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/std": "workspace:*",
+    "@notation/utils": "workspace:*",
+    "valibot": "^1.5.0"
+  },
+  "devDependencies": {
     "@types/node": "^22.20.5"
   }
 }

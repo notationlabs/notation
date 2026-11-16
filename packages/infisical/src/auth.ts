@@ -1,6 +1,42 @@
 import { apiUrl, request } from "./api";
 
-type LoginResponse = { accessToken: string };
+type LoginResponse = { accessToken: string; expiresIn?: number };
+
+const logins = new Map<string, { token: Promise<string>; expiresAt: number }>();
+
+/**
+ * Returns an access token as `accessToken` does, and keeps a token from a
+ * login for half of its lifetime, so that the sources of one process log in
+ * once.
+ */
+export function cachedAccessToken(site: string): Promise<string> {
+  const env = process.env;
+  if (env.INFISICAL_TOKEN) return Promise.resolve(env.INFISICAL_TOKEN);
+  const key = JSON.stringify([
+    site,
+    env.INFISICAL_UNIVERSAL_AUTH_CLIENT_ID,
+    env.INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET,
+    env.INFISICAL_IDENTITY_ID,
+    env.INFISICAL_JWT,
+  ]);
+  const cached = logins.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.token;
+  // Until the login returns, its lifetime is unknown. Calls in that time
+  // share the request.
+  const entry = { token: Promise.resolve(""), expiresAt: Infinity };
+  entry.token = login(site).then(
+    (response) => {
+      entry.expiresAt = Date.now() + ((response.expiresIn ?? 0) * 1000) / 2;
+      return response.accessToken;
+    },
+    (error) => {
+      logins.delete(key);
+      throw error;
+    },
+  );
+  logins.set(key, entry);
+  return entry.token;
+}
 
 /**
  * Returns an Infisical access token. It takes the first of:
@@ -13,8 +49,12 @@ type LoginResponse = { accessToken: string };
  *    the CI platform's OIDC token. See `oidcToken`.
  */
 export async function accessToken(site: string): Promise<string> {
+  return (await login(site)).accessToken;
+}
+
+async function login(site: string): Promise<LoginResponse> {
   const env = process.env;
-  if (env.INFISICAL_TOKEN) return env.INFISICAL_TOKEN;
+  if (env.INFISICAL_TOKEN) return { accessToken: env.INFISICAL_TOKEN };
 
   const clientId = env.INFISICAL_UNIVERSAL_AUTH_CLIENT_ID;
   const clientSecret = env.INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET;
@@ -24,22 +64,20 @@ export async function accessToken(site: string): Promise<string> {
         "Set both INFISICAL_UNIVERSAL_AUTH_CLIENT_ID and INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET to log in to Infisical with a machine identity.",
       );
     }
-    const login = await request<LoginResponse>(
+    return request<LoginResponse>(
       "POST",
       apiUrl(site, "/api/v1/auth/universal-auth/login"),
       { body: { clientId, clientSecret } },
     );
-    return login.accessToken;
   }
 
   const identityId = env.INFISICAL_IDENTITY_ID;
   if (identityId) {
-    const login = await request<LoginResponse>(
+    return request<LoginResponse>(
       "POST",
       apiUrl(site, "/api/v1/auth/oidc-auth/login"),
       { body: { identityId, jwt: await oidcToken() } },
     );
-    return login.accessToken;
   }
 
   throw new Error(
