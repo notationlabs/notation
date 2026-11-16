@@ -1,5 +1,46 @@
 # @notation/cloudflare
 
+## 0.24.0
+
+### Minor Changes
+
+- cfd0daf: `cloudflare.secretsStore.SecretsStoreSecret` takes its value from a credential only, in `Value`, which is required. `ValueFrom` and `StageScoped` are removed. Deploy names the secret `<app>--<stage>--<resource id>-<8 hex characters>`, cut to 255 characters, so config can't set `Name`. Delete always deletes the secret. `cloudflare.tokens.AccountToken` is named in the same way, cut to 120 characters.
+
+  Each entry of `cloudflare.workers.WorkerScript`'s `Secrets` is a credential, such as `source.credentials.value`. State holds a marker for each one. A create sends every secret. An update sends only the secrets whose credential has a new version, and Cloudflare keeps the others.
+
+  `$worker`'s `bindings` takes a credential, which it binds as a `secret_text` binding (a `string` in the handler), and a `SecretsStoreSecret`, which it binds as a `secrets_store_secret` binding (a `SecretsStoreSecret` in the handler). `$worker` fails for an output ref that is not a credential.
+
+  `secret()`, `accountToken()`, `workerSecret()`, `secretsStore.bind()`, `BindableSecret`, `SecretsStoreGroup` and the `@notation/cloudflare/secrets-store` and `@notation/cloudflare/tokens` entry points are removed. Declare a `SecretsStore`, an `AccountToken` and a `SecretsStoreSecret` from `@notation/cloudflare/resources` in their place.
+
+  A drift update compares credentials with the read of the remote, so it receives the value of a credential that the remote lost, such as a Worker secret deleted outside notation. A read can return the credential markers of the params that it received.
+
+- 386a2a9: `kvJson()` in the new `@notation/cloudflare/kv` entry point declares a JSON document in a KV key, with a `schema` option. It returns a `KVJsonGroup` with `schema`, `value` and `contribute`. Any infra module can add object keys to the document with `contribute`, and the parts merge as a Lambda's `Environment` does. Plan and deploy check the merged document against the schema before they write it. Each contribution is typed as a `JsonPartial` of the schema's input.
+
+  `cloudflare.kv.KVJsonValue` in `@notation/cloudflare/resources` is the resource that `kvJson()` declares. Its `Value` param is a JSON value, written with sorted keys. Its validator refuses a value that `JSON.stringify` would change, such as `NaN`, a `Date`, a sparse array or a nested `undefined`, an object key named `__proto__`, and a text of more than 25 MiB. A read of text that is not JSON, or JSON that the validator refuses, returns the text as a string, so plan shows an update rather than failing. Text too long to hold as a JSON string within 25 MiB reads as a short string that gives its length.
+
+  `readKVJson(namespace, key, schema)` and `KVJsonError` in `@notation/cloudflare/workers` read a JSON document in a Worker. `readKVJson()` returns `undefined` for a missing key, and throws `KVJsonError` for text that is not JSON or a value that fails the schema.
+
+  The `JsonValue` type of the KV API calls is replaced by `Json`, which `json()` bindings use. A pending write check of a `KVValue` now names the class in its message.
+
+  `assertId`, `isNameSafe`, `ID_MAX_LENGTH`, `NameSafe` and `IdOption` move from `@notation/aws` to `@notation/utils`, and `@notation/aws` re-exports them. The error for a missing id no longer says that the id is the base of the AWS name.
+
+### Patch Changes
+
+- 8e240be: A resource class can set `readLagsCreate` in its meta when the provider can report a new resource as not found for a while after `create` returns. Deploy then reads the resource again after a create while the read throws `ResourceNotFoundError`, every 2 seconds, up to the operation attempt limit. Without the flag, that read still fails the create.
+
+  `cloudflare.workers.WorkerScript` and `cloudflare.workers.WorkerSubdomain` set the flag, so a deploy no longer fails when Cloudflare reports a Worker or its workers.dev subdomain as not found straight after creating it. `WorkerScript`'s create no longer waits until it can read the new Worker, and its wait for the list of secrets treats a not-found list as listing no secrets.
+
+- Updated dependencies [cfd0daf]
+- Updated dependencies [386a2a9]
+- Updated dependencies [8e240be]
+- Updated dependencies [cfd0daf]
+- Updated dependencies [386a2a9]
+- Updated dependencies [cfd0daf]
+  - @notation/core@0.24.0
+  - @notation/resource@0.24.0
+  - @notation/utils@0.24.0
+  - @notation/std@0.24.0
+
 ## 0.23.0
 
 ### Minor Changes

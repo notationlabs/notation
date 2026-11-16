@@ -1,4 +1,5 @@
 import * as v from "valibot";
+import type { Json } from "src/json";
 import { CloudflareApiError, cloudflare, cloudflareGetText } from "./client";
 
 /** Cloudflare's error code for a KV namespace that doesn't exist. */
@@ -106,12 +107,9 @@ export async function deleteNamespace(
   await cloudflare("DELETE", namespacePath(account, namespaceId));
 }
 
-export type JsonValue =
-  string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
-
 export type KVWriteOptions = {
   /** Stored with the key, as JSON. */
-  metadata?: JsonValue;
+  metadata?: Json;
   /** When the key expires, in seconds since the UNIX epoch. */
   expiration?: number;
   /** Seconds until the key expires. Cloudflare's minimum is 60. */
@@ -121,7 +119,7 @@ export type KVWriteOptions = {
 export type KVEntry = KVWriteOptions & {
   key: string;
   /** A string is stored as it is. Any other value is stored as JSON. */
-  value: JsonValue;
+  value: Json;
 };
 
 type BulkResult = {
@@ -132,7 +130,7 @@ type BulkResult = {
 const valuePath = (account: string, namespaceId: string, key: string) =>
   `${namespacePath(account, namespaceId)}/values/${encodeURIComponent(key)}`;
 
-const encode = (value: JsonValue): string =>
+const encode = (value: Json): string =>
   typeof value === "string" ? value : JSON.stringify(value);
 
 /**
@@ -144,7 +142,7 @@ export async function putKVValue(
   namespaceId: string,
   key: string,
   /** A string is stored as it is. Any other value is stored as JSON. */
-  value: JsonValue,
+  value: Json,
   options: KVWriteOptions = {},
 ): Promise<void> {
   const query = new URLSearchParams();
@@ -186,13 +184,13 @@ export async function getKVValue(
   namespaceId: string,
   key: string,
   type: "json",
-): Promise<JsonValue | undefined>;
+): Promise<Json | undefined>;
 export async function getKVValue(
   account: string,
   namespaceId: string,
   key: string,
   type: "text" | "json" = "text",
-): Promise<JsonValue | undefined> {
+): Promise<Json | undefined> {
   let text: string;
   try {
     text = await cloudflareGetText(valuePath(account, namespaceId, key));

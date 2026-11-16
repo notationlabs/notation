@@ -12,6 +12,7 @@ import type { WorkerDeclarationConfig } from "./worker";
 
 export type * from "./declaration";
 export { json } from "./json";
+export { KVJsonError, readKVJson } from "./kv-json";
 
 /** Declares nothing at runtime. The Worker reads its bindings from `env`. */
 export function $worker<const Id extends string, B extends Bindings = {}>(

@@ -100,7 +100,11 @@ export function diffParams(
 ): ParamsDiff {
   const previousComparable = toComparableParams(schema, previous);
   const desiredComparable = toComparableParams(schema, desired);
-  const patch = diff(previousComparable, desiredComparable) as Record<
+  const previousForDiff = nullKindChanges(
+    previousComparable,
+    desiredComparable,
+  ) as Record<string, unknown>;
+  const patch = diff(previousForDiff, desiredComparable) as Record<
     string,
     unknown
   >;
@@ -126,8 +130,36 @@ export function diffParams(
     patch,
     changed,
     replaceFields,
-    diff: toDisplayDiff(detailedDiff(previousComparable, desiredComparable)),
+    diff: toDisplayDiff(detailedDiff(previousForDiff, desiredComparable)),
   };
+}
+
+/**
+ * Copies `previous` with `null` at each path where one side holds an array and
+ * the other holds an object that is not an array. `deep-object-diff` compares
+ * both by their keys, so it finds no change between `{}` and `[]`, or between
+ * `{ "0": "x" }` and `["x"]`. Against `null` it reports the desired value as
+ * updated at that path, with nothing added or deleted beneath it.
+ */
+function nullKindChanges(previous: unknown, desired: unknown): unknown {
+  if (!isObject(previous) || !isObject(desired)) return previous;
+  if (Array.isArray(previous) !== Array.isArray(desired)) return null;
+  const copy: Record<string, unknown> = Array.isArray(previous)
+    ? ([...previous] as unknown as Record<string, unknown>)
+    : { ...previous };
+  for (const [key, entry] of Object.entries(desired)) {
+    if (key in previous) {
+      copy[key] = nullKindChanges(
+        (previous as Record<string, unknown>)[key],
+        entry,
+      );
+    }
+  }
+  return copy;
+}
+
+function isObject(value: unknown): value is object {
+  return value !== null && typeof value === "object";
 }
 
 function isComparable(item: SchemaItem): boolean {
@@ -147,7 +179,8 @@ export function changedKeys(
   before: Record<string, unknown>,
   after: Record<string, unknown>,
 ): string[] {
-  return Object.keys(diff(before, after)).sort();
+  const previous = nullKindChanges(before, after) as Record<string, unknown>;
+  return Object.keys(diff(previous, after)).sort();
 }
 
 function toDisplayDiff(diffResult: {

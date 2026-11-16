@@ -18,3 +18,11 @@ export {
   scrubError,
   scrubSecretValues,
 } from "./secret-values";
+export {
+  assertId,
+  ID_MAX_LENGTH,
+  ID_RULE,
+  isNameSafe,
+  type IdOption,
+  type NameSafe,
+} from "./id";
