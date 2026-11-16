@@ -96,6 +96,7 @@ export async function withDeployCommands<T>(
       error.credential,
       error.request,
       `notation deploy ${targetFlags(deployment, config)}`,
+      { cause: error },
     );
   }
 }
