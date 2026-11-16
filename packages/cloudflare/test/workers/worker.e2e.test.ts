@@ -107,3 +107,98 @@ describeE2e("$worker", () => {
     }
   });
 });
+
+describeE2e("$worker RPC", () => {
+  const project = useProject();
+
+  // The router calls the github Worker over RPC through its own binding, and
+  // through a binding that the infra entry adds with addBindings(). The
+  // github Worker has no URL, as only the router calls it.
+  function writeProject() {
+    project.write(
+      "runtime/github.ts",
+      `
+      import { WorkerEntrypoint } from "cloudflare:workers";
+      import { $worker, type WorkerEnv } from "@notation/cloudflare/workers";
+
+      export type Input = { body: string };
+
+      export default class Github extends WorkerEntrypoint<WorkerEnv<typeof github>> {
+        async receive(input: Input) {
+          return { from: this.env.NAME, length: input.body.length };
+        }
+      }
+
+      export const github = $worker({
+        id: "github",
+        compatibilityDate: "2026-10-12",
+        bindings: () => ({ NAME: "github" }),
+        entrypoint: Github,
+        url: false,
+      });
+      `,
+    );
+    project.write(
+      "runtime/router.ts",
+      `
+      import type { Service } from "@cloudflare/workers-types";
+      import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
+      import { github, type Input } from "./github";
+      import type Github from "./github";
+
+      export const router = $worker({
+        id: "router",
+        compatibilityDate: "2026-10-12",
+        bindings: () => ({ GITHUB: github }),
+      });
+
+      export default {
+        async fetch(request, env) {
+          const input: Input = {
+            body: new URL(request.url).searchParams.get("body") ?? "",
+          };
+          const channel = (env as Record<string, unknown>)
+            .CHANNEL_GITHUB as Service<typeof Github>;
+          return Response.json({
+            typed: await env.GITHUB.receive(input),
+            added: await channel.receive(input),
+          });
+        },
+      } satisfies WorkerHandler<typeof router>;
+      `,
+    );
+    project.write(
+      "infra/main.ts",
+      `
+      import { addBindings } from "@notation/cloudflare/workers";
+      import { github } from "../runtime/github";
+      import { router } from "../runtime/router";
+
+      addBindings(router, { CHANNEL_GITHUB: github });
+      `,
+    );
+  }
+
+  it("deploys two Workers, and calls a method of one from the other over RPC", async () => {
+    writeProject();
+    await project.notation("deploy");
+    const all = await project.workerNames();
+    expect(all).toHaveLength(2);
+    const router = all.find((name) =>
+      name.startsWith(`${project.scope}router-`),
+    )!;
+
+    const called = await poll(`${project.url(router)}/?body=hello`);
+    expect(called.ok).toBe(true);
+    expect(JSON.parse(called.body ?? "")).toEqual({
+      typed: { from: "github", length: 5 },
+      added: { from: "github", length: 5 },
+    });
+  });
+
+  it("leaves the github Worker's code out of the router's bundle", () => {
+    expect(project.read("dist/runtime/router/index.mjs")).not.toContain(
+      "input.body.length",
+    );
+  });
+});
