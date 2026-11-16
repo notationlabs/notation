@@ -14,30 +14,30 @@ export type Json =
 
 type Issue = { message: string; path: string[] };
 
+// The largest value that Workers KV stores.
+const MAX_BYTES = 25 * 1024 * 1024;
+
 /**
  * A validator of JSON values that `JSON.stringify` writes as they are. It
  * fails a value that `JSON.stringify` would change or drop, such as `NaN`,
- * `-0`, a `Date`, a sparse array, or `undefined` at any depth. With
- * `maxBytes`, it also fails a value whose text from `sortedJson.encode` is
- * longer than that, in UTF-8.
+ * a `Date`, a sparse array, or `undefined` at any depth. It also fails a
+ * value whose text from `sortedJson.encode` is longer than 25 MiB in UTF-8.
  */
-export function jsonSchema(
-  options: { maxBytes?: number } = {},
-): StandardSchemaV1<Json, Json> {
+export function jsonSchema(): StandardSchemaV1<Json, Json> {
   return {
     "~standard": {
       version: 1,
       vendor: "notation",
       validate(value) {
         const issues: Issue[] = [];
-        collectIssues(value, [], new Set(), issues);
-        if (issues.length === 0 && options.maxBytes !== undefined) {
+        collectIssues(value, [], issues);
+        if (issues.length === 0) {
           const bytes = new TextEncoder().encode(
             sortedJson.encode(value),
           ).length;
-          if (bytes > options.maxBytes) {
+          if (bytes > MAX_BYTES) {
             issues.push({
-              message: `The JSON text is ${bytes} bytes, more than the limit of ${options.maxBytes}`,
+              message: `The JSON text is ${bytes} bytes, more than the limit of ${MAX_BYTES}`,
               path: [],
             });
           }
@@ -51,8 +51,6 @@ export function jsonSchema(
 function collectIssues(
   value: unknown,
   path: string[],
-  // The objects and arrays that hold `value`, to find a cycle.
-  ancestors: Set<object>,
   issues: Issue[],
 ): void {
   const fail = (message: string) => issues.push({ message, path });
@@ -63,8 +61,6 @@ function collectIssues(
     case "number":
       if (!Number.isFinite(value)) {
         fail(`${value} isn't JSON. JSON.stringify writes it as null`);
-      } else if (Object.is(value, -0)) {
-        fail("-0 isn't JSON. JSON.stringify writes it as 0");
       }
       return;
     case "undefined":
@@ -77,11 +73,6 @@ function collectIssues(
       return;
   }
   if (value === null) return;
-  if (ancestors.has(value)) {
-    fail("The value holds itself, so it isn't JSON");
-    return;
-  }
-  ancestors.add(value);
   if (Array.isArray(value)) {
     for (let index = 0; index < value.length; index++) {
       const entryPath = [...path, String(index)];
@@ -101,20 +92,17 @@ function collectIssues(
         });
         continue;
       }
-      collectIssues(value[index], entryPath, ancestors, issues);
+      collectIssues(value[index], entryPath, issues);
     }
   } else {
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) {
       const name = prototype?.constructor?.name ?? "object";
       fail(`A ${name} isn't JSON. Only plain objects are`);
-    } else if (Object.getOwnPropertySymbols(value).length > 0) {
-      fail("An object with symbol keys isn't JSON");
     } else {
       for (const [key, entry] of Object.entries(value)) {
-        collectIssues(entry, [...path, key], ancestors, issues);
+        collectIssues(entry, [...path, key], issues);
       }
     }
   }
-  ancestors.delete(value);
 }

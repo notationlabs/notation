@@ -1,12 +1,76 @@
+import * as v from "valibot";
 import {
   ResourceNotFoundError,
   ResourceOperationPendingError,
+  type DefineResourceMeta,
   type ResourceOperationContext,
 } from "@notation/resource";
 import { cloudflareCreate } from "src/api/client";
 import { deleteKVValue, getKVValue, isNotFound, putKVValue } from "src/api/kv";
+import type { KVNamespaceInstance } from "./kv-namespace";
 
 export type KVKey = { AccountId: string; NamespaceId: string; Key: string };
+
+export type KVKeyDependencies = {
+  namespace: KVNamespaceInstance;
+};
+
+/** The `resource()` meta of a class that stores a value in one KV key. */
+export const kvResourceMeta = (className: string): DefineResourceMeta => ({
+  type: `cloudflare/kv/${className}`,
+  provider: "@notation/cloudflare/resources",
+  // A replace changes the key, the namespace or the account, so the new key
+  // never collides with the old one.
+  replaceCreatesFirst: true,
+});
+
+/** The schema items that locate a class's KV key. */
+export const kvKeyParams = {
+  AccountId: {
+    propertyType: "param",
+    presence: "required",
+    immutable: true,
+    secondaryKey: true,
+    value: v.string(),
+  },
+  NamespaceId: {
+    propertyType: "param",
+    presence: "required",
+    immutable: true,
+    secondaryKey: true,
+    value: v.string(),
+  },
+  /**
+   * The key's name: 1 to 512 bytes, and not `.` or `..`. A change writes the
+   * new key, then deletes the old key at the end of the deploy. If the new
+   * key already exists, the deploy fails and the old key stays as it was.
+   */
+  Key: {
+    propertyType: "param",
+    presence: "required",
+    immutable: true,
+    primaryKey: true,
+    value: v.pipe(
+      v.string(),
+      v.minBytes(1),
+      v.maxBytes(512),
+      v.check(
+        (key) => key !== "." && key !== "..",
+        "A KV key can't be . or ..",
+      ),
+    ),
+  },
+} as const;
+
+/** Takes the account and the namespace of the key from the namespace. */
+export const deriveKVKeyParams = async ({
+  deps,
+}: {
+  deps: KVKeyDependencies;
+}) => ({
+  AccountId: deps.namespace.output.AccountId,
+  NamespaceId: deps.namespace.output.NamespaceId,
+});
 
 /** How a class stores its `Value` as the text of a key. */
 export type KVEncoding<V> = {

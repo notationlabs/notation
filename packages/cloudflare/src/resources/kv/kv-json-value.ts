@@ -1,9 +1,15 @@
-import * as v from "valibot";
 import { mergeContributions, resource } from "@notation/resource";
 import { sortedJson } from "@notation/utils";
 import { jsonSchema, type Json } from "src/json";
-import type { KVNamespaceInstance } from "./kv-namespace";
-import { kvOperations, type KVEncoding, type KVKey } from "./kv-operations";
+import {
+  deriveKVKeyParams,
+  kvKeyParams,
+  kvOperations,
+  kvResourceMeta,
+  type KVEncoding,
+  type KVKey,
+  type KVKeyDependencies,
+} from "./kv-operations";
 
 export type KVJsonValueSchema = {
   Key: KVKey;
@@ -12,53 +18,12 @@ export type KVJsonValueSchema = {
   ReadResult: {};
 };
 
-export type KVJsonValueDependencies = {
-  namespace: KVNamespaceInstance;
-};
+export type KVJsonValueDependencies = KVKeyDependencies;
 
-const kvJsonValue = resource<KVJsonValueSchema>({
-  type: "cloudflare/kv/KVJsonValue",
-  provider: "@notation/cloudflare/resources",
-  // A replace changes the key, the namespace or the account, so the new key
-  // never collides with the old one.
-  replaceCreatesFirst: true,
-});
-
-const kvJsonValueSchema = kvJsonValue.defineSchema({
-  AccountId: {
-    propertyType: "param",
-    presence: "required",
-    immutable: true,
-    secondaryKey: true,
-    value: v.string(),
-  },
-  NamespaceId: {
-    propertyType: "param",
-    presence: "required",
-    immutable: true,
-    secondaryKey: true,
-    value: v.string(),
-  },
-  /**
-   * The key's name: 1 to 512 bytes, and not `.` or `..`. A change writes the
-   * new key, then deletes the old key at the end of the deploy. If the new
-   * key already exists, the deploy fails and the old key stays as it was.
-   */
-  Key: {
-    propertyType: "param",
-    presence: "required",
-    immutable: true,
-    primaryKey: true,
-    value: v.pipe(
-      v.string(),
-      v.minBytes(1),
-      v.maxBytes(512),
-      v.check(
-        (key) => key !== "." && key !== "..",
-        "A KV key can't be . or ..",
-      ),
-    ),
-  },
+const kvJsonValueSchema = resource<KVJsonValueSchema>(
+  kvResourceMeta("KVJsonValue"),
+).defineSchema({
+  ...kvKeyParams,
   /**
    * The value, a JSON value that `JSON.stringify` writes as it is. Deploy
    * stores the text of `sortedJson.encode`, which is at most 25 MiB. Any
@@ -68,7 +33,7 @@ const kvJsonValueSchema = kvJsonValue.defineSchema({
   Value: {
     propertyType: "param",
     presence: "required",
-    value: jsonSchema({ maxBytes: 25 * 1024 * 1024 }),
+    value: jsonSchema(),
     collect: mergeContributions<Json>,
   },
 } as const);
@@ -99,9 +64,6 @@ const jsonEncoding: KVEncoding<Json> = {
 export const KVJsonValue = kvJsonValueSchema
   .defineOperations(kvOperations("KVJsonValue", jsonEncoding))
   .requireDependencies<KVJsonValueDependencies>()
-  .deriveParams(async ({ deps }) => ({
-    AccountId: deps.namespace.output.AccountId,
-    NamespaceId: deps.namespace.output.NamespaceId,
-  }));
+  .deriveParams(deriveKVKeyParams);
 
 export type KVJsonValueInstance = InstanceType<typeof KVJsonValue>;

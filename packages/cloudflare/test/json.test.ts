@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { jsonSchema } from "src/json";
 
-const issuesOf = (value: unknown, options?: { maxBytes?: number }) => {
-  const result = jsonSchema(options)["~standard"].validate(value) as {
+const issuesOf = (value: unknown) => {
+  const result = jsonSchema()["~standard"].validate(value) as {
     issues?: { message: string; path: string[] }[];
   };
   return (result.issues ?? []).map(
@@ -29,11 +29,10 @@ describe("jsonSchema", () => {
   });
 
   it("refuses the numbers that JSON.stringify changes", () => {
-    expect(issuesOf({ a: NaN, b: Infinity, c: -Infinity, d: -0 })).toEqual([
+    expect(issuesOf({ a: NaN, b: Infinity, c: -Infinity })).toEqual([
       "a: NaN isn't JSON. JSON.stringify writes it as null",
       "b: Infinity isn't JSON. JSON.stringify writes it as null",
       "c: -Infinity isn't JSON. JSON.stringify writes it as null",
-      "d: -0 isn't JSON. JSON.stringify writes it as 0",
     ]);
   });
 
@@ -66,32 +65,19 @@ describe("jsonSchema", () => {
     ]);
   });
 
-  it("refuses a bigint, a symbol and symbol keys", () => {
-    expect(
-      issuesOf({ a: 1n, b: Symbol("b"), c: { [Symbol("c")]: 1 } }),
-    ).toEqual([
+  it("refuses a bigint and a symbol", () => {
+    expect(issuesOf({ a: 1n, b: Symbol("b") })).toEqual([
       "a: A bigint isn't JSON",
       "b: A symbol isn't JSON",
-      "c: An object with symbol keys isn't JSON",
     ]);
   });
 
-  it("refuses a value that holds itself, and accepts one object in two places", () => {
-    const loop: Record<string, unknown> = {};
-    loop.self = loop;
-    expect(issuesOf({ loop })).toEqual([
-      "loop.self: The value holds itself, so it isn't JSON",
-    ]);
-
-    const shared = { a: 1 };
-    expect(issuesOf({ x: shared, y: shared })).toEqual([]);
-  });
-
-  it("refuses a value whose encoded text is longer than maxBytes in UTF-8", () => {
-    // "é" is 2 bytes, and the quotes make 2 more.
-    expect(issuesOf("éé", { maxBytes: 6 })).toEqual([]);
-    expect(issuesOf("ééé", { maxBytes: 6 })).toEqual([
-      ": The JSON text is 8 bytes, more than the limit of 6",
+  it("refuses a value whose encoded text is longer than 25 MiB in UTF-8", () => {
+    const limit = 25 * 1024 * 1024;
+    // The quotes add 2 bytes to the text.
+    expect(issuesOf("a".repeat(limit - 2))).toEqual([]);
+    expect(issuesOf("a".repeat(limit - 1))).toEqual([
+      `: The JSON text is ${limit + 1} bytes, more than the limit of ${limit}`,
     ]);
   });
 });

@@ -152,7 +152,7 @@ Notation checks the document at three points:
 
 **The schema only checks the document.** Deploy writes the merged document as it is, not the schema's output. A default in the schema applies in the Worker, but deploy does not write it.
 
-Deploy also refuses a value that `JSON.stringify` would change, such as `NaN`, `-0`, a `Date`, a sparse array, or a key set to `undefined`. The stored text is at most 25 MiB.
+Deploy also refuses a value that `JSON.stringify` would change, such as `NaN`, a `Date`, a sparse array, or a key set to `undefined`. The stored text is at most 25 MiB.
 
 ### Drift
 

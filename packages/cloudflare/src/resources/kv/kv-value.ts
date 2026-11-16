@@ -1,7 +1,14 @@
 import * as v from "valibot";
 import { resource } from "@notation/resource";
-import type { KVNamespaceInstance } from "./kv-namespace";
-import { kvOperations, textEncoding, type KVKey } from "./kv-operations";
+import {
+  deriveKVKeyParams,
+  kvKeyParams,
+  kvOperations,
+  kvResourceMeta,
+  textEncoding,
+  type KVKey,
+  type KVKeyDependencies,
+} from "./kv-operations";
 
 export type KVValueSchema = {
   Key: KVKey;
@@ -10,53 +17,12 @@ export type KVValueSchema = {
   ReadResult: {};
 };
 
-export type KVValueDependencies = {
-  namespace: KVNamespaceInstance;
-};
+export type KVValueDependencies = KVKeyDependencies;
 
-const kvValue = resource<KVValueSchema>({
-  type: "cloudflare/kv/KVValue",
-  provider: "@notation/cloudflare/resources",
-  // A replace changes the key, the namespace or the account, so the new key
-  // never collides with the old one.
-  replaceCreatesFirst: true,
-});
-
-const kvValueSchema = kvValue.defineSchema({
-  AccountId: {
-    propertyType: "param",
-    presence: "required",
-    immutable: true,
-    secondaryKey: true,
-    value: v.string(),
-  },
-  NamespaceId: {
-    propertyType: "param",
-    presence: "required",
-    immutable: true,
-    secondaryKey: true,
-    value: v.string(),
-  },
-  /**
-   * The key's name: 1 to 512 bytes, and not `.` or `..`. A change writes the
-   * new key, then deletes the old key at the end of the deploy. If the new
-   * key already exists, the deploy fails and the old key stays as it was.
-   */
-  Key: {
-    propertyType: "param",
-    presence: "required",
-    immutable: true,
-    primaryKey: true,
-    value: v.pipe(
-      v.string(),
-      v.minBytes(1),
-      v.maxBytes(512),
-      v.check(
-        (key) => key !== "." && key !== "..",
-        "A KV key can't be . or ..",
-      ),
-    ),
-  },
+const kvValueSchema = resource<KVValueSchema>(
+  kvResourceMeta("KVValue"),
+).defineSchema({
+  ...kvKeyParams,
   /**
    * The value, stored as it is. To store JSON, pass `JSON.stringify(value)`.
    * Cloudflare allows up to 25 MiB, but state holds the value in both the
@@ -80,9 +46,6 @@ const kvValueSchema = kvValue.defineSchema({
 export const KVValue = kvValueSchema
   .defineOperations(kvOperations("KVValue", textEncoding))
   .requireDependencies<KVValueDependencies>()
-  .deriveParams(async ({ deps }) => ({
-    AccountId: deps.namespace.output.AccountId,
-    NamespaceId: deps.namespace.output.NamespaceId,
-  }));
+  .deriveParams(deriveKVKeyParams);
 
 export type KVValueInstance = InstanceType<typeof KVValue>;
