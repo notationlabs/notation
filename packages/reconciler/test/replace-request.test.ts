@@ -1,6 +1,7 @@
 import * as v from "valibot";
 import {
   UNKNOWN_AFTER_APPLY,
+  credentialSourceResource,
   resource,
   type DurableObject,
 } from "@notation/resource";
@@ -114,7 +115,7 @@ const mirrorName = "shop--prod--mirror-5e6f7a8b";
 function queues() {
   const orders = new Queue("orders", { config: { path: "/" } as any });
   const mirror = new Queue("mirror", { config: { path: "/" } as any });
-  mirror.config.target = orders.outputRef("name");
+  (mirror.config as any).target = orders.outputRef("name");
   const state = new MemoryStateBackend({
     orders: record("orders", Queue.type, { name: ordersName, path: "/" }),
     mirror: record(
@@ -255,7 +256,7 @@ describe("createPlan with a requested replace", () => {
 
   it("shows one replace with both reasons when a param also forces it", async () => {
     const { resources, state } = queues();
-    resources[0]!.config.path = "/new/";
+    (resources[0]!.config as any).path = "/new/";
 
     const plan = await createPlan({
       resources,
@@ -370,28 +371,35 @@ describe("createPlan with a requested replace", () => {
     });
 
     it("when the resource is a source", async () => {
-      const Source = resource({ type: "test/replace/source", provider: "test" })
+      const Source = credentialSourceResource<{
+        Params: { key: string };
+        Value: string;
+      }>({ type: "test/replace/source", provider: "test" })
         .defineSchema({
           key: {
             propertyType: "param",
             presence: "required",
             value: v.string(),
           },
-        } as any)
+          revision: {
+            propertyType: "computed",
+            presence: "required",
+            value: v.string(),
+          },
+          value: { propertyType: "credential", value: v.string() },
+        } as const)
         .defineOperations({
-          create: async () => undefined,
-          update: async () => undefined,
-          delete: async () => undefined,
+          read: async () => ({ revision: "1" }),
+          loadCredential: async () => ({ value: "v" }),
         });
 
       await expect(
         createPlan({
-          resources: [
-            new Source("env:stripe-key", { config: { key: "k" } as any }),
-          ],
+          resources: [new Source("env:stripe-key", { config: { key: "k" } })],
           state: new MemoryStateBackend({
             "env:stripe-key": record("env:stripe-key", Source.type, {
               key: "k",
+              revision: "1",
             }),
           }),
           driftDetection: false,

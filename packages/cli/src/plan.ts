@@ -1,7 +1,6 @@
 import {
   formatRequest,
   planApp,
-  PROMPT_SOURCE,
   resolveDeploymentId,
   shellQuote,
   UnobtainableCredentialError,
@@ -223,11 +222,6 @@ function printPlanSummary(result: Plan, logger: Logger) {
           : `    deleted if ${node.replacedDependency} is replaced`,
       );
     }
-    if (promptsForValue(node)) {
-      logger.info(
-        "    value not set: deploy asks for it if the secret doesn't exist, and fails without a terminal",
-      );
-    }
     if (node.placeholder) {
       logger.info(
         `    created first without the contributions that refer to ${(node.cycle ?? []).join(", ")}, the other members of its cycle`,
@@ -248,43 +242,4 @@ function printPlanSummary(result: Plan, logger: Logger) {
   ].join(", ");
 
   logger.info(`${changedNodes.length > 0 ? "\n" : ""}Plan: ${summary}.`);
-}
-
-const creatingDecisions = new Set<PlanNode["decision"]>([
-  "create",
-  "replace",
-  "drift-replace",
-  "drift-recreate",
-]);
-
-type ValueFrom = { Source?: unknown } | undefined;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === "object";
-
-// A secret without a source has `ValueFrom: { Source: PROMPT_SOURCE }`. Plan
-// never asks for the value, so it says that deploy will. For a Worker's
-// `Secrets`, an update flags only an entry that is new or whose `Source`
-// changed. The read leaves out a secret deleted from the Worker, so drift
-// shows it as new.
-function promptsForValue(node: PlanNode): boolean {
-  const secrets = node.params.Secrets as Record<string, ValueFrom> | undefined;
-  const prompted = Object.entries(secrets ?? {})
-    .filter(([, valueFrom]) => valueFrom?.Source === PROMPT_SOURCE)
-    .map(([name]) => name);
-  if (creatingDecisions.has(node.decision)) {
-    return (
-      (node.params.ValueFrom as ValueFrom)?.Source === PROMPT_SOURCE ||
-      prompted.length > 0
-    );
-  }
-  const added = node.diff?.added.Secrets;
-  const updated = node.diff?.updated.Secrets;
-  return prompted.some(
-    (name) =>
-      (isRecord(added) && name in added) ||
-      (isRecord(updated) &&
-        isRecord(updated[name]) &&
-        "Source" in updated[name]),
-  );
 }

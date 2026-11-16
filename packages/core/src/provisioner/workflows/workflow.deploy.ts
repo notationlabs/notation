@@ -8,7 +8,6 @@ import {
 } from "@notation/reconciler";
 import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
-import { runWithSecretContext, type SecretPrompt } from "src/secrets/context";
 import {
   loadStateProviderRegistry,
   mergeResourceRegistries,
@@ -31,11 +30,6 @@ export type DeployAppOptions = {
   databasePath?: string;
   emit?: ReconcilerEventEmitter;
   /**
-   * Asks for the value of a secret that has no source. Without it, deploy
-   * fails when it has to write such a secret.
-   */
-  promptSecret?: SecretPrompt;
-  /**
    * The replaces and credentials that the user asked for. Saved with a new
    * execution, without the values of the credentials. A resume uses the
    * saved request, and fails if this one differs from it.
@@ -43,20 +37,7 @@ export type DeployAppOptions = {
   requested?: ReplaceRequest;
 };
 
-export function deployApp(opts: DeployAppOptions): Promise<void> {
-  // A resumed execution has the same run ID, so a source without versions
-  // gives the version that the execution recorded.
-  return runWithSecretContext(
-    {
-      stage: opts.deployment.stage,
-      runId: opts.executionId,
-      prompt: opts.promptSecret,
-    },
-    () => deploy(opts),
-  );
-}
-
-async function deploy({
+export async function deployApp({
   deployment,
   // Defaulted in one place: the reconciler's drift gate treats absent as on.
   driftDetection,

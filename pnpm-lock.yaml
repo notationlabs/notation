@@ -451,9 +451,6 @@ importers:
 
   packages/infisical:
     dependencies:
-      '@notation/core':
-        specifier: workspace:*
-        version: link:../core
       '@notation/resource':
         specifier: workspace:*
         version: link:../resource

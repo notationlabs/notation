@@ -26,7 +26,6 @@ export {
   isOwnPhysicalName,
   ownPhysicalName,
   physicalName,
-  scopedPhysicalName,
   type NameScope,
   type OwnPhysicalName,
   type PhysicalNameRule,

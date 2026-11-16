@@ -4,10 +4,6 @@
   "version": "0.23.0",
   "sideEffects": false,
   "exports": {
-    "./sources": {
-      "types": "./dist/sources/index.d.ts",
-      "default": "./dist/sources/index.js"
-    },
     "./resources": {
       "types": "./dist/resources/index.d.ts",
       "default": "./dist/resources/index.js"
@@ -22,7 +18,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@notation/core": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/std": "workspace:*",
     "@notation/utils": "workspace:*",

@@ -6,14 +6,12 @@ import {
   resolveDeploymentId,
   type Deployment,
   type ReplaceRequest,
-  type SecretPrompt,
 } from "@notation/core";
 import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
 import { createEventRenderer, type OutputMode } from "./output";
 import { targetFlags } from "./plan";
-import { canPrompt, terminalSecretPrompt } from "./prompt";
 
 export type DeployCommandOptions = {
   output?: OutputMode;
@@ -24,15 +22,6 @@ export type DeployCommandOptions = {
   compile?: boolean;
   driftDetection?: boolean;
   logger?: Logger;
-  /**
-   * Asks on the terminal for secret values even in JSON output. `watch` sets
-   * it for the deploys it runs, whose stdout carries events to `watch`. The
-   * CLI also sets it when the output is JSON only because stdout is not a
-   * terminal.
-   */
-  promptSecrets?: boolean;
-  /** Defaults to the prompt that `secretPrompt` picks. */
-  promptSecret?: SecretPrompt;
   /**
    * The request from `--replace`, `--override-loss-protection` and
    * `--credential`.
@@ -69,28 +58,7 @@ export async function deploy(
     executionId,
     driftDetection: opts.driftDetection,
     requested: opts.requested,
-    promptSecret:
-      opts.promptSecret ??
-      secretPrompt({
-        json: output === "json",
-        promptSecrets: opts.promptSecrets,
-      }),
   });
-}
-
-/**
- * How deploy asks for the value of a secret without a source: on the
- * terminal, with the question on stderr. There is no prompt without a
- * terminal, or with `--json` unless `promptSecrets` is set, so deploy fails
- * with the command that sets the secret.
- */
-export function secretPrompt(opts: {
-  json?: boolean;
-  promptSecrets?: boolean;
-}): SecretPrompt | undefined {
-  if (opts.json && !opts.promptSecrets) return undefined;
-  if (!canPrompt()) return undefined;
-  return terminalSecretPrompt();
 }
 
 /**

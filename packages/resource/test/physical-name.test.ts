@@ -1,11 +1,5 @@
 import { expect, it } from "vitest";
-import {
-  collectResourceGraph,
-  generatedPhysicalName,
-  physicalName,
-  resource,
-  scopedPhysicalName,
-} from "src";
+import { generatedPhysicalName, physicalName, resource } from "src";
 import { string } from "./validators";
 
 const scope = { app: "orders-app", stage: "prod" };
@@ -59,23 +53,6 @@ it("does not leave a separator before the hash", () => {
     maxLength: 30,
   });
   expect(result).toMatch(/^orders-app--prod--ab-[0-9a-f]{8}$/);
-});
-
-it("scopes names by the app and stage of the active collection", async () => {
-  let name = "";
-  await collectResourceGraph(
-    () => {
-      name = scopedPhysicalName("get-orders", { maxLength: 64 });
-    },
-    { scope },
-  );
-  expect(name).toBe("orders-app--prod--get-orders");
-});
-
-it("does not scope names outside a collection", () => {
-  expect(scopedPhysicalName("get-orders", { maxLength: 64 })).toBe(
-    "get-orders",
-  );
 });
 
 // Changing the hash renames, and so replaces, every shortened resource.

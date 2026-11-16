@@ -1,4 +1,3 @@
-import { getActiveResourceCollection } from "./resource-collection";
 import { isPlainObject } from "./output-ref";
 
 /** The part of a deployment's identity that scopes physical names. */
@@ -122,18 +121,6 @@ export function generatedNameBody(
   return `${scope.app}--${scope.stage}--${base}`
     .slice(0, room)
     .replace(/-+$/, "");
-}
-
-/**
- * Makes the physical name of a resource declared during the active
- * collection, scoped by the collection's app and stage. It is an engine
- * mechanism for resource packages, not user-facing API.
- */
-export function scopedPhysicalName(
-  name: string,
-  rule: PhysicalNameRule,
-): string {
-  return physicalName(getActiveResourceCollection()?.scope, name, rule);
 }
 
 /**

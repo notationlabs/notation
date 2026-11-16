@@ -6,7 +6,6 @@ import {
   formatRequest,
   planApp,
 } from "src/provisioner";
-import { secretContext } from "src/secrets";
 
 const { getResourceGraph } = vi.hoisted(() => ({
   getResourceGraph: vi.fn(async (..._args: unknown[]) => {
@@ -46,35 +45,6 @@ it("destroyApp evaluates infra without declaration checks", async () => {
   expect(getResourceGraph.mock.calls[0]?.[2]).toEqual({
     declarationChecks: false,
   });
-});
-
-it("deploys and plans in a secret context with the stage, the run ID and the prompt", async () => {
-  const contexts: unknown[] = [];
-  getResourceGraph.mockImplementation(async () => {
-    const { stage, runId, prompt } = secretContext()!;
-    contexts.push({ stage, runId, prompt });
-    throw new Error("stop after evaluation");
-  });
-  const promptSecret = async () => "value";
-
-  await expect(
-    deployApp({ deployment, executionId: "e1", promptSecret }),
-  ).rejects.toThrow();
-  await expect(planApp({ deployment })).rejects.toThrow();
-
-  expect(contexts).toEqual([
-    {
-      stage: "prod",
-      runId: "e1",
-      prompt: promptSecret,
-    },
-    {
-      stage: "prod",
-      runId: expect.any(String),
-      prompt: undefined,
-    },
-  ]);
-  expect(secretContext()).toBeUndefined();
 });
 
 describe("assertSameRequest", () => {

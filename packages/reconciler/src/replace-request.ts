@@ -123,15 +123,6 @@ function primaryKeyNames(schema: Schema): string[] {
     .map(([name]) => name);
 }
 
-// The old `SourceValue` has no primary key, and every class that is not a
-// source has one.
-function isSource(resource: BaseResource): boolean {
-  return (
-    isCredentialSource(resource) ||
-    primaryKeyNames(resource.schema).length === 0
-  );
-}
-
 /**
  * The request as flags, in a fixed order, with each repeated flag once.
  * Empty for no request.
@@ -255,7 +246,7 @@ export function assertReplaceRequest(
         `${id} has a create that an earlier deploy did not finish. Run deploy without --replace to recover it first.`,
       );
     }
-    if (isSource(resource)) {
+    if (isCredentialSource(resource)) {
       throw new Error(
         `${id} is a source, and a source is never replaced. Nothing exists at a provider to replace.`,
       );

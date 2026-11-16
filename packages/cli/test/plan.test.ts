@@ -25,7 +25,6 @@ vi.mock("@notation/core", async (importOriginal) => ({
   ).unobtainableCredentialMessage,
   createLoggerReconcilerSubscriber: () => () => undefined,
   planApp,
-  PROMPT_SOURCE: "prompt",
   resolveDeploymentId: (d: Deployment) => `${d.app}:${d.stage}`,
 }));
 vi.mock("../src/compile", () => ({ compile: vi.fn(async () => undefined) }));
@@ -364,117 +363,6 @@ it("writes the order of a replace in the JSON plan", async () => {
 
   const output = chunks.join("");
   expect(JSON.parse(output).nodes).toEqual([node]);
-});
-
-it("prints that deploy asks for the value of a new secret without a source", async () => {
-  planApp.mockResolvedValueOnce({
-    createdAt: "",
-    nodes: [
-      {
-        id: "secret:admin",
-        type: "cloudflare/secrets-store/SecretsStoreSecret",
-        decision: "create",
-        params: { ValueFrom: { Secret: "admin", Source: "prompt" } },
-        dependsOn: [],
-      },
-      {
-        id: "secret:stripe-key",
-        type: "cloudflare/secrets-store/SecretsStoreSecret",
-        decision: "create",
-        params: { ValueFrom: { Secret: "stripe-key", Source: "env" } },
-        dependsOn: [],
-      },
-    ],
-  });
-  const lines: string[] = [];
-  const logger = { ...console, info: (line: string) => lines.push(line) };
-
-  await plan(deployment, { logger });
-
-  expect(lines.slice(1, 4)).toEqual([
-    "+ create cloudflare/secrets-store/SecretsStoreSecret secret:admin",
-    "    value not set: deploy asks for it if the secret doesn't exist, and fails without a terminal",
-    "+ create cloudflare/secrets-store/SecretsStoreSecret secret:stripe-key",
-  ]);
-});
-
-it("prints that deploy asks for the value of a Worker's secret without a source when it creates the Worker, or adds the secret or moves it to the prompt", async () => {
-  const Secrets = {
-    ADMIN: { Secret: "admin", Source: "prompt" },
-    API_KEY: { Secret: "api-key", Source: "env", Key: "API_KEY" },
-  };
-  const type = "cloudflare/workers/WorkerScript";
-  planApp.mockResolvedValueOnce({
-    createdAt: "",
-    nodes: [
-      {
-        id: "worker:api",
-        type,
-        decision: "create",
-        params: { Secrets },
-        dependsOn: [],
-      },
-      {
-        id: "worker:jobs",
-        type,
-        decision: "update",
-        diff: {
-          added: { Secrets: { ADMIN: Secrets.ADMIN } },
-          deleted: {},
-          updated: {},
-        },
-        params: { Secrets },
-        dependsOn: [],
-      },
-      {
-        id: "worker:queue",
-        type,
-        decision: "update",
-        diff: {
-          added: {},
-          deleted: { Secrets: { ADMIN: { Key: null } } },
-          updated: { Secrets: { ADMIN: { Source: "prompt" } } },
-        },
-        params: { Secrets },
-        dependsOn: [],
-      },
-      {
-        id: "worker:cron",
-        type,
-        decision: "update",
-        diff: {
-          added: {},
-          deleted: {},
-          updated: { Secrets: { API_KEY: { Key: "API_KEY_V2" } } },
-        },
-        params: { Secrets },
-        dependsOn: [],
-      },
-      {
-        id: "worker:web",
-        type,
-        decision: "update",
-        diff: { added: {}, deleted: {}, updated: { CodeSha256: "b" } },
-        params: { Secrets },
-        dependsOn: [],
-      },
-    ],
-  });
-  const lines: string[] = [];
-  const logger = { ...console, info: (line: string) => lines.push(line) };
-
-  await plan(deployment, { logger });
-
-  const notSet =
-    "    value not set: deploy asks for it if the secret doesn't exist, and fails without a terminal";
-  const before = lines.flatMap((line, index) =>
-    line === notSet ? [lines[index - 1]] : [],
-  );
-  expect(before).toEqual([
-    `+ create ${type} worker:api`,
-    `~ update ${type} worker:jobs`,
-    `~ update ${type} worker:queue`,
-  ]);
 });
 
 it("prints a resource that only rotates a credential", async () => {

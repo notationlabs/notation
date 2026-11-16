@@ -6,7 +6,7 @@ const logins = new Map<string, { token: Promise<string>; expiresAt: number }>();
 
 /**
  * Returns an access token as `accessToken` does, and keeps a token from a
- * login for half of its lifetime, so that the sources of one process log in
+ * login for half of its lifetime, so that the secrets of one process log in
  * once.
  */
 export function cachedAccessToken(site: string): Promise<string> {
