@@ -23,7 +23,6 @@ import {
   getScriptReferences,
   getScriptSettings,
   isNotFound,
-  isPlaceholderScript,
   isReferenced,
   listAccountNamespaces,
   listScriptSecretNames,
@@ -312,14 +311,8 @@ export const WorkerScript = workerScriptSchema
   .defineOperations({
     // An upload replaces a Worker with the same name, so check first. The
     // check is outside `cloudflareCreate`: if it throws, nothing was created.
-    // The upload may replace a Worker left by the deprecated
-    // `WorkerScriptPlaceholder`, and removes its placeholder tag.
     create: async (params) => {
-      const existing = await getScriptSettings(
-        params.AccountId,
-        params.ScriptName,
-      );
-      if (existing && !isPlaceholderScript(existing)) {
+      if (await getScriptSettings(params.AccountId, params.ScriptName)) {
         throw new ResourceAlreadyExistsError(
           `A Worker named ${params.ScriptName} already exists in the Cloudflare account ${params.AccountId}`,
         );
@@ -328,9 +321,9 @@ export const WorkerScript = workerScriptSchema
       if (found.transfers.length > 0) {
         throw new Error(newHostError(params, found.transfers));
       }
-      const secrets = await secretBindings(params, existing !== undefined);
+      const secrets = await secretBindings(params, false);
       await cloudflareCreate(async () => {
-        await upload(params, [], found, secrets, { tags: [] });
+        await upload(params, [], found, secrets);
         await waitUntilReadable(params.AccountId, params.ScriptName);
         await waitUntilSecretsListed(
           params.AccountId,
@@ -485,7 +478,6 @@ async function upload(
   previous: HostedNamespace[],
   found: FoundTransfers,
   secrets: SecretTextBinding[],
-  options: Pick<ScriptUpload, "tags"> = {},
 ): Promise<void> {
   const code = await readCode(params.CodeFilePath, params.CodeSha256);
   const hosted = params.DurableObjectNamespaces ?? [];
@@ -504,7 +496,6 @@ async function upload(
     containers: hosted
       .filter((namespace) => namespace.container)
       .map((namespace) => ({ class_name: namespace.className })),
-    ...options,
   };
   if (found.transfers.length > 0) {
     await transferNamespaces(params, upload, found.transfers, found.account);

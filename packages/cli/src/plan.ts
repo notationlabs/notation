@@ -195,9 +195,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 // never asks for the value, so it says that deploy will. For a Worker's
 // `Secrets`, an update flags only an entry that is new or whose `Source`
 // changed. The read leaves out a secret deleted from the Worker, so drift
-// shows it as new. In the first deploy after the upgrade from
-// `WorkerSecret`, every entry is new to state, so all of them are flagged
-// even though the Worker has them.
+// shows it as new.
 function promptsForValue(node: PlanNode): boolean {
   const secrets = node.params.Secrets as Record<string, ValueFrom> | undefined;
   const prompted = Object.entries(secrets ?? {})

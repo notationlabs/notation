@@ -61,7 +61,7 @@ const collect = (evaluate: () => unknown) =>
   collectResourceGraph(evaluate, { scope: { app: "shop", stage: "dev" } });
 
 describe("workerSecret", () => {
-  it("puts each binding in the script's Secrets, with no WorkerSecret or placeholder", async () => {
+  it("puts each binding in the script's Secrets", async () => {
     const graph = await collect(infra);
     const api = worker(graph, "api");
     const jobs = worker(graph, "jobs");
@@ -74,11 +74,6 @@ describe("workerSecret", () => {
       ADMIN_PASSWORD: { Secret: "admin", Source: PROMPT_SOURCE },
     });
     expect(api.script.config).not.toHaveProperty("ScriptName");
-    expect(
-      graph.resources
-        .map((resource) => resource.type)
-        .filter((type) => /WorkerSecret|WorkerScriptPlaceholder/.test(type)),
-    ).toEqual([]);
   });
 
   it("leaves Secrets out of a Worker that binds no secret", async () => {

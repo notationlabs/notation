@@ -28,7 +28,6 @@ const compatibilityDate = "2026-10-12";
 const scope = { app: "shop", stage: "dev" };
 
 type FakeWorker = {
-  tags: string[];
   code: string;
   secrets: Map<string, string>;
 };
@@ -77,7 +76,6 @@ function fakeCloudflare() {
       const form = init!.body as FormData;
       const metadata = JSON.parse(String(form.get("metadata")));
       const code = await (form.get(metadata.main_module) as File).text();
-      const tags: string[] = metadata.tags ?? worker?.tags ?? [];
       const secrets = new Map(worker?.secrets);
       const sent: string[] = [];
       for (const binding of metadata.bindings) {
@@ -88,7 +86,7 @@ function fakeCloudflare() {
       log.push(
         `upload ${name}${sent.length ? ` with ${sent.sort().join(",")}` : ""}`,
       );
-      workers.set(name, { tags, code, secrets });
+      workers.set(name, { code, secrets });
       return ok({});
     }
     if (!worker) return fail(404, 10007, "This Worker does not exist");
@@ -96,7 +94,6 @@ function fakeCloudflare() {
       return ok({
         compatibility_date: compatibilityDate,
         compatibility_flags: ["nodejs_compat"],
-        tags: worker.tags,
       });
     }
     if (method === "GET" && sub === "deployments") {
@@ -180,60 +177,12 @@ const declareWorker = () => {
   );
 };
 
-// The graph that `$worker` declared before `WorkerScript` took `Secrets`,
-// with one `WorkerSecret` for each secret. The placeholder is left out, as
-// its name would differ from the script's. `WorkerSecret` can no longer
-// create, so each create sets the secret on the fake Worker, as the previous
-// version did.
-const declareLegacyWorker = () => {
-  workerSecret({ id: "api-key", source: vault, key: "API_KEY" });
-  workerSecret({ id: "admin" });
-  const code = new std.fs.File("worker:api:code", {
-    config: { filePath: "dist/runtime/api/index.mjs" },
-  });
-  const script = new cloudflare.workers.WorkerScript("worker:api", {
-    config: {
-      CompatibilityDate: compatibilityDate,
-      CompatibilityFlags: ["nodejs_compat"],
-      Bindings: [],
-      DurableObjectNamespaces: [],
-      BoundDurableObjects: [],
-    },
-    dependencies: { code },
-  });
-  for (const [name, valueFrom] of [
-    [
-      "API_KEY",
-      { Secret: "api-key", Source: "vault", Key: "API_KEY", Version: "1" },
-    ],
-    ["ADMIN", { Secret: "admin", Source: "prompt" }],
-  ] as const) {
-    const secret = new cloudflare.workers.WorkerSecret(
-      `worker:api:secret:${name}`,
-      {
-        config: {
-          AccountId: "acc",
-          ScriptName: script.outputRef("ScriptName"),
-          Name: name,
-          ValueFrom: valueFrom,
-        },
-      },
-    );
-    secret.create = async (params) => {
-      const value = valueFrom.Source === "prompt" ? "typed" : "sk_live";
-      workers.get(params.ScriptName)!.secrets.set(params.Name, value);
-    };
-  }
-};
-
 let infra: () => void;
 
 const collect = () => collectResourceGraph(infra, { scope });
 
 const registry = createResourceRegistry([
   cloudflare.workers.WorkerScript,
-  cloudflare.workers.WorkerScriptPlaceholder,
-  cloudflare.workers.WorkerSecret,
   std.fs.File,
   std.sources.SourceValue,
 ]);
@@ -358,11 +307,6 @@ describe("a Worker with secrets", () => {
     });
     const values = await runtime.state.values();
     expect(JSON.stringify(values)).not.toMatch(/sk_live|typed/);
-    expect(values.map((node) => node.type)).not.toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/WorkerSecret|WorkerScriptPlaceholder/),
-      ]),
-    );
 
     expect((await decisions())["worker:api"]).toBe("noop");
   });
@@ -541,43 +485,5 @@ describe("a gradual rollout", () => {
     await writeBundle("export default { fetch: () => new Response('v2') };\n");
     await deploy("second");
     expect(log).toEqual([`upload ${name} with API_KEY`]);
-  });
-});
-
-describe("a deployment made with WorkerSecret", () => {
-  it("moves the secrets to the script's Secrets, and deletes the WorkerSecret records without the secrets", async () => {
-    infra = declareLegacyWorker;
-    await deploy("first", prompt);
-    const name = onlyWorker();
-    expect(workers.get(name)!.secrets).toEqual(
-      new Map([
-        ["API_KEY", "sk_live"],
-        ["ADMIN", "typed"],
-      ]),
-    );
-    log = [];
-
-    infra = declareWorker;
-    expect(await decisions()).toMatchObject({
-      "worker:api": "update",
-      "worker:api:secret:API_KEY": "delete-orphan",
-      "worker:api:secret:ADMIN": "delete-orphan",
-    });
-    const asked = vi.fn(prompt);
-    await deploy("second", asked);
-
-    expect(onlyWorker()).toBe(name);
-    expect(asked).not.toHaveBeenCalled();
-    expect(log).toEqual([`upload ${name} with API_KEY`]);
-    expect(workers.get(name)!.secrets).toEqual(
-      new Map([
-        ["API_KEY", "sk_live"],
-        ["ADMIN", "typed"],
-      ]),
-    );
-    expect(await runtime.state.get("worker:api:secret:ADMIN")).toBeUndefined();
-    expect(
-      await runtime.state.get("worker:api:secret:API_KEY"),
-    ).toBeUndefined();
   });
 });

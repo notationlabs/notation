@@ -178,17 +178,6 @@ When a Worker's `id` changes, the Worker gets a new name. Deploy uploads the new
 
 As an alternative, a Worker can bind a [Secrets Store secret](secrets.md) with `secretsStore.bind()`. That secret belongs to the account, and several Workers can share it. The Worker depends on the secret, so the secret exists before the code is uploaded.
 
-#### Deployments made before `Secrets`
-
-Before `Secrets`, each secret was a `cloudflare/workers/WorkerSecret` resource, with the ID `worker:<worker id>:secret:<binding name>`, and a Worker with secrets also had a `cloudflare/workers/WorkerScriptPlaceholder` resource, with the ID `worker:<worker id>:placeholder`. The first deploy with this version does these steps:
-
-1. Deploy updates the Worker script, and the upload sends the secrets that have a source. A secret without a source is already on the Worker, so deploy doesn't ask for it.
-2. Deploy deletes the records of the `WorkerSecret` and `WorkerScriptPlaceholder` resources, which are no longer in code. The delete of a `WorkerSecret` leaves the secret on the Worker. The delete of a placeholder leaves the Worker, as the Worker's upload removed the placeholder's tag.
-
-The Worker keeps its name.
-
-**A secret removed in the same deploy stays on the Worker.** The Worker's state record has no `Secrets` yet, so deploy can't tell that the secret was removed, and the delete of its `WorkerSecret` leaves it. Remove a secret in a later deploy, or delete it with `notation secret delete`.
-
 ### Gradual rollouts
 
 Cloudflare deploys each upload of a Worker to all traffic, so an upload during a [gradual deployment](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/) ends it. Before each upload to a Worker that exists, deploy reads the Worker's deployments. When the latest deployment splits traffic between more than one version, deploy fails before the upload:

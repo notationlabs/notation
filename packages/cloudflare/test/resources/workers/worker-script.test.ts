@@ -118,7 +118,6 @@ describe("WorkerScript", () => {
         bindings: params.Bindings,
         keep_bindings: ["secret_text"],
         exports: { Counter: { type: "durable-object", storage: "sqlite" } },
-        tags: [],
       },
       module: { type: "application/javascript+module", text: code },
     });
@@ -198,41 +197,6 @@ describe("WorkerScript", () => {
     );
     await expect(created).rejects.toSatisfy(ResourceAlreadyExistsError.is);
     expect(requests()).toHaveLength(1);
-  });
-
-  it("uploads over a placeholder Worker, and removes its tag", async () => {
-    mockFetch(() =>
-      ok({ compatibility_date: "2025-01-01", tags: ["notation-placeholder"] }),
-    );
-
-    await script.create(params);
-
-    expect(requests().map((call) => call.method)).toEqual([
-      "GET",
-      "PUT",
-      "GET",
-    ]);
-    const { metadata, module } = await uploadedMetadata(requests()[1]!);
-    expect(metadata.tags).toEqual([]);
-    expect(module.text).toBe(code);
-  });
-
-  it("reports a Worker with other tags as ResourceAlreadyExistsError", async () => {
-    mockFetch(() => ok({ tags: ["team-a"] }));
-
-    await expect(script.create(params)).rejects.toSatisfy(
-      ResourceAlreadyExistsError.is,
-    );
-    expect(requests()).toHaveLength(1);
-  });
-
-  it("keeps the Worker's tags in an update", async () => {
-    mockFetch(() => ok({}));
-
-    await script.update!(params as any, {} as any, params as any, {} as any);
-
-    const { metadata } = await uploadedMetadata(requests()[0]!);
-    expect(metadata).not.toHaveProperty("tags");
   });
 
   it("fails when the bundle changed after the params were computed", async () => {
@@ -1416,29 +1380,6 @@ describe("WorkerScript secrets", () => {
     ]);
     const putIndex = calls.findIndex((call) => call.method === "PUT");
     expect(calls.slice(0, putIndex).filter(isSecretsList)).toHaveLength(1);
-  });
-
-  it("keeps a secret on a placeholder Worker that it uploads over", async () => {
-    let uploaded = false;
-    mockFetch(
-      withSecretList(["ADMIN", "API_KEY"], (call) => {
-        if (call.method === "PUT") uploaded = true;
-        return ok({
-          compatibility_date: "2025-01-01",
-          tags: uploaded ? [] : ["notation-placeholder"],
-        });
-      }),
-    );
-    const prompt = vi.fn(async () => "typed");
-
-    await deploying(() => script.create(withSecrets), prompt);
-
-    expect(prompt).not.toHaveBeenCalled();
-    expect(
-      (await secretBindings(upload())).map(
-        (binding: { name: string }) => binding.name,
-      ),
-    ).toEqual(["API_KEY"]);
   });
 
   it("doesn't list the secrets before the upload of an update when every secret has a source", async () => {

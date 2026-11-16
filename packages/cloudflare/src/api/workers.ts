@@ -88,14 +88,7 @@ export type DurableObjectExport =
 export type ScriptSettings = {
   compatibility_date?: string;
   compatibility_flags?: string[];
-  tags?: string[] | null;
 };
-
-/** The tag of a Worker that `WorkerScriptPlaceholder` uploaded. */
-export const PLACEHOLDER_TAG = "notation-placeholder";
-
-export const isPlaceholderScript = (settings: ScriptSettings): boolean =>
-  settings.tags?.includes(PLACEHOLDER_TAG) ?? false;
 
 /**
  * A secret's binding in an upload. It holds the value, so it is never kept
@@ -117,11 +110,6 @@ export type ScriptUpload = {
   exports: Record<string, DurableObjectExport>;
   /** The Durable Object classes whose namespaces run containers. */
   containers: { class_name: string }[];
-  /**
-   * Replaces the Worker's tags. `[]` removes them. Without it, the upload
-   * keeps the tags that the Worker has.
-   */
-  tags?: string[];
 };
 
 /**
@@ -165,7 +153,6 @@ export async function putScript(
       ? { exports: upload.exports }
       : {}),
     ...(upload.containers.length > 0 ? { containers: upload.containers } : {}),
-    ...(upload.tags ? { tags: upload.tags } : {}),
   };
   const form = new FormData();
   form.set("metadata", JSON.stringify(metadata));
@@ -203,28 +190,6 @@ const isBindingNotFound = (error: unknown): boolean =>
 
 const secretPath = (account: string, scriptName: string, name: string) =>
   `${scriptPath(account, scriptName)}/secrets/${encodeURIComponent(name)}`;
-
-/**
- * True if the Worker has a `secret_text` binding named `name`. False if it
- * doesn't, or if the Worker doesn't exist.
- */
-export async function hasScriptSecret(
-  account: string,
-  scriptName: string,
-  name: string,
-): Promise<boolean> {
-  try {
-    // The endpoint also returns a binding of another type with the name.
-    const binding = await cloudflare<{ type: string }>(
-      "GET",
-      secretPath(account, scriptName, name),
-    );
-    return binding.type === "secret_text";
-  } catch (error) {
-    if (isNotFound(error) || isBindingNotFound(error)) return false;
-    throw error;
-  }
-}
 
 /** The names of the Worker's `secret_text` bindings. */
 export async function listScriptSecretNames(
