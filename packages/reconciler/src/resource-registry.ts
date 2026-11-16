@@ -65,19 +65,19 @@ export function resolveResourceClass(
 }
 
 /**
- * The class that deletes the state record `node`. A source's record gets a
- * class whose delete removes only the record, and that needs nothing from the
- * source's provider package. Any other record gets the class of its type, or
- * undefined if the registry has none.
+ * The class that deletes the state record `node`: the class of its type. A
+ * source's record whose type has no class gets one whose delete removes only
+ * the record, as the delete of every source does, so it needs nothing from
+ * the source's provider package.
  */
 export function resolveRecordClass(
   registry: ResourceRegistry,
   node: Pick<StateNode, "type" | "provider" | "kind">,
 ): ResourceClass<any, any, any> | undefined {
-  if (node.kind === "credential-source") {
-    return recordedSourceClass(node.type as ResourceType, node.provider);
-  }
-  return resolveResourceClass(registry, node.type as ResourceType);
+  const type = node.type as ResourceType;
+  const Resource = resolveResourceClass(registry, type);
+  if (Resource || node.kind !== "credential-source") return Resource;
+  return recordedSourceClass(type, node.provider);
 }
 
 function recordedSourceClass(

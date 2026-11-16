@@ -1,12 +1,15 @@
 import type { ResourceType } from "@notation/resource";
 import type { StateNode } from "@notation/state";
-import { resolveRecordClass, type ResourceRegistry } from "./resource-registry";
+import {
+  resolveResourceClass,
+  type ResourceRegistry,
+} from "./resource-registry";
 
 /**
  * Whether the record `dependentId` blocks the delete of the record
  * `dependencyId`: the class of the dependent's type lists the type of the
  * dependency in `blocksDeleteOf`. A dependent with no class does not block
- * the delete.
+ * the delete, and a source never blocks one.
  */
 export function createBlocksDelete(
   records: StateNode[],
@@ -17,10 +20,12 @@ export function createBlocksDelete(
     const dependent = recordById.get(dependentId);
     const dependency = recordById.get(dependencyId);
     if (!dependent || !dependency) return false;
+    if (dependent.kind === "credential-source") return false;
     return (
-      resolveRecordClass(registry, dependent)?.blocksDeleteOf.includes(
-        dependency.type as ResourceType,
-      ) ?? false
+      resolveResourceClass(
+        registry,
+        dependent.type as ResourceType,
+      )?.blocksDeleteOf.includes(dependency.type as ResourceType) ?? false
     );
   };
 }
