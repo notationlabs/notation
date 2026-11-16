@@ -308,9 +308,9 @@ test("LambdaEnv and env() give the values of output refs and derived values", ()
   expectTypeOf<LambdaEnv<typeof fn>>().toEqualTypeOf<Readonly<Env>>();
   expectTypeOf(fn.env()).toEqualTypeOf<Readonly<Env>>();
 
-  // @ts-expect-error env takes a ref to a string
   $lambda({
     id: "lengths",
+    // @ts-expect-error env takes a ref to a string
     env: () => ({ N: orders.url.map((u) => u.length) }),
   });
 });
