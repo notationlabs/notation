@@ -1,19 +1,11 @@
 import * as v from "valibot";
-import {
-  resource,
-  ResourceNotFoundError,
-  ResourceOperationPendingError,
-  type ResourceOperationContext,
-} from "@notation/resource";
-import { cloudflareCreate } from "src/api/client";
-import { deleteKVValue, getKVValue, isNotFound, putKVValue } from "src/api/kv";
+import { resource } from "@notation/resource";
 import type { KVNamespaceInstance } from "./kv-namespace";
-
-type KVValueKey = { AccountId: string; NamespaceId: string; Key: string };
+import { kvOperations, textEncoding, type KVKey } from "./kv-operations";
 
 export type KVValueSchema = {
-  Key: KVValueKey;
-  CreateParams: KVValueKey & { Value: string };
+  Key: KVKey;
+  CreateParams: KVKey & { Value: string };
   UpdateParams: { Value: string };
   ReadResult: {};
 };
@@ -77,43 +69,6 @@ const kvValueSchema = kvValue.defineSchema({
   },
 } as const);
 
-// With the default of 30 attempts, a write waits up to about 60 seconds, the
-// time that Cloudflare gives for a write to reach every location.
-const WRITE_CHECK_INTERVAL_MS = 2_000;
-
-/**
- * Reads the key until it returns the written value. KV is eventually
- * consistent, so the read can return an older value, or no value for a new
- * key. Until then, this throws a pending error with `Written` in its
- * callback context, and the reconciler calls the operation again. The next
- * attempt only reads.
- *
- * Without the wait, the read that the reconciler makes after a create could
- * find no key and fail the deploy, and the read after an update could record
- * the old value in the outputs.
- *
- * If the read never returns the written value, a create fails with no state
- * record, and the key stays in KV with the written value.
- */
-async function confirmWrite(
-  params: KVValueKey & { Value: string },
-): Promise<void> {
-  const { AccountId, NamespaceId, Key, Value } = params;
-  const stored = await getKVValue(AccountId, NamespaceId, Key);
-  if (stored !== Value) {
-    throw new ResourceOperationPendingError(
-      `The KV key ${JSON.stringify(Key)} doesn't return the written value yet. If it still doesn't after about a minute, something else, such as a Worker, may be writing the key.`,
-      {
-        retryAfterMs: WRITE_CHECK_INTERVAL_MS,
-        callbackContext: { Written: true },
-      },
-    );
-  }
-}
-
-const keyTakenMessage = (key: KVValueKey) =>
-  `The KV namespace ${key.NamespaceId} in the Cloudflare account ${key.AccountId} already has the key ${JSON.stringify(key.Key)}. Give this KVValue another key, or delete the existing key and deploy again. If a previous deploy failed partway, the key may be the one it wrote, so check it before you delete it. A key deleted in the last minute can still read as existing.`;
-
 /**
  * The value of a key in a Workers KV namespace. Create fails when the key
  * already exists, rather than overwrite it. Delete deletes the key.
@@ -123,74 +78,7 @@ const keyTakenMessage = (key: KVValueKey) =>
  * update, which writes the value in code again.
  */
 export const KVValue = kvValueSchema
-  .defineOperations({
-    // Check first, so that create doesn't overwrite a key that existed
-    // before. An attempt after this create's own write skips the check,
-    // because it would find that write. The check is outside
-    // `cloudflareCreate`: if it throws, nothing was written.
-    create: async (params, context) => {
-      const { AccountId, NamespaceId, Key, Value } = params;
-      let written = Boolean(context?.Written);
-      try {
-        if (!written) {
-          if ((await getKVValue(AccountId, NamespaceId, Key)) !== undefined) {
-            throw new Error(keyTakenMessage(params));
-          }
-          await cloudflareCreate(putKVValue)(
-            AccountId,
-            NamespaceId,
-            Key,
-            Value,
-          );
-          written = true;
-        }
-        await confirmWrite(params);
-      } catch (error) {
-        if (!isNotFound(error)) throw error;
-        // A namespace created in the same deploy can be missing from the KV
-        // calls for a few seconds after the namespace calls return it.
-        throw new ResourceOperationPendingError(
-          `The KV namespace ${NamespaceId} in the Cloudflare account ${AccountId} isn't found yet. If it is still missing after about a minute, it may have been deleted outside notation.`,
-          {
-            retryAfterMs: WRITE_CHECK_INTERVAL_MS,
-            cause: error,
-            ...(written ? { callbackContext: { Written: true } } : {}),
-          },
-        );
-      }
-    },
-
-    read: async (key) => {
-      let value: string | undefined;
-      try {
-        value = await getKVValue(key.AccountId, key.NamespaceId, key.Key);
-      } catch (error) {
-        if (!isNotFound(error)) throw error;
-      }
-      if (value === undefined) {
-        throw new ResourceNotFoundError("KV key was not found");
-      }
-      return { ...key, Value: value };
-    },
-
-    update: async (key, _patch, params, _state, context) => {
-      const { AccountId, NamespaceId, Key } = key;
-      if (!context?.Written) {
-        await putKVValue(AccountId, NamespaceId, Key, params.Value);
-      }
-      await confirmWrite({ ...key, Value: params.Value });
-    },
-
-    // The namespace may be gone, with its keys, when it was replaced or
-    // deleted before the key.
-    delete: async (key) => {
-      try {
-        await deleteKVValue(key.AccountId, key.NamespaceId, key.Key);
-      } catch (error) {
-        if (!isNotFound(error)) throw error;
-      }
-    },
-  })
+  .defineOperations(kvOperations("KVValue", textEncoding))
   .requireDependencies<KVValueDependencies>()
   .deriveParams(async ({ deps }) => ({
     AccountId: deps.namespace.output.AccountId,

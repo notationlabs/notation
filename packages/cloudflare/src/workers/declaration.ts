@@ -1,9 +1,12 @@
 import type * as cf from "@cloudflare/workers-types";
+import type { Json } from "src/json";
 import type { KVNamespaceInstance } from "src/resources/kv/kv-namespace";
 import type { R2BucketInstance } from "src/resources/r2/r2-bucket";
 import type { SecretsStoreSecretInstance } from "src/resources/secrets-store/secrets-store-secret";
 
 // The runtime build also loads this module, so it must only import types.
+
+export type { Json };
 
 /** A Durable Object class, such as `class Counter extends DurableObject`. */
 export type DurableObjectClass = abstract new (...args: any[]) => unknown;
@@ -24,14 +27,6 @@ export interface DurableObjectDeclaration<
 export interface JsonBinding<T = Json> {
   readonly "~json": T;
 }
-
-export type Json =
-  | string
-  | number
-  | boolean
-  | null
-  | readonly Json[]
-  | { readonly [key: string]: Json };
 
 /**
  * `T` if it is a JSON value, and `never` where it is not. An interface has no
