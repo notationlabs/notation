@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { claimSingleCopy } from "src/resource-collection";
+import { isOutputRef } from "src/output-ref";
 
 const loaded = (globalThis as Record<symbol, string>)[
   Symbol.for("@notation/resource/loaded")
@@ -14,4 +15,12 @@ it("fails when another copy is loaded", () => {
   expect(() => claimSingleCopy("file:///other/resource-collection.js")).toThrow(
     `Two versions of @notation/resource were detected at ${loaded} and file:///other/resource-collection.js. Please install one version (for example with npm dedupe).`,
   );
+});
+
+it("recognises an output ref made by another copy", () => {
+  class OtherOutputRef {
+    readonly [Symbol.for("@notation/resource/OutputRef")] = true;
+  }
+  expect(isOutputRef(new OtherOutputRef())).toBe(true);
+  expect(isOutputRef({})).toBe(false);
 });

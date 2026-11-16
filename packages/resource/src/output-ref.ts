@@ -12,12 +12,20 @@ export class OutputRefStringError extends Error {
   }
 }
 
+// Marks an output ref. `isOutputRef` checks the mark and not the class,
+// because a project can load two copies of this package.
+const outputRefBrand: unique symbol = Symbol.for(
+  "@notation/resource/OutputRef",
+);
+
 /**
  * Stands for a path into a resource's output, which deploy fills in. It can
  * only be placed whole in config or in a contribution. Turning it into a
  * string throws, because the string would not hold the value.
  */
 export class OutputRef {
+  readonly [outputRefBrand] = true;
+
   constructor(
     readonly resource: BaseResource,
     readonly path: readonly string[],
@@ -128,7 +136,11 @@ export type OutputLookup = (
 ) => { known: true; value: unknown } | { known: false };
 
 export function isOutputRef(value: unknown): value is OutputRef {
-  return value instanceof OutputRef;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { [outputRefBrand]?: unknown })[outputRefBrand] === true
+  );
 }
 
 export function isPlainObject(
