@@ -409,7 +409,8 @@ describe("KVValue in a deploy", () => {
           executionId: id,
           resources,
           state: runtime.state,
-          nameScope: { app: "shop", stage: "dev" },
+          app: "shop",
+          stage: "dev",
         }),
     );
   }

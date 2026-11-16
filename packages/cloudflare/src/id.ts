@@ -71,7 +71,7 @@ export function assertNamespaceId(
  * to fit the limit. Without a scope, `nameBody` is the id.
  */
 export function workerNames(id: string): { nameBody: string } {
-  // Deploy generates names in `nameScope` (workflow.deploy.ts), which must
+  // Deploy generates names in the deployment's app and stage (workflow.deploy.ts), which must
   // be the collection's scope, or `nameBody` describes the wrong name.
   const scope = getActiveResourceCollection()?.scope;
   const nameBody = scope

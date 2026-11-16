@@ -1,8 +1,4 @@
-import type {
-  BaseResource,
-  NameScope,
-  RecordedOutputs,
-} from "@notation/resource";
+import type { BaseResource, RecordedOutputs } from "@notation/resource";
 import type { ReconcilerEventEmitter } from "../events";
 import type { Overrides } from "../overrides";
 import type { ResourceRegistry } from "../resource-registry";
@@ -20,8 +16,10 @@ export type DurableWorkflowOptions = {
 
 export type DurableDeployOptions = DurableWorkflowOptions & {
   driftDetection?: boolean;
-  /** The app and stage that start each generated physical name. */
-  nameScope: NameScope;
+  /** The app that starts each generated physical name. */
+  app: string;
+  /** The stage that follows the app in each generated physical name. */
+  stage: string;
   /**
    * The replaces and credentials that the user asked for. A resume must
    * pass the overrides that the execution started with, or the replay decides

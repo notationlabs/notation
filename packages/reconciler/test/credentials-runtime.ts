@@ -79,7 +79,8 @@ export function createRuntime(
         resources,
         state,
         driftDetection: options.driftDetection ?? false,
-        nameScope: { app: "shop", stage: "prod" },
+        app: "shop",
+        stage: "prod",
         overrides: currentOverrides,
         emit: (event) => {
           events.push(event);

@@ -30,8 +30,8 @@ function sourceContext(
   return {
     id: source.id,
     executionId: opts.executionId,
-    app: opts.nameScope.app,
-    stage: opts.nameScope.stage,
+    app: opts.app,
+    stage: opts.stage,
   };
 }
 

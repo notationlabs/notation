@@ -86,7 +86,8 @@ export async function deployApp({
         dryRun,
         driftDetection,
         maxOperationAttempts,
-        nameScope,
+        app: deployment.app,
+        stage: deployment.stage,
         overrides: params.overrides as Overrides | undefined,
       });
     },

@@ -144,7 +144,8 @@ async function deploy(executionId: string) {
         executionId: id,
         resources,
         state: runtime.state,
-        nameScope: { app: "shop", stage: "dev" },
+        app: "shop",
+        stage: "dev",
       }),
   );
 }

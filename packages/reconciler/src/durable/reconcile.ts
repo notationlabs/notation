@@ -469,7 +469,12 @@ async function* generateNamesStep(
 ): AsyncGenerator<any, Record<string, string>, any> {
   if (fields.length === 0) return {};
   return yield* step.run("physical-names", async () =>
-    generateNames(resource, fields, opts.nameScope, params),
+    generateNames(
+      resource,
+      fields,
+      { app: opts.app, stage: opts.stage },
+      params,
+    ),
   );
 }
 

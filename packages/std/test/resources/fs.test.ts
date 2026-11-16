@@ -37,7 +37,8 @@ function deploy(
         resources,
         state: runtime.state,
         driftDetection,
-        nameScope: { app: "test", stage: "test" },
+        app: "test",
+        stage: "test",
       }),
   );
 }

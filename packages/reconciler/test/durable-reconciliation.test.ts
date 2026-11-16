@@ -8953,7 +8953,8 @@ function createRuntime(
       dryRun: options.dryRun,
       emit: options.emit,
       maxOperationAttempts: options.maxOperationAttempts,
-      nameScope: { app: "shop", stage: "prod" },
+      app: "shop",
+      stage: "prod",
       // Read at execution time, as is `dryRun`.
       overrides: options.overrides,
     });

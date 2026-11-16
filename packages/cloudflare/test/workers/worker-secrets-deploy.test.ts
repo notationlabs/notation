@@ -183,7 +183,7 @@ async function deploy(executionId: string) {
         resources,
         registry,
         state: runtime.state,
-        nameScope: scope,
+        ...scope,
         emit: (event) => void events.push(event),
       }),
   );
