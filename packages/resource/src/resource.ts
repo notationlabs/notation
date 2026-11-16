@@ -41,7 +41,6 @@ import {
   deployLookup,
   deployViews,
   forEachOutputRef,
-  hasPendingOutput,
   isDependencyRef,
   isDerived,
   isOutputRef,
@@ -318,7 +317,7 @@ export interface BaseResource {
     /** The outputs that `~state` refs resolve to. */
     recordedOutputs?: RecordedOutputs;
   }): Promise<Record<string, unknown>>;
-  /** A token for one of the resource's outputs, to place whole in config. */
+  /** See `Resource.outputRef`. */
   outputRef(key: string): unknown;
   /** See `Resource.credentials`. */
   readonly credentials: {};
