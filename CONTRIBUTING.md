@@ -45,6 +45,18 @@ A Cloudflare test is skipped when its variables are missing. An AWS test fails.
 wait for rollouts that can take several minutes. Run them with
 `pok test e2e-containers` when you change the container resources.
 
+Both commands run a turbo task for each package that has end-to-end tests.
+turbo skips a package whose tests passed before with the same inputs, and
+prints the logs of that run. The inputs are the package's files, the files of
+the packages it depends on, `vitest.e2e.config.ts`, `CLOUDFLARE_ACCOUNT_ID`,
+`AWS_REGION` and whether the Docker daemon is running. turbo can't see a change
+at a provider, such as a change to its API. To run every package, set
+`TURBO_FORCE=true`:
+
+```
+TURBO_FORCE=true pok test e2e
+```
+
 To run one file, build, then pass its path to Vitest:
 
 ```
