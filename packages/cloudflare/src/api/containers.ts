@@ -171,6 +171,25 @@ export function applicationConstraints(
   return { tiers: [1, 2], ...constraints };
 }
 
+/**
+ * Returns the regions and the jurisdiction of an application's constraints,
+ * or `undefined` if it has neither. `tiers` is left out, because notation
+ * always sends the same tiers.
+ */
+export function readConstraints(
+  constraints: Application["constraints"],
+): ContainerConstraints | undefined {
+  const regions = constraints?.regions?.length
+    ? constraints.regions
+    : undefined;
+  const jurisdiction = constraints?.jurisdiction ?? undefined;
+  if (!regions && !jurisdiction) return undefined;
+  return {
+    ...(regions && { regions }),
+    ...(jurisdiction && { jurisdiction }),
+  };
+}
+
 // The values that Cloudflare gives an application whose configuration leaves
 // the key out. They are those of the `lite` instance type, and the disk size
 // is also that of custom sizes without `disk`.
@@ -291,6 +310,7 @@ export type Application = {
   name: string;
   max_instances?: number | null;
   durable_objects?: { namespace_id: string } | null;
+  constraints?: Partial<ApplicationConstraints> | null;
 };
 
 const applicationsPath = (account: string) =>

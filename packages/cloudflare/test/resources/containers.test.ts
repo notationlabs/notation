@@ -403,6 +403,36 @@ describe("ContainerApplication", () => {
     expect(calls[0]!.url).toBe(`${API}/applications/app1`);
   });
 
+  // `read` is typed with the computed members only.
+  const readConstraints = async () =>
+    ((await application.read!(key)) as { Constraints?: unknown }).Constraints;
+
+  it("reads the regions and the jurisdiction of the constraints, without the tiers", async () => {
+    mockFetch(() =>
+      ok({
+        id: "app1",
+        name: params.Name,
+        constraints: { tiers: [1, 2], regions: ["WEUR"], jurisdiction: "eu" },
+      }),
+    );
+
+    expect(await readConstraints()).toEqual({
+      regions: ["WEUR"],
+      jurisdiction: "eu",
+    });
+  });
+
+  it.each([
+    undefined,
+    null,
+    { tiers: [1, 2] },
+    { tiers: [1, 2], regions: [], jurisdiction: null },
+  ])("reads the constraints %j as unset", async (constraints) => {
+    mockFetch(() => ok({ id: "app1", name: params.Name, constraints }));
+
+    expect(await readConstraints()).toBeUndefined();
+  });
+
   it("reads a missing application as not found, and deletes it without an error", async () => {
     mockFetch(() =>
       fail(404, 1609, "APPLICATION_NOT_FOUND: Container application not found"),

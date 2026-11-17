@@ -123,7 +123,7 @@ new containers.ContainerApplication("sandbox", {
 - `regions`: any of `ENAM`, `WNAM`, `EEUR`, `WEUR`, `APAC`, `SAM`, `ME`, `OC` and `AFR`. `ME`, `OC` and `AFR` have limited capacity, so plan fails for a list of only those regions.
 - `jurisdiction`: `eu` (`EEUR` and `WEUR`), `us` or `fedramp` (`ENAM` and `WNAM`). When both are set, plan fails for a region that is not in the jurisdiction.
 
-A change to `Constraints` updates the application, and starts no rollout. Deploy sends the constraints as Wrangler does, with `tiers: [1, 2]`. See [Placement](https://developers.cloudflare.com/containers/concepts/placement/) in Cloudflare's docs.
+A change to `Constraints` updates the application, and starts no rollout. Deploy sends the constraints as Wrangler does, with `tiers: [1, 2]`, also when `Constraints` is not set. Plan reads the regions and the jurisdiction of the application, so deploy sets back a change made to them outside notation. See [Placement](https://developers.cloudflare.com/containers/concepts/placement/) in Cloudflare's docs.
 
 ## Credentials
 

@@ -26,6 +26,7 @@ export type Application = {
   name: string;
   configuration: { image: string };
   durable_objects?: { namespace_id: string };
+  constraints?: { regions?: string[]; jurisdiction?: string };
   active_rollout_id?: string;
 };
 

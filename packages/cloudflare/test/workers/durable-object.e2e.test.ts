@@ -293,6 +293,10 @@ describeE2e("$durableObject with a container", () => {
         configuration: { image: application.configuration.image },
         durable_objects: application.durable_objects,
       });
+      // The read takes an application without regions or a jurisdiction to
+      // have no constraints.
+      expect(applications[0]!.constraints?.regions ?? []).toEqual([]);
+      expect(applications[0]!.constraints?.jurisdiction).toBeUndefined();
       expect(applications[0]!.id).not.toBe(application.id);
       await expectContainerResponse(names.jobs);
       await expectContainerResponse(names.api);
