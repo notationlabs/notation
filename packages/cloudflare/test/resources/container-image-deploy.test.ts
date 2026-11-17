@@ -12,7 +12,7 @@ import * as durable from "@notation/reconciler/durable";
 import { collectResourceGraph } from "@notation/resource";
 import { fs } from "@notation/std/resources";
 import { containers, workers } from "src/resources";
-import { runDocker } from "src/resources/containers/docker";
+import { DockerCommandError, runDocker } from "src/resources/containers/docker";
 
 vi.mock("src/resources/containers/docker", async (importOriginal) => ({
   ...(await importOriginal<typeof import("src/resources/containers/docker")>()),
@@ -228,6 +228,50 @@ describe("ContainerImage in a deploy", () => {
     expect(await plan()).toMatchObject({
       "sandbox:image": "noop",
       sandbox: "noop",
+    });
+  });
+
+  describe("when a push times out", () => {
+    const timeout = "net/http: timeout awaiting response headers";
+
+    function pushes() {
+      return docker.mock.calls.filter(([args]) => args[0] === "push").length;
+    }
+
+    it("pushes again when the registry doesn't have the image", async () => {
+      const push = docker.getMockImplementation()!;
+      docker.mockImplementation(async (args, options) => {
+        if (args[0] === "push" && pushes() === 1) {
+          throw new DockerCommandError(args, 1, timeout);
+        }
+        return push(args, options);
+      });
+
+      await deploy("first");
+
+      expect(pushes()).toBe(2);
+      const [tag] = [...pushed.keys()];
+      expect(application?.configuration.image).toBe(
+        `registry.cloudflare.com/ext1/sandbox@${pushed.get(tag!)}`,
+      );
+    });
+
+    it("records the image without pushing again when the registry has it", async () => {
+      const push = docker.getMockImplementation()!;
+      docker.mockImplementation(async (args, options) => {
+        await push(args, options);
+        if (args[0] === "push") {
+          throw new DockerCommandError(args, 1, timeout);
+        }
+      });
+
+      await deploy("first");
+
+      expect(pushes()).toBe(1);
+      const [tag] = [...pushed.keys()];
+      expect(application?.configuration.image).toBe(
+        `registry.cloudflare.com/ext1/sandbox@${pushed.get(tag!)}`,
+      );
     });
   });
 });

@@ -1,8 +1,13 @@
 import * as v from "valibot";
 import path from "node:path";
 import { fromProjectRoot } from "@notation/core/paths";
-import { resource, ResourceNotFoundError } from "@notation/resource";
-import { accountId } from "src/api/client";
+import {
+  resource,
+  ResourceCreationUnknownError,
+  ResourceNotFoundError,
+  ResourceOperationPendingError,
+} from "@notation/resource";
+import { accountId, cloudflareCreate } from "src/api/client";
 import {
   CLOUDFLARE_REGISTRY,
   manifestDigest,
@@ -132,8 +137,10 @@ const containerImageSchema = containerImage.defineSchema({
 export const ContainerImage = containerImageSchema
   .defineOperations({
     // Running create again with the same input pushes the same tag, so a
-    // retried deploy is safe.
-    create: async (params) => {
+    // retried deploy is safe. A Cloudflare API request that fails on the
+    // network or with a 5xx makes the outcome unknown, as does a push that
+    // can't reach the registry.
+    create: cloudflareCreate(async (params: Params) => {
       await assertDockerRunning();
       const input = buildInput(params);
       const namespace = await registryNamespace(params.AccountId);
@@ -154,25 +161,8 @@ export const ContainerImage = containerImageSchema
         ]),
         input.context,
       ]);
-      const credentials = await registryCredentials(params.AccountId, [
-        "push",
-        "pull",
-      ]);
-      // The credentials expire after 15 minutes, so they are requested after
-      // the build, which can take longer. `docker login` saves them in the
-      // user's Docker config.
-      await runDocker(
-        [
-          "login",
-          "--password-stdin",
-          "--username",
-          credentials.username,
-          CLOUDFLARE_REGISTRY,
-        ],
-        { stdin: credentials.password },
-      );
-      await runDocker(["push", reference]);
-    },
+      await pushImage(params.AccountId, reference);
+    }),
 
     // `Image` holds the digest that the registry has for the tag, which is
     // the digest that Cloudflare pulls.
@@ -219,6 +209,77 @@ function buildInput(
       : path.join(context, "Dockerfile"),
     buildArgs: params.BuildArgs ?? {},
   };
+}
+
+// Output of `docker login` or `docker push` that shows the connection to the
+// registry failed, rather than the registry refusing the request. A bare
+// `EOF` is left out, because the registry also closes the connection when it
+// rejects a layer.
+const REGISTRY_NETWORK_ERROR = new RegExp(
+  [
+    "timeout awaiting response headers",
+    "i/o timeout",
+    "TLS handshake timeout",
+    "context deadline exceeded",
+    "connection timed out",
+    "connection reset by peer",
+    "connection refused",
+    "network is unreachable",
+    "no such host",
+    "broken pipe",
+    "use of closed network connection",
+    "server sent GOAWAY",
+    "client connection lost",
+    // 520-524 are Cloudflare's errors for an origin that failed or was slow.
+    "received unexpected HTTP status: (50[0234]|52[0-4])\\b",
+    "unexpected status from \\S+ request to \\S+: (50[0234]|52[0-4])\\b",
+  ].join("|"),
+  "i",
+);
+
+const REGISTRY_RATE_LIMITED = /429 Too Many Requests|toomanyrequests/i;
+
+/**
+ * Logs in to the registry and pushes the image. Throws
+ * `ResourceCreationUnknownError` when the registry can't be reached.
+ */
+async function pushImage(account: string, reference: string): Promise<void> {
+  // The credentials expire after 15 minutes, so they are requested after
+  // the build, which can take longer. `docker login` saves them in the
+  // user's Docker config.
+  const credentials = await registryCredentials(account, ["push", "pull"]);
+  try {
+    await runDocker(
+      [
+        "login",
+        "--password-stdin",
+        "--username",
+        credentials.username,
+        CLOUDFLARE_REGISTRY,
+      ],
+      { stdin: credentials.password },
+    );
+    await runDocker(["push", reference]);
+  } catch (error) {
+    throw registryError(error);
+  }
+}
+
+function registryError(error: unknown): unknown {
+  if (!(error instanceof DockerCommandError)) return error;
+  if (REGISTRY_RATE_LIMITED.test(error.output)) {
+    return new ResourceOperationPendingError(
+      `The registry is rate limited: ${error.message}`,
+      { retryAfterMs: 5_000, throttled: true, cause: error },
+    );
+  }
+  if (REGISTRY_NETWORK_ERROR.test(error.output)) {
+    return new ResourceCreationUnknownError(
+      `Docker did not report whether the image reached the registry: ${error.message}`,
+      { cause: error },
+    );
+  }
+  return error;
 }
 
 async function assertDockerRunning(): Promise<void> {

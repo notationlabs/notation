@@ -9,7 +9,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setConfigFile } from "@notation/core";
-import { ResourceNotFoundError } from "@notation/resource";
+import {
+  ResourceCreationUnknownError,
+  ResourceNotFoundError,
+  ResourceOperationPendingError,
+} from "@notation/resource";
 import { ContainerImage } from "src/resources/containers/container-image";
 import {
   DockerCommandError,
@@ -274,6 +278,85 @@ describe("ContainerImage", () => {
       /docker build exited with code 1:\nERROR: failed to solve/,
     );
     expect(docker.mock.calls.map(([args]) => args[0])).not.toContain("push");
+  });
+
+  describe("registry errors", () => {
+    const timeout =
+      'failed commit on ref "layer-sha256:aa": failed to do request: Put "https://registry.cloudflare.com/v2/ext1/sandbox/blobs/uploads/1": net/http: timeout awaiting response headers';
+
+    function fail(command: string, output: string) {
+      docker.mockImplementation(async (args) => {
+        if (args[0] === command) {
+          throw new DockerCommandError(args, 1, output);
+        }
+      });
+    }
+
+    it.each([
+      ["push", timeout],
+      [
+        "push",
+        "Put https://registry.cloudflare.com/v2/: dial tcp: connection refused",
+      ],
+      ["push", "received unexpected HTTP status: 503 Service Unavailable"],
+      ["push", "http2: server sent GOAWAY and closed the connection"],
+      [
+        "push",
+        'failed commit on ref "layer-sha256:aa": unexpected status from PUT request to https://registry.cloudflare.com/v2/ext1/sandbox/blobs/uploads/1: 524 ',
+      ],
+      ["push", "dial tcp 104.16.0.1:443: connect: network is unreachable"],
+      [
+        "login",
+        "Get https://registry.cloudflare.com/v2/: context deadline exceeded",
+      ],
+    ])(
+      "reports an unknown outcome when docker %s can't reach the registry",
+      async (command, output) => {
+        mockRegistry();
+        fail(command, output);
+
+        const error = await image.create(await params()).catch((e) => e);
+
+        expect(ResourceCreationUnknownError.is(error)).toBe(true);
+        expect(error.cause).toBeInstanceOf(DockerCommandError);
+      },
+    );
+
+    it("reports a rate limited push as pending", async () => {
+      mockRegistry();
+      fail("push", "toomanyrequests: retry later");
+
+      const error = await image.create(await params()).catch((e) => e);
+
+      expect(ResourceOperationPendingError.is(error)).toBe(true);
+      expect(error).toMatchObject({ throttled: true, retryAfterMs: 5_000 });
+    });
+
+    it.each([
+      "denied: requested access to the resource is denied",
+      "received unexpected HTTP status: 501 Not Implemented",
+      "blob upload invalid: unexpected EOF",
+    ])("fails when the registry refuses the push: %s", async (output) => {
+      mockRegistry();
+      fail("push", output);
+
+      const error = await image.create(await params()).catch((e) => e);
+
+      expect(error).toBeInstanceOf(DockerCommandError);
+    });
+
+    it("reports an unknown outcome when the credentials request fails with a 5xx", async () => {
+      mockFetch((call) => {
+        if (call.url === `${API}/me`)
+          return ok({ external_account_id: "ext1" });
+        return new Response(null, { status: 502 });
+      });
+
+      const error = await image.create(await params()).catch((e) => e);
+
+      expect(ResourceCreationUnknownError.is(error)).toBe(true);
+      expect(docker.mock.calls.map(([args]) => args[0])).not.toContain("push");
+    });
   });
 
   it("reads the image pinned by the digest that the registry has for the tag", async () => {
