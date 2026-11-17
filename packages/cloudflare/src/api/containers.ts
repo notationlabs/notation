@@ -107,45 +107,50 @@ type Region = (typeof REGIONS)[number];
 // Cloudflare refuses a list of only these regions.
 const LIMITED_CAPACITY_REGIONS: readonly Region[] = ["ME", "OC", "AFR"];
 
-const JURISDICTION_REGIONS = {
+const JURISDICTIONS = ["eu", "us", "fedramp"] as const;
+
+const JURISDICTION_REGIONS: Record<
+  (typeof JURISDICTIONS)[number],
+  readonly Region[]
+> = {
   eu: ["EEUR", "WEUR"],
   us: ["ENAM", "WNAM"],
   fedramp: ["ENAM", "WNAM"],
-} as const satisfies Record<string, readonly Region[]>;
+};
 
 export const constraintsSchema = v.pipe(
   v.strictObject({
-    /** The regions where the containers can run, such as `["WEUR", "EEUR"]`. */
+    /**
+     * The regions where the containers can run, such as `["WEUR", "EEUR"]`.
+     * `ME`, `OC` and `AFR` have limited capacity, and need another region
+     * next to them.
+     */
     regions: v.optional(
       v.pipe(
         v.array(v.picklist(REGIONS)),
         v.nonEmpty("Set at least one region, or leave regions out"),
+        v.check(
+          (regions) =>
+            regions.some(
+              (region) => !LIMITED_CAPACITY_REGIONS.includes(region),
+            ),
+          "The regions ME, OC and AFR have limited capacity, and Cloudflare refuses them on their own. Add another region",
+        ),
       ),
     ),
     /**
      * Keeps the containers in a compliance boundary: `eu` runs them in
      * `EEUR` and `WEUR`, and `us` and `fedramp` run them in `ENAM` and `WNAM`.
      */
-    jurisdiction: v.optional(v.picklist(["eu", "us", "fedramp"])),
+    jurisdiction: v.optional(v.picklist(JURISDICTIONS)),
   }),
-  v.check(
-    (constraints) =>
-      constraints.regions === undefined ||
-      constraints.regions.some(
-        (region) => !LIMITED_CAPACITY_REGIONS.includes(region),
-      ),
-    "The regions ME, OC and AFR have limited capacity, and Cloudflare refuses them on their own. Add another region",
-  ),
-  v.check(
-    (constraints) =>
-      constraints.regions === undefined ||
-      constraints.jurisdiction === undefined ||
-      constraints.regions.every((region) =>
-        (
-          JURISDICTION_REGIONS[constraints.jurisdiction!] as readonly Region[]
-        ).includes(region),
-      ),
-    "Each region must be in the jurisdiction: eu has EEUR and WEUR, and us and fedramp have ENAM and WNAM",
+  v.forward(
+    v.check(({ regions, jurisdiction }) => {
+      if (regions === undefined || jurisdiction === undefined) return true;
+      const allowed = JURISDICTION_REGIONS[jurisdiction];
+      return regions.every((region) => allowed.includes(region));
+    }, "Each region must be in the jurisdiction: eu has EEUR and WEUR, and us and fedramp have ENAM and WNAM"),
+    ["regions"],
   ),
 );
 
