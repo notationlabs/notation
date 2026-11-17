@@ -31,21 +31,47 @@ When infra has finished loading, the declaration adds a Worker group with:
 
 The declaration adds the Worker even when nothing imports it.
 
-| Option               | Description                                                                                                                                              |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`                 | Keys the Worker in state, and is the base of its name. Use 1 to 63 lowercase letters, digits or hyphens. Changing the id replaces the Worker.            |
-| `bindings`           | A function that returns the values that the code reads from `env`, by name. See [Bindings](#bindings).                                                   |
-| `compatibilityDate`  | Required. The Worker's compatibility date, such as `"2026-10-12"`. Cloudflare runs the Worker with the behaviour of the runtime on that date.            |
-| `compatibilityFlags` | The Worker's compatibility flags. `nodejs_compat` is always added, as the build imports Node's built-in modules as `node:` modules, which need the flag. |
-| `url`                | Serves the Worker on `https://<name>.<account subdomain>.workers.dev`, where `<name>` is the Worker's name. Defaults to `true`, as in wrangler.          |
-| `entrypoint`         | The class that the module exports as its default, such as `class Api extends WorkerEntrypoint`. A Worker that binds this Worker can call its methods with types. See [RPC](#rpc). |
+| Option               | Description                                                                                                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                 | Keys the Worker in state, and is the base of its name. Use 1 to 63 lowercase letters, digits or hyphens. Changing the id replaces the Worker.                                                  |
+| `bindings`           | A function that returns the values that the code reads from `env`, by name. See [Bindings](#bindings).                                                                                         |
+| `compatibilityDate`  | Required. The Worker's compatibility date, such as `"2026-10-12"`. Cloudflare runs the Worker with the behaviour of the runtime on that date.                                                  |
+| `compatibilityFlags` | The Worker's compatibility flags. `nodejs_compat` is always added, as the build imports Node's built-in modules as `node:` modules, which need the flag.                                       |
+| `url`                | Serves the Worker on `https://<name>.<account subdomain>.workers.dev`, where `<name>` is the Worker's name. Defaults to `true`, as in wrangler. With `false`, the Worker has no [`url`](#url). |
+| `entrypoint`         | The class that the module exports as its default, such as `class Api extends WorkerEntrypoint`. A Worker that binds this Worker can call its methods with types. See [RPC](#rpc).              |
+
+### `url`
+
+`url` is a property of the value that `$worker` and `worker()` return in infra code. It is an `OutputRef<string>` of the Worker's workers.dev URL, as `queue.url` is for a queue. Infra code places it whole in config, in a contribution or in a [binding](#url-bindings), or computes with it in `text`, `map` or `all`. See [Output refs](../../reference/resource.md#output-refs).
+
+```ts [infra/hooks.ts]
+import { text } from "@notation/resource";
+import { api } from "../runtime/api";
+
+new github.Webhook("deploys", { config: { Url: text`${api.url}/github` } });
+```
+
+- **A resource that holds it depends on the Worker's workers.dev route.** Deploy serves the Worker on workers.dev before it creates that resource.
+- **Plan shows it as unknown before the first deploy**, as it shows the Worker's [name](#names). Only the path that holds it is unknown: the other keys of a document that holds it are known.
+- **When the Worker gets a new name, each resource that holds it updates.** A new `id` or a replace gives the Worker a new name.
+- **It is the same ref on each read.** The Worker's resources are created once every infra module has loaded, so `url` is a [deferred ref](../../reference/resource.md#deferred-refs). Infra code can read it while the modules load, but turning it into a string throws `OutputRefStringError`, which names `worker:<id>:subdomain.Url`.
+- **It is not enumerable.** A copy made with spread syntax, `{ ...api }`, has no `url`, and is not a Worker. A package that returns a Worker returns its own object, such as `{ worker: app, url: app.url }`.
+- **Worker code can't read it.** An output is known only at deploy. Bind it to the Worker that needs it, and read it from `env`.
+
+For a Worker with `url: false`, the type has no `url`, and a read throws:
+
+```text
+url was read on $worker({ id: "github" }) in runtime/github.ts, which sets url: false, so it has no workers.dev URL. Remove url: false, or bind the Worker as a service.
+```
+
+`url` is typed from the `url` option. A `boolean` that isn't a literal gives `url` in the type, and the read throws when the value is `false`.
 
 ### Names
 
 Deploy generates a Worker's name when it creates the Worker: `<app>--<stage>--<id>-<instance>`, where the instance is 8 random hex characters. A Worker `orders` in the `prod` stage of the `shop` app is named, for example, `shop--prod--orders-3f9a1c2e`. The name can't be set in config.
 
 - **The longest name is 54 characters.** A Worker's name is the first label of its workers.dev URL, and a DNS label holds 63 characters. A preview URL puts a version prefix of 8 characters and a hyphen in the same label. Cloudflare refuses to serve a Worker with a longer name on workers.dev while its preview URLs are on, and turning on workers.dev turns them on. When the name would be longer, the part before the instance is cut short.
-- **The name is not known before the first deploy.** Plan shows the name of a Worker that deploy creates as unknown, and so its workers.dev URL. Anything outside Notation that needs the URL must read it after the first deploy.
+- **The name is not known before the first deploy.** Plan shows the name of a Worker that deploy creates as unknown, and so its workers.dev URL. Infra code reads the URL with [`url`](#url). Anything outside Notation that needs the URL must read it after the first deploy.
 - **The name does not change after that.** Deploy keeps the name in the Worker's state record, and uses it on each later deploy. Only a replace changes it. The only change of params that replaces a Worker, a change of the account, fails at plan. A replace that `notation deploy --replace` asks for creates the new Worker with a new name, and then deletes the old one.
 - **Deploy fills in the name wherever the Worker is bound.** A service binding to the Worker, a Durable Object binding to a namespace that it hosts, and a binding of the Worker to itself all hold the generated name. A Worker that binds itself is created once, with the binding.
 - **A new Worker with the id of an old one is a second Worker.** This happens when the state record of a Worker is lost. The old Worker stays in the account.
@@ -57,7 +83,7 @@ Deploy generates a Worker's name when it creates the Worker: `<app>--<stage>--<i
 | Value                                                               | Binding                  | Type in `env`                                                                         |
 | ------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------- |
 | A namespace from [`$durableObject`](#durableobjectconfig)           | Durable Object namespace | `DurableObjectNamespace<Class>`                                                       |
-| A Worker from `$worker` or `worker()`                              | Service binding          | `Service<Class>` for a Worker with an [`entrypoint`](#rpc) class, otherwise `Fetcher` |
+| A Worker from `$worker` or `worker()`                               | Service binding          | `Service<Class>` for a Worker with an [`entrypoint`](#rpc) class, otherwise `Fetcher` |
 | A [`SecretsStoreSecret`](secrets.md) resource                       | Secrets Store secret     | `SecretsStoreSecret`                                                                  |
 | A [credential](#worker-secrets), such as `apiKey.credentials.value` | Secret text              | `string`                                                                              |
 | An `R2Bucket` resource                                              | R2 bucket                | `R2Bucket`                                                                            |
@@ -126,6 +152,26 @@ export default {
 
 - A binding to a bucket in a jurisdiction other than `default` names the jurisdiction.
 - `json(value)` takes a JSON value. Deploy stores the value in state, and plan shows it. Bind a secret as a [credential](#worker-secrets) instead.
+
+#### URL bindings
+
+A Worker binds another Worker's [`url`](#url) as plain text, as it binds any output ref or derived value:
+
+```ts [runtime/web.ts]
+export const web = $worker({
+  id: "web",
+  compatibilityDate: "2026-10-12",
+  bindings: () => ({ API_URL: api.url, CALLBACK: text`${api.url}/callback` }),
+});
+```
+
+A plain text binding to an output ref or a derived value is a [contribution](../../reference/resource.md#cycles) to the Worker's script, as a service binding is. So a Worker can bind its own URL, and two Workers can bind each other's. Deploy breaks the cycle as it does for service bindings, below. On the first deploy, each such Worker is uploaded twice: first without the binding, and again once the URL is known.
+
+A Worker that names itself in its own `bindings` fails the type check, as below. It binds its own URL with [`addBindings()`](#addbindingsworker-bindings):
+
+```ts [infra/main.ts]
+addBindings(api, { OWN_URL: api.url });
+```
 
 Two Workers can bind each other as services. Each service binding is a [contribution](../../reference/resource.md#cycles) to the Worker's script, so deploy can break the cycle:
 
@@ -274,7 +320,7 @@ Namespaces can't close a cycle. When two Workers each bind a namespace that the 
 
 ## `worker(config)`
 
-`worker()` declares a Worker from a prebuilt JavaScript module or a [bundle](../../reference/bundle.md). It takes the options of [`$worker`](#workerconfig), plus `code`.
+`worker()` declares a Worker from a prebuilt JavaScript module or a [bundle](../../reference/bundle.md). It takes the options of [`$worker`](#workerconfig), plus `code`. Its value has [`url`](#url), as a `$worker` has.
 
 To deploy code built outside Notation, pass a file:
 
@@ -598,18 +644,44 @@ For a namespace with `container`, deploy:
 2. Uploads the hosting Worker, with the class in the upload's `containers` list.
 3. Creates a container application for the namespace, with the image pinned by its digest. A later change to the image or to the size starts a rollout.
 
-| Option                 | Description                                                                                                                                                                                                                                                                              |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `image.context`        | Required. The build context directory, relative to the project root.                                                                                                                                                                                                                     |
-| `image.dockerfile`     | The Dockerfile, relative to the project root. Defaults to `Dockerfile` in the build context.                                                                                                                                                                                             |
-| `image.buildArgs`      | Values for `docker build --build-arg`, by name. Don't put secrets here: Docker keeps the values in the image's history.                                                                                                                                                                  |
-| `image.repository`     | The repository in the registry. Defaults to `<app>--<stage>--<id>`, with the namespace id in lower case, each run of other characters than letters and digits replaced by one hyphen, and no hyphen at the start or end. When no letters or digits are left, the id part is `namespace`. |
-| `maxInstances`         | Required. The most containers that run at once.                                                                                                                                                                                                                                          |
-| `instanceType`         | Such as `lite`, `basic` or `standard-1`. Set either `instanceType`, or `vcpu` and `memoryMib`. Without any of them, Cloudflare uses `lite`.                                                                                                                                              |
-| `vcpu`, `memoryMib`    | A custom size.                                                                                                                                                                                                                                                                           |
-| `diskMb`               | The disk size in MB, with `vcpu` and `memoryMib` only.                                                                                                                                                                                                                                   |
-| `environmentVariables` | Variables for the container, by name. Don't put secrets here: the values are stored as plain text in state and shown in plan output.                                                                                                                                                     |
-| `network`              | `mode` (`private` or `public`), `assignIpv4` and `assignIpv6` (`none` or `predefined`). Cloudflare can't change the mode of an application, so plan fails for a change to it.                                                                                                            |
+| Option                 | Description                                                                                                                                                                                                                                                                                  |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `image.context`        | Required. The build context directory, relative to the project root.                                                                                                                                                                                                                         |
+| `image.dockerfile`     | The Dockerfile, relative to the project root. Defaults to `Dockerfile` in the build context.                                                                                                                                                                                                 |
+| `image.buildArgs`      | Values for `docker build --build-arg`, by name. Don't put secrets here: Docker keeps the values in the image's history.                                                                                                                                                                      |
+| `image.repository`     | The repository in the registry. Defaults to `<app>--<stage>--<id>`, with the namespace id in lower case, each run of other characters than letters and digits replaced by one hyphen, and no hyphen at the start or end. When no letters or digits are left, the id part is `namespace`.     |
+| `maxInstances`         | Required. The most containers that run at once.                                                                                                                                                                                                                                              |
+| `instanceType`         | Such as `lite`, `basic` or `standard-1`. Set either `instanceType`, or `vcpu` and `memoryMib`. Without any of them, Cloudflare uses `lite`.                                                                                                                                                  |
+| `vcpu`, `memoryMib`    | A custom size.                                                                                                                                                                                                                                                                               |
+| `diskMb`               | The disk size in MB, with `vcpu` and `memoryMib` only.                                                                                                                                                                                                                                       |
+| `environmentVariables` | Variables for the container, by name, or a function that returns them. Each value is a string, an output ref or a derived value. Don't put secrets here: the values are stored as plain text in state and shown in plan output. See [Variables from a function](#variables-from-a-function). |
+| `network`              | `mode` (`private` or `public`), `assignIpv4` and `assignIpv6` (`none` or `predefined`). Cloudflare can't change the mode of an application, so plan fails for a change to it.                                                                                                                |
+
+#### Variables from a function
+
+`environmentVariables` can be a function. It is called once every infra module has loaded, when the hosting Worker resolves its bindings, as `bindings` is. So it can name a Worker that is declared after the namespace, or in a module that loads later, such as the Worker that hosts the namespace:
+
+```ts [runtime/room.ts]
+import type { Input } from "@notation/resource";
+import { $durableObject } from "@notation/cloudflare/workers";
+import { router } from "./router";
+
+export const rooms = $durableObject({
+  id: "rooms",
+  class: Room,
+  container: {
+    image: { context: "containers/room" },
+    maxInstances: 10,
+    environmentVariables: (): Record<string, Input<string>> => ({
+      ROUTER_URL: router.url,
+    }),
+  },
+});
+```
+
+Annotate the return type when the function names a Worker that binds the namespace. Without the annotation, the type of the namespace depends on the type of the Worker, which depends on the type of the namespace, and TypeScript reports TS7022 on both.
+
+The container application depends on the Worker's workers.dev route, which depends on the Worker's script. The application already depends on the script, so this adds no cycle.
 
 The application's name is `<app>-<stage>-<id>-<hash>`. The id is put in lower case, with each run of other characters than letters and digits replaced by one hyphen, and with no hyphen at the start or end. The hash is 8 hex characters of a SHA-256 of the app, stage and id, so the name is unique for each of them. Cloudflare refuses a name that contains two consecutive hyphens, so the name can't use the `<app>--<stage>--` form of Worker names. Cloudflare also refuses a name that starts with a digit, so when the app name starts with a digit, the name starts with `c-`.
 

@@ -738,6 +738,27 @@ A state ref differs from an output ref in five ways:
 
 Make each state ref while infra is evaluated. Deploy reads the outputs of the resources that state refs name before it resolves any params, and a state ref made later fails at deploy.
 
+### Deferred refs
+
+A resource group can create its resources once every infra module has loaded, as a [Worker](../providers/cloudflare/workers.md#url) does. Its outputs are needed while the modules load, before the resources exist. `deferredOutputRef` from `@notation/resource` returns an output ref whose resource is found later. It is for the code of a resource package:
+
+```ts
+const url = deferredOutputRef<string>({
+  resourceId: "worker:api:subdomain",
+  path: ["Url"],
+  resolve: () => group.subdomain,
+});
+```
+
+It is an `OutputRef<T>`, or a `CredentialRef<T>` with `credential: true`, and it goes wherever such a ref goes. It differs from a ref from `outputRef(key)` in four ways:
+
+- **Its resource is found on the first read of `ref.resource`.** `resolve` is called once, and the ref keeps the resource. A read while the modules load throws, and names the ref. A read in an `onEvaluationEnd` callback calls `resolve`, which must then create the resource if it doesn't exist yet.
+- **Its resource's id is given up front.** `ref.resourceId` holds it, for this ref and every other. An `OutputRefStringError` thrown while the modules load names the ref, and contributions sort by the [canonical form](#derived-values) without finding the resource.
+- **`resolve` must return the resource with the id `resourceId`.** A read of `ref.resource` throws otherwise.
+- **`credential` doesn't find the resource.** `isCredentialRef` reads the kind of the ref, which `credential` sets.
+
+The engine reads `ref.resource` only at plan and deploy: to find dependencies, to look up outputs, and to show values. Validation at declaration skips refs, and `text`, `map` and `all` hold the ref, so code that runs while the modules load can use a deferred ref as it uses any other. A deferred ref adds a dependency, as an output ref does.
+
 ## Credential sources
 
 A source supplies a value that exists outside Notation, such as an environment variable or a secret in Infisical. Deploy creates nothing at a provider for a source, and never replaces one. `credentialSourceResource()` builds the class. A shortened `sources.Env` from `@notation/std/resources`, without `track`:
