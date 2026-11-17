@@ -216,14 +216,14 @@ test("a duplicate id names $lambda in the error", async () => {
   ).rejects.toThrow('Duplicate $lambda id "orders"');
 });
 
-test("env() in infra throws", () => {
+test("env() outside the function throws", () => {
   const fn = $lambda({
     id: "orders",
     env: () => ({ TABLE: "orders" }),
   });
 
   expect(() => fn.env()).toThrow(
-    "env() reads the function's environment, so call it in the function's code.",
+    'env() of the Lambda "orders" was called outside the function.',
   );
 });
 

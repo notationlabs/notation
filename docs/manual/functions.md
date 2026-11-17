@@ -85,7 +85,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 };
 ```
 
-Deploy sets `ORDER_QUEUE_URL` as an environment variable of the function. In the function, `env()` reads each name that the declaration binds from `process.env`, and throws if one of them is not set. In infra code, `env()` throws, because the values can be refs that only deploy resolves. A name that the declaration doesn't bind, such as `lambda.env().QUEUE_URL`, is a type error.
+Deploy sets `ORDER_QUEUE_URL` as an environment variable of the function. In the function, `env()` reads each name that the declaration binds from `process.env`, and throws if one of them is not set. Outside the function, `env()` throws, because the values can be refs that only deploy resolves. Infra never runs the handler or the other top-level code of the module: the infra build keeps only the declaration and what it uses. A test that imports the module and calls `env()` must resolve imports with the `notation-runtime` export condition, which loads the runtime build of `@notation/aws/lambda`. A name that the declaration doesn't bind, such as `lambda.env().QUEUE_URL`, is a type error.
 
 **The handler can't read `orderQueue.url` directly.** The runtime build leaves infra modules out of the function's bundle. If the handler uses `orderQueue`, the infra module stays in the bundle, and the build fails with the chain of imports that brought it in.
 

@@ -94,10 +94,15 @@ export function $lambda<
   const getEvent = () => (event ??= { value: config.event?.() }).value;
   const declaration = {
     id: config.id,
-    // The declared values can be refs, which only deploy resolves.
+    // The infra build of a runtime module keeps only the declaration and the
+    // statements it uses, so a call in the handler, or at the top level of the
+    // module, never runs here. A call that does run here is in infra code, or
+    // in a test that imports the module without the `notation-runtime`
+    // condition. The declared values can be refs there, which only deploy
+    // resolves, so this throws instead of returning them as strings.
     env: () => {
       throw new Error(
-        `env() of the Lambda "${config.id}" was called in infra code. env() reads the function's environment, so call it in the function's code.`,
+        `env() of the Lambda "${config.id}" was called outside the function. env() reads the function's environment variables, so it works only in the runtime build of @notation/aws/lambda, which the deployed function loads. A test that imports the function's module loads the runtime build when it resolves imports with the "notation-runtime" export condition.`,
       );
     },
     decode: createDecode({ event: getEvent }),
