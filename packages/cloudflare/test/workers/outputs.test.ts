@@ -16,6 +16,13 @@ describe("the runtime $worker", () => {
     expect(outputs).toContain("url");
   });
 
+  it("has an own property, besides id, for each output in the mark and no other", () => {
+    const names = Object.getOwnPropertyNames(api).filter(
+      (name) => name !== "id",
+    );
+    expect(names.sort()).toEqual([...outputs].sort());
+  });
+
   it.each(outputs)(
     "defines %s as a getter that throws and isn't enumerable",
     (output) => {
