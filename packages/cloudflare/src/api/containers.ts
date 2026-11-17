@@ -90,6 +90,106 @@ export const configurationSchema = v.pipe(
 
 export type ContainerConfiguration = v.InferOutput<typeof configurationSchema>;
 
+const REGIONS = [
+  "ENAM",
+  "WNAM",
+  "EEUR",
+  "WEUR",
+  "APAC",
+  "SAM",
+  "ME",
+  "OC",
+  "AFR",
+] as const;
+
+type Region = (typeof REGIONS)[number];
+
+// Cloudflare refuses a list of only these regions.
+const LIMITED_CAPACITY_REGIONS: readonly Region[] = ["ME", "OC", "AFR"];
+
+const JURISDICTIONS = ["eu", "us", "fedramp"] as const;
+
+const JURISDICTION_REGIONS: Record<
+  (typeof JURISDICTIONS)[number],
+  readonly Region[]
+> = {
+  eu: ["EEUR", "WEUR"],
+  us: ["ENAM", "WNAM"],
+  fedramp: ["ENAM", "WNAM"],
+};
+
+export const constraintsSchema = v.pipe(
+  v.strictObject({
+    /**
+     * The regions where the containers can run, such as `["WEUR", "EEUR"]`.
+     * `ME`, `OC` and `AFR` have limited capacity, and need another region
+     * next to them.
+     */
+    regions: v.optional(
+      v.pipe(
+        v.array(v.picklist(REGIONS)),
+        v.nonEmpty("Set at least one region, or leave regions out"),
+        v.check(
+          (regions) =>
+            regions.some(
+              (region) => !LIMITED_CAPACITY_REGIONS.includes(region),
+            ),
+          "The regions ME, OC and AFR have limited capacity, and Cloudflare refuses them on their own. Add another region",
+        ),
+      ),
+    ),
+    /**
+     * Keeps the containers in a compliance boundary: `eu` runs them in
+     * `EEUR` and `WEUR`, and `us` and `fedramp` run them in `ENAM` and `WNAM`.
+     */
+    jurisdiction: v.optional(v.picklist(JURISDICTIONS)),
+  }),
+  v.forward(
+    v.check(({ regions, jurisdiction }) => {
+      if (regions === undefined || jurisdiction === undefined) return true;
+      const allowed = JURISDICTION_REGIONS[jurisdiction];
+      return regions.every((region) => allowed.includes(region));
+    }, "Each region must be in the jurisdiction: eu has EEUR and WEUR, and us and fedramp have ENAM and WNAM"),
+    ["regions"],
+  ),
+);
+
+export type ContainerConstraints = v.InferOutput<typeof constraintsSchema>;
+
+type ApplicationConstraints = ContainerConstraints & { tiers: number[] };
+
+/**
+ * Returns the `constraints` of a request, as Wrangler builds them: with
+ * `tiers: [1, 2]` when its config sets no tiers. Wrangler sends the whole
+ * object in each update, so an update without `regions` or `jurisdiction`
+ * removes them. `undefined` gives the constraints that Wrangler sends for a
+ * config with none.
+ */
+export function applicationConstraints(
+  constraints: ContainerConstraints | undefined,
+): ApplicationConstraints {
+  return { tiers: [1, 2], ...constraints };
+}
+
+/**
+ * Returns the regions and the jurisdiction of an application's constraints,
+ * or `undefined` if it has neither. `tiers` is left out, because notation
+ * always sends the same tiers.
+ */
+export function readConstraints(
+  constraints: Application["constraints"],
+): ContainerConstraints | undefined {
+  const regions = constraints?.regions?.length
+    ? constraints.regions
+    : undefined;
+  const jurisdiction = constraints?.jurisdiction ?? undefined;
+  if (!regions && !jurisdiction) return undefined;
+  return {
+    ...(regions && { regions }),
+    ...(jurisdiction && { jurisdiction }),
+  };
+}
+
 // The values that Cloudflare gives an application whose configuration leaves
 // the key out. They are those of the `lite` instance type, and the disk size
 // is also that of custom sizes without `disk`.
@@ -200,6 +300,7 @@ export type CreateApplication = {
    */
   instances: 0;
   configuration: ContainerConfiguration;
+  constraints?: ApplicationConstraints;
   durable_objects: { namespace_id: string };
 };
 
@@ -209,6 +310,7 @@ export type Application = {
   name: string;
   max_instances?: number | null;
   durable_objects?: { namespace_id: string } | null;
+  constraints?: Partial<ApplicationConstraints> | null;
 };
 
 const applicationsPath = (account: string) =>
@@ -254,7 +356,7 @@ export async function getApplication(
 export async function updateApplication(
   account: string,
   applicationId: string,
-  settings: { max_instances: number },
+  settings: { max_instances?: number; constraints?: ApplicationConstraints },
 ): Promise<void> {
   await cloudflare("PATCH", applicationPath(account, applicationId), settings);
 }

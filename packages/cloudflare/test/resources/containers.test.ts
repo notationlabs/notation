@@ -107,10 +107,27 @@ describe("ContainerApplication", () => {
           durable_objects: { namespace_id: "ns1" },
           configuration: params.Configuration,
           max_instances: 5,
+          constraints: { tiers: [1, 2] },
         },
       },
       { method: "GET", url: `${API}/applications/app1`, body: undefined },
     ]);
+  });
+
+  it("sends the constraints with Wrangler's default tiers", async () => {
+    mockApi(() => ok({ id: "app1", name: params.Name }));
+
+    await application.create({
+      ...params,
+      Constraints: { regions: ["WEUR"], jurisdiction: "eu" },
+    });
+
+    expect(calls[1]).toMatchObject({
+      method: "POST",
+      body: {
+        constraints: { tiers: [1, 2], regions: ["WEUR"], jurisdiction: "eu" },
+      },
+    });
   });
 
   describe("read after the create", () => {
@@ -386,6 +403,36 @@ describe("ContainerApplication", () => {
     expect(calls[0]!.url).toBe(`${API}/applications/app1`);
   });
 
+  // `read` is typed with the computed members only.
+  const readConstraints = async () =>
+    ((await application.read!(key)) as { Constraints?: unknown }).Constraints;
+
+  it("reads the regions and the jurisdiction of the constraints, without the tiers", async () => {
+    mockFetch(() =>
+      ok({
+        id: "app1",
+        name: params.Name,
+        constraints: { tiers: [1, 2], regions: ["WEUR"], jurisdiction: "eu" },
+      }),
+    );
+
+    expect(await readConstraints()).toEqual({
+      regions: ["WEUR"],
+      jurisdiction: "eu",
+    });
+  });
+
+  it.each([
+    undefined,
+    null,
+    { tiers: [1, 2] },
+    { tiers: [1, 2], regions: [], jurisdiction: null },
+  ])("reads the constraints %j as unset", async (constraints) => {
+    mockFetch(() => ok({ id: "app1", name: params.Name, constraints }));
+
+    expect(await readConstraints()).toBeUndefined();
+  });
+
   it("reads a missing application as not found, and deletes it without an error", async () => {
     mockFetch(() =>
       fail(404, 1609, "APPLICATION_NOT_FOUND: Container application not found"),
@@ -468,6 +515,46 @@ describe("ContainerApplication", () => {
     );
 
     expect(calls.map((call) => call.method)).toEqual(["PATCH"]);
+  });
+
+  it("patches changed constraints with the max instances", async () => {
+    mockFetch(() => ok({}));
+    const Constraints = { regions: ["WEUR" as const, "EEUR" as const] };
+
+    await application.update!(
+      key,
+      { MaxInstances: 10, Constraints } as any,
+      { ...params, MaxInstances: 10, Constraints },
+      params as any,
+    );
+
+    expect(calls).toEqual([
+      {
+        method: "PATCH",
+        url: `${API}/applications/app1`,
+        body: {
+          max_instances: 10,
+          constraints: { tiers: [1, 2], regions: ["WEUR", "EEUR"] },
+        },
+      },
+    ]);
+  });
+
+  it("patches the default constraints when the constraints are removed", async () => {
+    mockFetch(() => ok({}));
+
+    await application.update!(key, { Constraints: undefined } as any, params, {
+      ...params,
+      Constraints: { regions: ["WEUR"] },
+    } as any);
+
+    expect(calls).toEqual([
+      {
+        method: "PATCH",
+        url: `${API}/applications/app1`,
+        body: { constraints: { tiers: [1, 2] } },
+      },
+    ]);
   });
 
   // Rolls out `desired` over `previous`, and returns the target it sent.
@@ -979,5 +1066,36 @@ describe("ContainerApplication configuration", () => {
   it("accepts instance_type on its own", async () => {
     const result = await validate({ image: "img:1", instance_type: "basic" });
     expect(result.issues).toBeUndefined();
+  });
+});
+
+describe("ContainerApplication constraints", () => {
+  const application = new ContainerApplication("app", {
+    config: {} as any,
+    dependencies: {} as any,
+  });
+  const validate = (value: unknown) =>
+    application.schema.Constraints.value["~standard"].validate(value);
+
+  it.each([
+    { regions: ["WEUR"] },
+    { regions: ["WEUR", "ME"] },
+    { jurisdiction: "fedramp" },
+    { regions: ["EEUR", "WEUR"], jurisdiction: "eu" },
+    { regions: ["WNAM"], jurisdiction: "us" },
+  ])("accepts %j", async (constraints) => {
+    expect((await validate(constraints)).issues).toBeUndefined();
+  });
+
+  it.each([
+    { regions: [] },
+    { regions: ["weur"] },
+    { regions: ["ME", "OC", "AFR"] },
+    { regions: ["ENAM"], jurisdiction: "eu" },
+    { regions: ["WEUR"], jurisdiction: "us" },
+    { jurisdiction: "EU" },
+    { regions: ["WEUR"], cities: ["lhr"] },
+  ])("rejects %j", async (constraints) => {
+    expect((await validate(constraints)).issues).toBeDefined();
   });
 });

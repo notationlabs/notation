@@ -1,4 +1,5 @@
 import { getDeclaredIn, perCollection, type Input } from "@notation/resource";
+import type { ContainerConstraints } from "src/api/containers";
 import { assertNamespaceId } from "src/id";
 import type {
   DurableObjectClass,
@@ -85,6 +86,11 @@ export type DurableObjectContainerConfig = {
     assignIpv4?: "none" | "predefined";
     assignIpv6?: "none" | "predefined";
   };
+  /**
+   * Where the containers can run. Without it, Cloudflare starts a container
+   * in the location nearest to the request that has the image.
+   */
+  constraints?: ContainerConstraints;
 };
 
 export type Registered = {

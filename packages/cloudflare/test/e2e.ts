@@ -465,6 +465,7 @@ export type ContainerApplication = {
     disk?: { size_mb: number };
     environment_variables?: { name: string; value: string }[];
   };
+  constraints?: { regions?: string[]; jurisdiction?: string };
   durable_objects?: { namespace_id: string };
   active_rollout_id?: string;
 };

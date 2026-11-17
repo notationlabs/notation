@@ -927,6 +927,7 @@ function containerOf(
     application: {
       Name: containerApplicationName(namespaceId),
       MaxInstances: container.maxInstances,
+      Constraints: container.constraints,
       Configuration: definedValues({
         instance_type: container.instanceType,
         vcpu: container.vcpu,
