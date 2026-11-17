@@ -627,25 +627,20 @@ describe("Bundle", () => {
     );
   });
 
-  it("fails when the output calls a @resource tag of a package", async () => {
-    write(
-      "node_modules/refs-lib/package.json",
-      JSON.stringify({
-        name: "refs-lib",
-        type: "module",
-        exports: "./index.js",
-      }),
-    );
-    write(
-      "node_modules/refs-lib/index.js",
-      `/**\n * @resource\n */\nexport function text(strings, ...parts) { return { strings, parts }; }\n`,
+  it("fails when the output calls text, a @resource tag, from @notation/resource", async () => {
+    // The build resolves the link to the package's dist, so the package must
+    // have been built.
+    mkdirSync(path.join(root, "node_modules/@notation"), { recursive: true });
+    symlinkSync(
+      fileURLToPath(new URL("../../resource", import.meta.url)),
+      path.join(root, "node_modules/@notation/resource"),
     );
     write(
       "src/worker.ts",
-      `import { text } from "refs-lib";\nexport default { fetch(request) { return text\`\${request.url}/x\`; } };`,
+      `import { text } from "@notation/resource";\nexport default { fetch(request) { return text\`\${request.url}/x\`; } };`,
     );
     await expect(worker().deriveParams()).rejects.toThrow(
-      "text from refs-lib/index.js can't be used in bundle:router, because text() declares infrastructure",
+      "text from @notation/resource/dist/index.js can't be used in bundle:router, because text() declares infrastructure",
     );
   });
 
