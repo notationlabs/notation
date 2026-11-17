@@ -327,6 +327,17 @@ describe("map", () => {
     );
   });
 
+  it("is not called at plan with a value that plan gives as unknown", async () => {
+    const queue = deployedQueue("orders");
+    queue.setOutput({ ...queue.output, QueueUrl: UNKNOWN_AFTER_APPLY } as any);
+    const compute = vi.fn((url: string) => `${url}/x`);
+    const fn = new Fn("fn", {
+      config: { Url: queue.outputRef("QueueUrl").map(compute) },
+    });
+    expect((await fn.planParams()).Url).toEqual(UNKNOWN_AFTER_APPLY);
+    expect(compute).not.toHaveBeenCalled();
+  });
+
   it("is called with real values, and more than once", async () => {
     const queue = deployedQueue("orders");
     const compute = vi.fn((url: string) => `${url}/x`);
@@ -694,6 +705,73 @@ describe("deriveParams with a marker in config", () => {
       "reader.Secret is the credential token.Value, which deploy puts in the params only for the call to an operation, so deriveParams can't read it.";
     await expect(reader.getParams()).rejects.toThrow(message);
     await expect(reader.planParams()).rejects.toThrow(message);
+  });
+
+  it("plans as unknown when deriveParams reads a credential that deploy rotates", async () => {
+    const token = deployedToken();
+    // Plan gives this for a credential that it expects deploy to rotate.
+    token.setOutput({ ...token.output, Value: UNKNOWN_AFTER_APPLY } as any);
+    let read: unknown;
+    const Probe = Passer.requireDependencies<{}>().deriveParams(
+      ({ config }) => {
+        try {
+          return { Label: config.Secret };
+        } catch (error) {
+          read = error;
+          throw error;
+        }
+      },
+    );
+    const probe = new Probe("probe", {
+      config: { Name: "p", Secret: token.credentials.Value },
+    });
+    expect(await probe.planParams()).toMatchObject({
+      Label: UNKNOWN_AFTER_APPLY,
+    });
+    expect(read).toBeInstanceOf(PendingOutput);
+    expect((read as PendingOutput).resource).toBe(probe);
+    expect((read as PendingOutput).message).toBe(
+      "probe.Secret is not known until deploy",
+    );
+  });
+
+  it("guards the markers in the config of a dependency", async () => {
+    const source = new Passer("source", {
+      config: { Name: "s", Secret: deployedToken().credentials.Value },
+    });
+    source.setOutput({ Name: "s" });
+    const Watcher = Passer.requireDependencies<{
+      source: InstanceType<typeof Passer>;
+    }>().deriveParams(({ deps }) => ({ Label: deps.source.config.Secret }));
+    const watcher = new Watcher("watcher", {
+      config: { Name: "w" },
+      dependencies: { source },
+    });
+    const message =
+      "source.Secret is the credential token.Value, which deploy puts in the params only for the call to an operation, so deriveParams can't read it.";
+    await expect(watcher.getParams()).rejects.toThrow(message);
+    await expect(watcher.planParams()).rejects.toThrow(message);
+  });
+
+  it("plans as unknown when deriveParams reads a rotated credential in the config of a dependency", async () => {
+    const token = deployedToken();
+    token.setOutput({ ...token.output, Value: UNKNOWN_AFTER_APPLY } as any);
+    const source = new Passer("source", {
+      config: { Name: "s", Secret: token.credentials.Value },
+    });
+    source.setOutput({ Name: "s" });
+    const Watcher = Passer.requireDependencies<{
+      source: InstanceType<typeof Passer>;
+    }>().deriveParams(({ deps }) => ({
+      Label: `secret: ${deps.source.config.Secret}`,
+    }));
+    const watcher = new Watcher("watcher", {
+      config: { Name: "w" },
+      dependencies: { source },
+    });
+    expect(await watcher.planParams()).toMatchObject({
+      Label: UNKNOWN_AFTER_APPLY,
+    });
   });
 
   it("keeps the markers in the params when deriveParams doesn't read them", async () => {

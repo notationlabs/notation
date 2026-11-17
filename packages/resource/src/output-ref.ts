@@ -1,7 +1,7 @@
 import type { BaseResource } from "./resource";
 import type { Schema } from "./resource.schema";
 import type { DurableObject } from "./durable-value";
-import { UNKNOWN_AFTER_APPLY } from "./diff-params";
+import { UNKNOWN_AFTER_APPLY, isUnknownAfterApply } from "./diff-params";
 import { captureCallSiteLazily } from "./contributions";
 import { isOwnPhysicalName } from "./physical-name";
 import { isCredentialMarker } from "./credential";
@@ -523,17 +523,21 @@ function describeOutputRef(token: {
  * value gives.
  */
 export class PendingOutput extends Error {
-  constructor(readonly resource: BaseResource) {
-    super(`The output of ${resource.id} is not known until it is deployed`);
+  constructor(
+    readonly resource: BaseResource,
+    message = `The output of ${resource.id} is not known until it is deployed`,
+  ) {
+    super(message);
     this.name = "PendingOutput";
   }
 }
 
 /**
- * Gives views of config and of dependencies for code that runs at plan. In a
- * view of config, the refs and derived values that plan knows are filled in,
- * and reading one that it doesn't know throws `PendingOutput`. A view of a
- * dependency has a view of its config. A view of a dependency with no output
+ * Gives views of dependencies for code that runs at plan, and the `pending`
+ * function for `deriveParamsConfigView`. A view of a dependency has a view of
+ * its config from `deriveParamsConfigView`, in which the refs and derived
+ * values that plan knows are filled in, and reading one that it doesn't know
+ * throws `PendingOutput`. A view of a dependency with no output
  * throws `PendingOutput` when its output is read. A view of a dependency
  * whose output lacks a required output throws it when that output is read.
  * `readPending` is set by such a read, so a plan still knows of it when the
@@ -553,19 +557,19 @@ export function createPlanViews() {
       return viewed as Deps;
     },
     /**
-     * A view of a value in which the known refs have been filled in. The
-     * refs and derived values that are left throw on a read.
+     * Throws `PendingOutput` for the first resource that `unresolved` reads.
+     * `UNKNOWN_AFTER_APPLY` reads no ref, so its error names the resource
+     * whose config holds it.
      */
-    config<V>(resolved: V): V {
-      return guardedReadView(resolved, isRefOrDerived, views.pending) as V;
-    },
-    /** Throws `PendingOutput` for the first resource that `unresolved` reads. */
-    pending(unresolved: unknown): never {
+    pending(unresolved: unknown, holder: BaseResource, param: string): never {
       let resource: BaseResource | undefined;
       forEachOutputRef(unresolved, (token) => {
         resource ??= token.resource;
       });
-      return throwPending(resource!);
+      views.readPending = true;
+      throw resource
+        ? new PendingOutput(resource)
+        : new PendingOutput(holder, `${param} is not known until deploy`);
     },
   };
 
@@ -597,7 +601,12 @@ export function createPlanViews() {
     return dependencyView(dep, {
       output: pending ? () => viewedOutput ?? throwPending(dep) : undefined,
       config: resolvesConfig
-        ? () => views.config(resolveOutputRefs(dep.config, planLookup))
+        ? () =>
+            deriveParamsConfigView(
+              dep,
+              resolveOutputRefs(dep.config, planLookup),
+              views.pending,
+            )
         : undefined,
     });
   };
@@ -606,8 +615,9 @@ export function createPlanViews() {
 }
 
 /**
- * Views of dependencies for `deriveParams` at deploy, each with its config
- * filled in.
+ * Views of dependencies for `deriveParams` and function contributions at
+ * deploy, each with its config filled in. The config is a view from
+ * `deriveParamsConfigView`.
  */
 export function deployViews<Deps extends Record<string, BaseResource | void>>(
   deps: Deps,
@@ -617,7 +627,11 @@ export function deployViews<Deps extends Record<string, BaseResource | void>>(
     viewed[name] =
       dep && containsRefOrDerived(dep.config)
         ? dependencyView(dep, {
-            config: () => resolveOutputRefs(dep.config, deployLookup),
+            config: () =>
+              deriveParamsConfigView(
+                dep,
+                resolveOutputRefs(dep.config, deployLookup),
+              ),
           })
         : dep;
   }
@@ -655,17 +669,23 @@ function dependencyView(
  * deploy decides after the params. A credential marker stands for a value
  * that deploy puts in place of the marker only for the call to an
  * operation. Reading a ref or a derived value that is left in config, which
- * only plan leaves, calls `onPending`.
+ * only plan leaves, calls `onPending`. So does reading `UNKNOWN_AFTER_APPLY`,
+ * which plan gives for a credential that deploy rotates.
  */
 export function deriveParamsConfigView(
   owner: BaseResource,
   config: unknown,
-  onPending?: (unresolved: unknown) => never,
+  onPending?: (
+    unresolved: unknown,
+    holder: BaseResource,
+    param: string,
+  ) => never,
 ): unknown {
   const guarded = (value: unknown) =>
     isOwnPhysicalName(value) ||
     isCredentialMarker(value) ||
-    (onPending !== undefined && isRefOrDerived(value));
+    (onPending !== undefined &&
+      (isRefOrDerived(value) || isUnknownAfterApply(value)));
   return guardedReadView(config, guarded, (value, path) => {
     const param = [owner.id, ...path].join(".");
     if (isOwnPhysicalName(value)) {
@@ -679,7 +699,7 @@ export function deriveParamsConfigView(
         `${param} is the credential ${resource}.${name}, which deploy puts in the params only for the call to an operation, so deriveParams can't read it.`,
       );
     }
-    return onPending!(value);
+    return onPending!(value, owner, param);
   });
 }
 
@@ -926,6 +946,8 @@ function resolveDerived(
       found = { known: true, value: input };
     }
     if (!found.known) return found;
+    // Plan gives this for a credential that deploy rotates.
+    if (isUnknownAfterApply(found.value)) return { known: false };
     values.push(found.value);
   }
   return { known: true, value: derived["~compute"](values) };

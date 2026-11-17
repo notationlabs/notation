@@ -495,9 +495,9 @@ const LambdaIntegration = defineResource<{ ... }>({ type: "aws/apiGateway/Lambda
 `config`, and the `config` of each dependency, have their [output refs and derived values](#output-refs) filled in. So `deriveParams` reads config as plain values, which its type says:
 
 - **At deploy**, every ref in config is known, and `deriveParams` receives the values.
-- **At plan**, `deriveParams` receives a view of config. Reading a value that plan knows gives the value. Reading a ref or a derived value that plan doesn't know throws `PendingOutput`, as a read of a pending output in `deps` does. Plan then marks every param that config doesn't set as unknown.
+- **At plan**, `deriveParams` receives a view of config. Reading a value that plan knows gives the value. Reading a ref or a derived value that plan doesn't know throws `PendingOutput`, as a read of a pending output in `deps` does. So does reading a credential that plan expects deploy to rotate. Plan then marks every param that config doesn't set as unknown.
 
-Two values in config can't be read, at plan or at deploy, and reading one throws with the path of the param:
+Two values in config, or in the config of a dependency, can't be read, at plan or at deploy, and reading one throws with the path of the param:
 
 - a ref to the resource's own [physical name](#physical-names), because deploy decides the name after the params.
 - a [credential](#credentials), because deploy puts its value in the params only for the call to an operation.
@@ -873,7 +873,7 @@ importer.policy.contribute(
 );
 ```
 
-`contribute` takes the function and, in `deps`, the resources that the function reads. At deploy, deploy runs the function with the real outputs of `deps`, and collects the result like a plain contribution. A function contribution has three costs that a contribution of values doesn't:
+`contribute` takes the function and, in `deps`, the resources that the function reads. At deploy, deploy runs the function with the real outputs of `deps`, and with the config of each dependency filled in, as `deriveParams` receives it. It collects the result like a plain contribution. A function contribution has three costs that a contribution of values doesn't:
 
 - **At plan**, the function receives the same views of its deps as `deriveParams` (see [Unknown values](../internals/reconciler.md#unknown-values)). When the queue has no output yet, reading `deps.queue.output` throws, and plan marks every collected param of the policy unknown. With `text`, only the path of `Resource` is unknown.
 - **In a cycle**, a function contribution counts as setting every collected param. See [Cycles](#cycles).
