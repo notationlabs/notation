@@ -586,7 +586,6 @@ export function createPlanViews() {
   const planView = (dep: BaseResource): BaseResource => {
     const pending = hasPendingOutput(dep);
     const resolvesConfig = containsRefOrDerived(dep.config);
-    if (!pending && !resolvesConfig) return dep;
     const output = dep.output as Record<string, unknown> | null;
     // Deploy fails when a required output is missing, so each one is present
     // at deploy. Each missing one is a getter, so that `in`, `Object.hasOwn`
@@ -630,15 +629,14 @@ export function deployViews<Deps extends Record<string, BaseResource | void>>(
   const viewed: Record<string, BaseResource | void> = {};
   for (const [name, dep] of Object.entries(deps)) {
     viewed[name] =
-      dep && containsRefOrDerived(dep.config)
-        ? dependencyView(dep, {
-            config: () =>
-              deriveParamsConfigView(
-                dep,
-                resolveOutputRefs(dep.config, deployLookup),
-              ),
-          })
-        : dep;
+      dep &&
+      dependencyView(dep, {
+        config: () =>
+          deriveParamsConfigView(
+            dep,
+            resolveOutputRefs(dep.config, deployLookup),
+          ),
+      });
   }
   return viewed as Deps;
 }

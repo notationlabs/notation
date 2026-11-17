@@ -128,13 +128,36 @@ describe("resource dependencies", () => {
 
     await testResource.getParams();
 
-    expect(deriveParamsMock.mock.calls[0]).toEqual([
-      {
-        id: "test-resource-1",
-        config: testResourceConfig,
-        deps: { dep1: childTestResource },
-      },
-    ]);
+    const [{ id, config, deps }] = deriveParamsMock.mock.calls[0];
+    expect(id).toBe("test-resource-1");
+    expect(config).toEqual(testResourceConfig);
+    expect(Object.getPrototypeOf(deps.dep1)).toBe(childTestResource);
+    expect(deps.dep1.config).toEqual(testResourceConfig);
+  });
+
+  it("passes a view of each dependency at plan and at deploy, whatever its config holds", async () => {
+    const seen: unknown[] = [];
+    const TestResourceWithDeps = TestResource.requireDependencies<{
+      dep1: InstanceType<typeof TestResource>;
+    }>().deriveParams(({ deps }) => {
+      seen.push(deps.dep1);
+      return {};
+    });
+    const dep1 = new TestResource("dep-1", { config: testResourceConfig });
+    const testResource = new TestResourceWithDeps("test-resource-1", {
+      config: testResourceConfig,
+      dependencies: { dep1 },
+    });
+    dep1.output = {} as any;
+
+    await testResource.planParams();
+    await testResource.getParams();
+
+    expect(seen).toHaveLength(2);
+    for (const view of seen) {
+      expect(view).not.toBe(dep1);
+      expect(Object.getPrototypeOf(view)).toBe(dep1);
+    }
   });
 
   it("merges config and intrinsic config", async () => {

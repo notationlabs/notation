@@ -494,7 +494,7 @@ const LambdaIntegration = defineResource<{ ... }>({ type: "aws/apiGateway/Lambda
 
 `config`, and the `config` of each dependency, have their [output refs and derived values](#output-refs) filled in.
 
-`deriveParams` receives stand-ins for its config and its dependencies, called views. ([When a dependency is a view](#dependencies-are-views) depends on the phase.) A view reads like the object it stands for, with some values replaced:
+`deriveParams` receives stand-ins for its config and its dependencies, called views. See [Dependencies are views](#dependencies-are-views). A view reads like the object it stands for, with some values replaced:
 
 - **A view of config** is a copy of the config in which each ref and derived value is replaced by its value. Where a value can't be read yet, the copy has a getter that throws.
 - **A view of a dependency** is an object made with `Object.create(dep)`. Its prototype is the dependency, so it has the dependency's properties and methods. It replaces `config` with a view of the dependency's config. At plan it also replaces `output`, so that reading an output that isn't known yet throws `PendingOutput`.
@@ -522,9 +522,9 @@ const scriptName = (script: ResolvedDependency<WorkerScriptInstance>) =>
 
 ### Dependencies are views
 
-At plan, every entry of `deps` is a view. At deploy, an entry is a view when the dependency's config holds a ref or a derived value, and the instance otherwise. When an entry is a view:
+Every entry of `deps` is a view, at plan and at deploy. So:
 
-- `deps.queue === queue` can be false.
+- `deps.queue === queue` is false.
 - A `WeakMap` or a `Set` that holds the dependency doesn't find the view.
 - A method of the dependency that reads a private field (`#field`) throws when it is called on the view. `outputRef`, `credentials` and `~state` run on the dependency, so they work.
 
