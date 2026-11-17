@@ -1,5 +1,15 @@
 # @notation/core
 
+## 0.27.1
+
+### Patch Changes
+
+- Updated dependencies [c149ffe]
+  - @notation/reconciler@0.27.1
+  - @notation/resource@0.27.1
+  - @notation/state@0.27.1
+  - @notation/utils@0.27.1
+
 ## 0.27.0
 
 ### Patch Changes
