@@ -63,7 +63,10 @@ export type SchemaItem<T = any> = {
        * gives every required field.
        */
       // A method, so that a rule can declare items narrower than
-      // `CollectItem<T>`.
+      // `CollectItem<T>`. A method's parameter is bivariant, so this also
+      // lets through any item type that `CollectItem<T>` is assignable to,
+      // such as a wider type or one with other optional fields, and
+      // `contribute` then takes it.
       collect?(items: CollectItem<T>[], context: CollectContext): T;
       /**
        * Marks the param as the resource's physical name. Deploy fills it
