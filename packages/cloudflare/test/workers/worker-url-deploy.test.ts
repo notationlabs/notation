@@ -219,6 +219,34 @@ describe("a Worker that binds a URL", () => {
     });
   });
 
+  it("uploads a Worker that binds another Worker's URL once, when they form no cycle", async () => {
+    infra = () => {
+      const api = inWorker(
+        $worker({ id: "api", compatibilityDate }),
+        "runtime/api.ts",
+      );
+      inWorker(
+        $worker({
+          id: "web",
+          compatibilityDate,
+          bindings: () => ({ API_URL: api.url }),
+        }),
+        "runtime/web.ts",
+      );
+    };
+
+    await deploy("first");
+
+    const uploads = log.filter((entry) => entry.startsWith("upload"));
+    expect(uploads).toEqual([
+      `upload ${nameOf("api")}`,
+      `upload ${nameOf("web")} with API_URL`,
+    ]);
+    expect(log.indexOf(`serve ${nameOf("api")}`)).toBeLessThan(
+      log.indexOf(`upload ${nameOf("web")} with API_URL`),
+    );
+  });
+
   it("updates a Worker that binds another Worker's URL when that Worker is replaced", async () => {
     infra = () => {
       const api = inWorker(
