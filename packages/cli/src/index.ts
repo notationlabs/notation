@@ -221,5 +221,9 @@ function resumeCommand(command: string, options: { config?: string }) {
 
 process.exitCode = await runWithErrorHandling(
   () => program.parseAsync(process.argv),
-  { logger: defaultLogger, command: process.argv[2] ?? program.name() },
+  {
+    logger: defaultLogger,
+    command: process.argv[2] ?? program.name(),
+    debug: Boolean(process.env.NOTATION_DEBUG),
+  },
 );

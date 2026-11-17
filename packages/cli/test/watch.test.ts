@@ -87,12 +87,9 @@ it("deploys a change saved during a deploy that fails", async () => {
   let failDeploy!: () => void;
   deployInChild
     .mockReturnValueOnce(
-      new Promise<void>(
-        (_, reject) =>
-          (failDeploy = () => reject(new Error("Deploy exited with code 1"))),
-      ),
+      new Promise<number>((resolve) => (failDeploy = () => resolve(1))),
     )
-    .mockResolvedValue(undefined);
+    .mockResolvedValue(0);
 
   await watch(deployment, { logger: logger(), exit: vi.fn() });
   await vi.waitFor(() => expect(deployInChild).toHaveBeenCalled(), {

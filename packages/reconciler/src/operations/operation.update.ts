@@ -8,7 +8,7 @@ import {
   type StepRunner,
   type UpdateResourceParams,
   emitLifecycleEvent,
-  getErrorDetails,
+  emitErrorEvent,
 } from "./operation.types";
 import { runPendingOperation } from "./operation.pending";
 import { readResourceOperation } from "./operation.read";
@@ -116,7 +116,7 @@ export async function* updateResourceOperation(
 
     yield* emitLifecycleEvent(params, "update", "success");
   } catch (err) {
-    yield* emitLifecycleEvent(params, "update", "error", getErrorDetails(err));
+    yield* emitErrorEvent(params, "update", err);
     throw err;
   }
 }

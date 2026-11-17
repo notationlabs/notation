@@ -15,7 +15,7 @@ import { computeSourceCredentialVersion, omitCredentials } from "./credentials";
 import type { EmitStep } from "./events";
 import {
   emitLifecycleEvent,
-  getErrorDetails,
+  emitErrorEvent,
   type StepRunner,
 } from "./operations";
 
@@ -96,7 +96,7 @@ export async function* readAndDecideSource(
       }
     })) as unknown as SourceRead;
   } catch (error) {
-    yield* emitLifecycleEvent(event, "read", "error", getErrorDetails(error));
+    yield* emitErrorEvent(event, "read", error);
     throw error;
   }
   yield* emitLifecycleEvent(event, "read", "success");

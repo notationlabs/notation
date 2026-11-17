@@ -38,4 +38,63 @@ describe("CLI error handling", () => {
     expect(logger.error).toHaveBeenCalledOnce();
     expect(logger.error).toHaveBeenCalledWith(error);
   });
+
+  it("prints one line for an error that an event reported", async () => {
+    const error = Object.assign(new Error("The bucket still has objects"), {
+      reportedOperation: { operation: "delete", resourceId: "bucket" },
+    });
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const exitCode = await runWithErrorHandling(
+      async () => {
+        throw error;
+      },
+      { logger, command: "destroy" },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+      "\nnotation destroy stopped because delete bucket failed.",
+    );
+  });
+
+  it("adds the message of an error that wraps a reported error", async () => {
+    const cause = Object.assign(new Error("Could not read a credential"), {
+      reportedOperation: {
+        operation: "rotate",
+        resourceId: "app",
+        credential: "privateKey",
+      },
+    });
+    const error = new Error("Run notation deploy --stage prod", { cause });
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    await runWithErrorHandling(
+      async () => {
+        throw error;
+      },
+      { logger, command: "deploy" },
+    );
+
+    expect(logger.error.mock.calls).toEqual([
+      ["\nnotation deploy stopped because rotate privateKey of app failed."],
+      ["Run notation deploy --stage prod"],
+    ]);
+  });
+
+  it("prints a reported error in full with debug", async () => {
+    const error = Object.assign(new Error("The bucket still has objects"), {
+      reportedOperation: { operation: "delete", resourceId: "bucket" },
+    });
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    await runWithErrorHandling(
+      async () => {
+        throw error;
+      },
+      { logger, command: "destroy", debug: true },
+    );
+
+    expect(logger.error).toHaveBeenCalledExactlyOnceWith(error);
+  });
 });

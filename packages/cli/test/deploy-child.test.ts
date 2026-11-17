@@ -77,7 +77,7 @@ describe("deployInChild", () => {
     );
   });
 
-  it("rejects when the child exits with an error", async () => {
+  it("resolves with the exit code of a child that fails", async () => {
     const { spawn } = fakeSpawn([], 1);
 
     await expect(
@@ -87,7 +87,7 @@ describe("deployInChild", () => {
         logger: logger(),
         spawn,
       }),
-    ).rejects.toThrow("Deploy exited with code 1");
+    ).resolves.toBe(1);
   });
 
   it("passes a signal on to the child, then re-raises it", async () => {

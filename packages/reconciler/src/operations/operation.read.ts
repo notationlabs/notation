@@ -15,7 +15,7 @@ import {
   type ResolvedResourceParams,
   type StepRunner,
   emitLifecycleEvent,
-  getErrorDetails,
+  emitErrorEvent,
 } from "./operation.types";
 import { runPendingOperation } from "./operation.pending";
 import { omitCredentials } from "../credentials";
@@ -116,7 +116,7 @@ export async function* readRemoteOperation(
     yield* emitLifecycleEvent(params, "read", "success");
     return { output: mergedOutput, remote: remote ?? undefined };
   } catch (err) {
-    yield* emitLifecycleEvent(params, "read", "error", getErrorDetails(err));
+    yield* emitErrorEvent(params, "read", err);
     throw err;
   }
 }

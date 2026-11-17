@@ -20,7 +20,7 @@ import {
 } from "../credentials";
 import {
   emitLifecycleEvent,
-  getErrorDetails,
+  emitErrorEvent,
   toPersistedState,
 } from "../operations";
 import { getDependencyIds } from "../plan";
@@ -285,10 +285,9 @@ async function* applyPassedCredential(
       holdPassedCredential(resource, target),
     );
   } catch (error) {
-    yield* emitLifecycleEvent(event, "rotate", "error", {
+    yield* emitErrorEvent(event, "rotate", error, {
       credential: name,
       reason: "passed",
-      ...getErrorDetails(error),
     });
     throw error;
   }
@@ -334,10 +333,7 @@ async function* rotateStep(
       }
     });
   } catch (error) {
-    yield* emitLifecycleEvent(event, "rotate", "error", {
-      credential: name,
-      ...getErrorDetails(error),
-    });
+    yield* emitErrorEvent(event, "rotate", error, { credential: name });
     throw error;
   }
   resource.setOutput({
