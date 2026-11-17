@@ -157,38 +157,56 @@ abstract class Unstringable {
   }
 }
 
-class OutputRefClass extends Unstringable {
+abstract class RefBase extends Unstringable {
   readonly [outputRefBrand] = true as const;
-  readonly resourceId: string;
-  #resource: BaseResource | undefined;
-  #resolve: (() => BaseResource | undefined) | undefined;
-  // The collection that was active when a deferred ref was made, if any.
-  #collection: ResourceCollection | undefined;
+  abstract readonly resource: BaseResource;
 
-  // A string is the resource id of a deferred ref, which only `deferred` passes.
   constructor(
-    resource: BaseResource | string,
+    readonly resourceId: string,
     readonly path: readonly string[],
-    readonly kind: RefKind = "output",
+    readonly kind: RefKind,
   ) {
     super();
-    if (typeof resource === "string") {
-      this.resourceId = resource;
-    } else {
-      this.#resource = resource;
-      this.resourceId = resource.id;
-    }
   }
 
-  static deferred(options: {
+  map(fn: (value: unknown) => unknown): Derived {
+    const callSite = captureCallSiteLazily(RefBase.prototype.map, {
+      skipLibraryFrames: true,
+    });
+    assertDerivable(this as AnyOutputRef, () => `map() at ${site(callSite)}`);
+    return mapDerived(this as AnyOutputRef, fn, callSite);
+  }
+
+  protected stringError(): OutputRefStringError {
+    return new OutputRefStringError(`Output ${describeOutputRef(this)}`);
+  }
+}
+
+class OutputRefClass extends RefBase {
+  constructor(
+    readonly resource: BaseResource,
+    path: readonly string[],
+    kind: RefKind = "output",
+  ) {
+    super(resource.id, path, kind);
+  }
+}
+
+// A ref whose resource is found on the first read of `resource`.
+class DeferredOutputRef extends RefBase {
+  #resource: BaseResource | undefined;
+  #resolve: () => BaseResource | undefined;
+  // The collection that was active when the ref was made, if any.
+  #collection: ResourceCollection | undefined;
+
+  constructor(options: {
     resourceId: string;
     key: string;
     resolve: () => BaseResource | undefined;
-  }): OutputRefClass {
-    const ref = new OutputRefClass(options.resourceId, [options.key]);
-    ref.#resolve = options.resolve;
-    ref.#collection = getActiveResourceCollection();
-    return ref;
+  }) {
+    super(options.resourceId, [options.key], "output");
+    this.#resolve = options.resolve;
+    this.#collection = getActiveResourceCollection();
   }
 
   get resource(): BaseResource {
@@ -198,7 +216,7 @@ class OutputRefClass extends Unstringable {
         `Output ${describeOutputRef(this)} was read while the infra modules load, before ${this.resourceId} exists. Place the ref whole in config, in a contribution or in a binding, or compute with it in text\`…\`, map() or all(). Deploy reads it once the modules have loaded.`,
       );
     }
-    const resource: BaseResource | undefined = this.#resolve!();
+    const resource = this.#resolve();
     if (resource?.id !== this.resourceId) {
       throw new Error(
         `Output ${describeOutputRef(this)} resolved to ${resource ? `resource ${resource.id}` : "no resource"}, not to resource ${this.resourceId}. Return the resource whose id is resourceId from resolve.`,
@@ -206,18 +224,6 @@ class OutputRefClass extends Unstringable {
     }
     this.#resource = resource;
     return resource;
-  }
-
-  map(fn: (value: unknown) => unknown): Derived {
-    const callSite = captureCallSiteLazily(OutputRefClass.prototype.map, {
-      skipLibraryFrames: true,
-    });
-    assertDerivable(this as AnyOutputRef, () => `map() at ${site(callSite)}`);
-    return mapDerived(this as AnyOutputRef, fn, callSite);
-  }
-
-  protected stringError(): OutputRefStringError {
-    return new OutputRefStringError(`Output ${describeOutputRef(this)}`);
   }
 }
 
@@ -285,7 +291,7 @@ export function deferredOutputRef<
 >(
   options: DeferredOutputRefOptions<R, K>,
 ): OutputRef<OutputValueOf<NonNullable<R>, K>> {
-  return OutputRefClass.deferred(options) as unknown as OutputRef<
+  return new DeferredOutputRef(options) as unknown as OutputRef<
     OutputValueOf<NonNullable<R>, K>
   >;
 }
