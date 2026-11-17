@@ -495,7 +495,8 @@ export interface Lambda<
   readonly "~lambda"?: { kind: KindOf<E>; event: E; env: Env };
   /**
    * The variables that the declaration binds, read from the function's
-   * environment. Throws when one of them is not set.
+   * environment. Throws when one of them is not set, and when it is called
+   * in infra code.
    */
   env(): Readonly<Env>;
   /**

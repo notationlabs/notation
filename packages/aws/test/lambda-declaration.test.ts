@@ -216,13 +216,15 @@ test("a duplicate id names $lambda in the error", async () => {
   ).rejects.toThrow('Duplicate $lambda id "orders"');
 });
 
-test("env() in infra returns the evaluated env", () => {
+test("env() in infra throws", () => {
   const fn = $lambda({
     id: "orders",
     env: () => ({ TABLE: "orders" }),
   });
 
-  expect(fn.env()).toEqual({ TABLE: "orders" });
+  expect(() => fn.env()).toThrow(
+    "env() reads the function's environment, so call it in the function's code.",
+  );
 });
 
 test("decode() returns an SQS record with its body decoded", async () => {
@@ -328,7 +330,7 @@ test("a declaration types its handler, env() and decode()", () => {
   expectTypeOf<
     Parameters<LambdaHandler<typeof sqsLambda>>[0]
   >().toEqualTypeOf<SQSEvent>();
-  expectTypeOf(sqsLambda.env()).toEqualTypeOf<
+  expectTypeOf<ReturnType<typeof sqsLambda.env>>().toEqualTypeOf<
     Readonly<{ TABLE: string; STAGE: string }>
   >();
   const decodeRecord = (item: SQSRecord) => sqsLambda.decode(item);
@@ -337,7 +339,7 @@ test("a declaration types its handler, env() and decode()", () => {
   expectTypeOf<DecodedRecord["messageId"]>().toEqualTypeOf<string>();
 
   // @ts-expect-error the key is misspelt
-  sqsLambda.env().TABEL;
+  type Misspelt = ReturnType<typeof sqsLambda.env>["TABEL"];
 
   // @ts-expect-error env values are strings
   $lambda({ id: "numbers", env: () => ({ N: 1 }) });
@@ -355,7 +357,7 @@ test("LambdaEnv and env() give the values of output refs and derived values", ()
   type Env = { QUEUE_URL: string; DLQ_ARN: string; HOST: string };
 
   expectTypeOf<LambdaEnv<typeof fn>>().toEqualTypeOf<Readonly<Env>>();
-  expectTypeOf(fn.env()).toEqualTypeOf<Readonly<Env>>();
+  expectTypeOf<ReturnType<typeof fn.env>>().toEqualTypeOf<Readonly<Env>>();
 
   $lambda({
     id: "lengths",
@@ -373,7 +375,7 @@ test("LambdaEnv and env() give a credential as a string", () => {
   type Env = { TOKEN: string; STAGE: string };
 
   expectTypeOf<LambdaEnv<typeof fn>>().toEqualTypeOf<Readonly<Env>>();
-  expectTypeOf(fn.env()).toEqualTypeOf<Readonly<Env>>();
+  expectTypeOf<ReturnType<typeof fn.env>>().toEqualTypeOf<Readonly<Env>>();
 });
 
 test("an SQS handler can return batch item failures only when the mapping reports them", () => {

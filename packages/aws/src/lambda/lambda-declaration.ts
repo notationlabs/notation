@@ -96,7 +96,12 @@ export function $lambda<
   const getEvent = () => (event ??= { value: config.event?.() }).value;
   const declaration = {
     id: config.id,
-    env: () => (config.env?.() ?? {}) as Env,
+    // The declared values can be refs, which only deploy resolves.
+    env: () => {
+      throw new Error(
+        `env() of the Lambda "${config.id}" was called in infra code. env() reads the function's environment, so call it in the function's code.`,
+      );
+    },
     decode: createDecode({ event: getEvent }),
   } as unknown as Lambda<E, { [K in keyof Env]: Resolved<Env[K]> }>;
   let built: { group: LambdaGroup } | { error: unknown } | undefined;
