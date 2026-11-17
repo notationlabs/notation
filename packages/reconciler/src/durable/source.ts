@@ -15,7 +15,7 @@ import {
   holdCredential,
   recordSecretStrings,
 } from "../credentials";
-import { emitLifecycleEvent, getErrorDetails } from "../operations";
+import { emitErrorEvent, emitLifecycleEvent } from "../operations";
 import { getDependencyIds, hasSameEdges } from "../plan";
 import { assertSameType } from "../resource-type";
 import { readAndDecideSource, sourceState } from "../sources";
@@ -137,10 +137,7 @@ export async function* loadSourceCredential(
     holdCredential(value, version);
   } catch (error) {
     const scrubbed = scrubError(error);
-    yield* emitLifecycleEvent(event, "load", "error", {
-      credential: name,
-      ...getErrorDetails(scrubbed),
-    });
+    yield* emitErrorEvent(event, "load", scrubbed, { credential: name });
     throw scrubbed;
   }
   yield* emitLifecycleEvent(event, "load", "success", { credential: name });

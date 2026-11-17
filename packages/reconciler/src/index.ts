@@ -11,3 +11,4 @@ export * from "./resource-type";
 export { ResourceCycleError } from "./cycles";
 export * from "./overrides";
 export * from "./unobtainable-credential";
+export * from "./reported-error";

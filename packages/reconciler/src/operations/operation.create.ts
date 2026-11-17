@@ -25,7 +25,7 @@ import {
   type PersistedResourceState,
   type StepRunner,
   emitLifecycleEvent,
-  getErrorDetails,
+  emitErrorEvent,
   toPersistedState,
 } from "./operation.types";
 import {
@@ -223,7 +223,7 @@ export async function* createResourceOperation(
     yield* emitLifecycleEvent(params, "create", "success");
     return { tookOver: false };
   } catch (err) {
-    yield* emitLifecycleEvent(params, "create", "error", getErrorDetails(err));
+    yield* emitErrorEvent(params, "create", err);
     throw err;
   }
 }

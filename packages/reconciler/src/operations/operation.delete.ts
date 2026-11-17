@@ -3,7 +3,7 @@ import {
   type DeleteResourceParams,
   type StepRunner,
   emitLifecycleEvent,
-  getErrorDetails,
+  emitErrorEvent,
 } from "./operation.types";
 import { runPendingOperation } from "./operation.pending";
 import { findResourceKey } from "./operation.read";
@@ -58,7 +58,7 @@ export async function* deleteResourceOperation(
 
     yield* emitLifecycleEvent(params, "delete", "success");
   } catch (err) {
-    yield* emitLifecycleEvent(params, "delete", "error", getErrorDetails(err));
+    yield* emitErrorEvent(params, "delete", err);
     throw err;
   }
 }

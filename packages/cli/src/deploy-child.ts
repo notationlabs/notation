@@ -27,6 +27,9 @@ const forwardedSignals = ["SIGINT", "SIGTERM"] as const;
  * The child loads the same config file again and resolves the deployment
  * from the stage. `watch` stops when the config changes, so the child reads
  * the same config as the parent.
+ *
+ * Resolves with the child's exit code. The child prints its own errors, so a
+ * failed deploy does not reject.
  */
 export function deployInChild({
   deployment,
@@ -34,7 +37,7 @@ export function deployInChild({
   logger,
   spawn = nodeSpawn,
   proc = process,
-}: DeployChildOptions): Promise<void> {
+}: DeployChildOptions): Promise<number | null> {
   const emit = createPrettyRenderer(logger);
   const args = [
     ...process.execArgv,
@@ -86,8 +89,7 @@ export function deployInChild({
     });
     child.once("close", (code) => {
       stopForwarding();
-      if (code === 0) resolve();
-      else reject(new Error(`Deploy exited with code ${code}`));
+      resolve(code);
     });
   });
 }

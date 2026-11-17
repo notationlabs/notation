@@ -15,6 +15,7 @@ import type {
   OperationLifecycleStatus,
   OperationName,
 } from "../events";
+import { markReported } from "../reported-error";
 
 export type {
   OperationLifecycleEvent,
@@ -211,5 +212,26 @@ export async function* emitLifecycleEvent(
     resourceId: params.resource.id,
     resourceType: params.resource.type,
     ...extra,
+  });
+}
+
+/**
+ * Emits the error event of an operation, and marks `error` as reported, so
+ * that the CLI does not print it again.
+ */
+export async function* emitErrorEvent(
+  params: ResourceOperationBaseParams,
+  operation: OperationName,
+  error: unknown,
+  extra: Partial<OperationLifecycleEvent> = {},
+): AsyncGenerator<unknown, void, unknown> {
+  markReported(error, {
+    operation,
+    resourceId: params.resource.id,
+    ...(extra.credential ? { credential: extra.credential } : {}),
+  });
+  yield* emitLifecycleEvent(params, operation, "error", {
+    ...extra,
+    ...getErrorDetails(error),
   });
 }

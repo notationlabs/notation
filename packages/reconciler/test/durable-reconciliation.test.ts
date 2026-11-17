@@ -36,6 +36,7 @@ import {
 import { ResourceTypeChangedError } from "../src/resource-type";
 import { ResourceCycleError } from "../src/cycles";
 import { instanceHash, type Overrides } from "../src/overrides";
+import { findReportedError } from "../src/reported-error";
 
 const logger = pino({ level: "silent" });
 
@@ -507,6 +508,36 @@ describe("durable execution and replay", () => {
     await runtime.destroy("destroy-wait");
     expect(attempts).toBe(2);
     expect(await runtime.state.get("pending-delete")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("marks the error of a failed operation as reported", async () => {
+    const FailingDelete = resource({
+      type: "test/durable/failing-delete",
+      provider: "test",
+    })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => {
+          throw new Error("bucket is not empty", {
+            cause: new Error("409"),
+          });
+        },
+      });
+    const runtime = createRuntime(
+      [new FailingDelete("bucket")],
+      "durable-reported-error",
+    );
+
+    await runtime.run("deploy-before-failed-delete");
+    const error = await runtime.destroy("failed-delete").catch((e) => e);
+    expect(error.message).toBe("bucket is not empty");
+    expect(findReportedError(error)).toBe(error);
+    expect(error.reportedOperation).toEqual({
+      operation: "delete",
+      resourceId: "bucket",
+    });
     runtime.close();
   });
 

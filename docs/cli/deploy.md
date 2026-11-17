@@ -195,6 +195,19 @@ A resume reads the value from the variable again, so the variable must be set fo
 
 Deploy removes every credential's value from the errors that it records and prints. See [Secrets](../manual/secrets.md).
 
+## Errors
+
+When an operation fails, its `✗` line gives the error. The command then prints one line that names the operation, and stops:
+
+```sh
+✗ delete router-bucket cloudflare/r2/R2Bucket
+    Error: The bucket … still has objects, and Cloudflare deletes only an empty bucket. Delete its objects, then try again.
+
+notation destroy stopped because delete router-bucket failed.
+```
+
+Any other error is printed in full, with its stack. Set `NOTATION_DEBUG=1` to print every error in full. This applies to every command.
+
 ## Event stream
 
 `--json` writes versioned reconciler events to stdout as newline-delimited JSON. Build output, the execution ID, and diagnostics move to stderr.
