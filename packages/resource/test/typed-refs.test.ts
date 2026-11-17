@@ -11,12 +11,17 @@ import {
   type Resolved,
   type StateRef,
 } from "src";
+import type { ContributionInput } from "src/resource";
 import { number, object, string } from "./validators";
 
 // The type checker checks these tests. A line that would throw at run time
 // is in a function that is not called.
 
-type Statement = { Effect: string; Resource: string | string[] };
+type Statement = {
+  Effect: string;
+  Resource: string | string[];
+  Sid?: string;
+};
 
 const Bucket = resource<{
   Key: { Name: string };
@@ -205,7 +210,7 @@ describe("output ref types", () => {
     });
     bucket.contribute({
       Statements: [
-        { Effect: "Allow", Resource: [text`${url}/*`, recorded] },
+        { Effect: "Allow", Resource: [text`${url}/*`], Sid: recorded },
         { Effect: "Allow", Resource: credential },
       ],
     });
@@ -230,6 +235,21 @@ describe("output ref types", () => {
       // @ts-expect-error config doesn't take a ~state ref
       config: { Name: recorded },
     });
+  });
+
+  it("takes a ~state ref in a contribution only where undefined fits", () => {
+    const statements: ContributionInput<{ Statements: Statement[] }> = {
+      Statements: [{ Effect: "Allow", Resource: "*", Sid: recorded }],
+    };
+    const effect: ContributionInput<{ Statements: Statement[] }> = {
+      // @ts-expect-error Effect is required
+      Statements: [{ Effect: recorded, Resource: "*" }],
+    };
+    const resources: ContributionInput<{ Statements: Statement[] }> = {
+      // @ts-expect-error an item of Resource can't be undefined
+      Statements: [{ Effect: "Allow", Resource: [recorded] }],
+    };
+    void [statements, effect, resources];
   });
 
   it("makes a resource whose params are all optional with no options", () => {

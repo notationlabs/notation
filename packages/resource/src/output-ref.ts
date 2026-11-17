@@ -97,14 +97,16 @@ export type Input<T> = T | OutputRef<T> | Derived<T>;
 export type DeepInput<T> = DeepInputWith<T, never>;
 
 /**
- * `DeepInput`, which also takes a `CredentialRef` or a `StateRef` at each
- * level when `Also` names it.
+ * `DeepInput`, which also takes a `CredentialRef` at each level when `Also`
+ * names it. When `Also` names `"state"`, it takes a `StateRef` at each level
+ * that takes `undefined`, because a `StateRef` resolves to `undefined` when
+ * state has no record.
  */
 export type DeepInputWith<T, Also extends "credential" | "state"> =
   | OutputRef<T>
   | Derived<T>
   | ("credential" extends Also ? CredentialRef<T> : never)
-  | ("state" extends Also ? StateRef<T> : never)
+  | ("state" extends Also ? (undefined extends T ? StateRef<T> : never) : never)
   | DeepInputMembers<T, Also>;
 
 // Distributes over a union, so each object in it is mapped on its own. An

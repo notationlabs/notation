@@ -6,6 +6,7 @@ import {
   resource,
   type StateRef,
 } from "src";
+import type { ContributionInput } from "src/resource";
 import { object, string } from "./validators";
 
 type Statement = { Resource: string };
@@ -128,6 +129,21 @@ describe("~state refs", () => {
     expect(await host.planParams({ recordedOutputs })).toMatchObject({
       Sources: ["binder-1", undefined],
     });
+  });
+
+  // A test schema types the items of `collect` as `any`, so `contribute`
+  // takes any value. These check the type that a typed `collect` gives.
+  it("fits a contribution only where the value can be undefined", () => {
+    const binder = new Worker("binder", { config: { Path: "/" } });
+    const name = binder["~state"].outputRef("Name");
+    const optional: ContributionInput<{ Sources: (string | undefined)[] }> = {
+      Sources: [name],
+    };
+    const required: ContributionInput<{ Sources: string[] }> = {
+      // @ts-expect-error a source can't be undefined
+      Sources: [name],
+    };
+    void [optional, required];
   });
 
   it("throws when config holds one", () => {
