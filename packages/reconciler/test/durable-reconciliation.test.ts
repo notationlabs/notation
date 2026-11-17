@@ -392,10 +392,58 @@ describe("durable execution and replay", () => {
       });
       runtime.advance(1_000);
     }
-    await expect(runtime.run("capped-execution")).rejects.toMatchObject({
+    const error = await runtime.run("capped-execution").catch((e) => e);
+    expect(error).toMatchObject({
       code: "EFFECT_OUTCOME_UNKNOWN",
+      message: expect.stringMatching(
+        /still unknown after 10 attempts\. The last attempt ended with: access denied$/,
+      ),
+      cause: expect.objectContaining({ message: "access denied" }),
     });
     expect(find).toHaveBeenCalledTimes(10);
+    runtime.close();
+  });
+
+  it("reports the error of the last create when a create's outcome stays unknown", async () => {
+    let calls = 0;
+    const create = vi.fn(async () => {
+      calls += 1;
+      throw new ResourceCreationUnknownError(`socket timed out (${calls})`);
+    });
+    const find = vi
+      .fn()
+      .mockRejectedValue(new ResourceNotFoundError("not found"));
+    const TestResource = resource({
+      type: "test/durable/effect-unknown-create",
+      provider: "test",
+    })
+      .defineSchema({})
+      .defineOperations({
+        create,
+        find,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime(
+      [new TestResource("timed-out")],
+      "unknown-create",
+      { maxOperationAttempts: 2 },
+    );
+
+    await expect(runtime.run("timed-out-execution")).resolves.toMatchObject({
+      status: "suspended",
+    });
+    runtime.advance(1_000);
+    const error = await runtime.run("timed-out-execution").catch((e) => e);
+
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(error).toMatchObject({
+      name: "WorkflowEffectError",
+      code: "EFFECT_OUTCOME_UNKNOWN",
+      message: expect.stringMatching(
+        /The last attempt ended with: socket timed out \(2\)$/,
+      ),
+    });
+    expect(ResourceCreationUnknownError.is(error.cause)).toBe(true);
     runtime.close();
   });
 

@@ -503,43 +503,88 @@ async function* createAttempt(
 ): AsyncGenerator<unknown, CreateAttemptResult, any> {
   const { resource, resourceParams } = params;
   const lookup = getLookupFunction(resource, resourceParams);
+  // The effect does not record why an attempt's outcome stayed unknown. The
+  // last error in this delivery is kept, so that an effect that runs out of
+  // attempts can report it.
+  let lastError: unknown;
 
-  return yield* step.effect(`create:remote:effect:${attempt}`, {
-    effectId: createEffectId(params.executionId, resource.id, attempt),
-    operation: `notation:create:${resource.type}`,
-    input: (context
-      ? { params: resourceParams, context }
-      : { params: resourceParams }) as DurableObject,
-    retryIn: CREATE_LOOKUP_RETRY_MS,
-    maxAttempts: Math.min(
-      params.maxOperationAttempts ?? DEFAULT_MAX_OPERATION_ATTEMPTS,
-      MAX_CREATE_LOOKUP_ATTEMPTS,
-    ),
-    lookup: async () => (lookup ? lookup() : { status: "not-found" }),
-    perform: async (): Promise<CreateAttemptResult> => {
-      try {
-        // The effect records what this returns, so the credentials are
-        // taken out of the result first.
-        const { key, credentials, invalid } = await holdCreated(
-          resource,
-          await resource.create(
-            revealCredentials(resourceParams, resource),
-            context,
-          ),
-        );
-        return {
-          key: key ? resource.toResult(key) : undefined,
-          ...(credentials ? { credentials } : {}),
-          ...(invalid ? { invalid } : {}),
-        };
-      } catch (error) {
-        // The effect records the error. See `runPendingOperation`.
-        throw scrubError(error);
-      }
-    },
-    failsOn: (error) =>
-      lookup === undefined || !ResourceCreationUnknownError.is(error),
+  try {
+    return yield* createEffect();
+  } catch (error) {
+    throw withLastError(error, lastError);
+  }
+
+  function createEffect() {
+    return step.effect(`create:remote:effect:${attempt}`, {
+      effectId: createEffectId(params.executionId, resource.id, attempt),
+      operation: `notation:create:${resource.type}`,
+      input: (context
+        ? { params: resourceParams, context }
+        : { params: resourceParams }) as DurableObject,
+      retryIn: CREATE_LOOKUP_RETRY_MS,
+      maxAttempts: Math.min(
+        params.maxOperationAttempts ?? DEFAULT_MAX_OPERATION_ATTEMPTS,
+        MAX_CREATE_LOOKUP_ATTEMPTS,
+      ),
+      lookup: async () => {
+        if (!lookup) return { status: "not-found" };
+        try {
+          return await lookup();
+        } catch (error) {
+          lastError = scrubError(error);
+          throw lastError;
+        }
+      },
+      perform: async (): Promise<CreateAttemptResult> => {
+        try {
+          // The effect records what this returns, so the credentials are
+          // taken out of the result first.
+          const { key, credentials, invalid } = await holdCreated(
+            resource,
+            await resource.create(
+              revealCredentials(resourceParams, resource),
+              context,
+            ),
+          );
+          return {
+            key: key ? resource.toResult(key) : undefined,
+            ...(credentials ? { credentials } : {}),
+            ...(invalid ? { invalid } : {}),
+          };
+        } catch (error) {
+          // The effect records the error. See `runPendingOperation`.
+          lastError = scrubError(error);
+          throw lastError;
+        }
+      },
+      failsOn: (error) =>
+        lookup === undefined || !ResourceCreationUnknownError.is(error),
+    });
+  }
+}
+
+/**
+ * Adds the last error of the attempts to the error of an effect whose
+ * outcome stayed unknown, as its cause and in its message.
+ */
+function withLastError(error: unknown, lastError: unknown): unknown {
+  if (
+    !(error instanceof WorkflowEffectError) ||
+    error.code !== "EFFECT_OUTCOME_UNKNOWN" ||
+    !(lastError instanceof Error)
+  ) {
+    return error;
+  }
+  const explained = new WorkflowEffectError(
+    error.code,
+    `${error.message}. The last attempt ended with: ${lastError.message}`,
+  );
+  Object.defineProperty(explained, "cause", {
+    value: lastError,
+    writable: true,
+    configurable: true,
   });
+  return explained;
 }
 
 function createEffectId(
