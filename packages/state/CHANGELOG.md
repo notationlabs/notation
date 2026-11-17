@@ -1,5 +1,11 @@
 # @notation/state
 
+## 0.28.0
+
+### Patch Changes
+
+- @notation/resource@0.28.0
+
 ## 0.27.1
 
 ### Patch Changes

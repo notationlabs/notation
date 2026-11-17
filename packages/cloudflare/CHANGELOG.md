@@ -1,5 +1,20 @@
 # @notation/cloudflare
 
+## 0.28.0
+
+### Minor Changes
+
+- c88e275: `ContainerApplication` takes `Constraints`, and the `container` of a `$durableObject` takes `constraints`, to choose where the containers run: `regions`, such as `["WEUR"]`, and `jurisdiction`, which is `eu`, `us` or `fedramp`. Plan fails for a list of only the limited-capacity regions `ME`, `OC` and `AFR`, and for a region that is not in the jurisdiction. A change to the constraints updates the application without a rollout. Deploy sets back a change to them made outside notation. See [#172](https://github.com/notationlabs/notation/issues/172).
+
+### Patch Changes
+
+- Updated dependencies [b9606bb]
+  - @notation/core@0.28.0
+  - @notation/std@0.28.0
+  - @notation/build@0.28.0
+  - @notation/resource@0.28.0
+  - @notation/utils@0.28.0
+
 ## 0.27.1
 
 ### Patch Changes

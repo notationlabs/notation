@@ -1,5 +1,13 @@
 # @notation/infisical
 
+## 0.28.0
+
+### Patch Changes
+
+- @notation/std@0.28.0
+- @notation/resource@0.28.0
+- @notation/utils@0.28.0
+
 ## 0.27.1
 
 ### Patch Changes
