@@ -426,28 +426,16 @@ export default {
     );
   });
 
-  it("follows a re-export, a namespace import and a const alias", async () => {
+  it("follows a namespace import and a re-export, for a computed key", async () => {
     writeUrlProject(
       callerModule(
-        `import * as workers from "./workers";\nconst target = workers.api;`,
-        "target.url",
+        `import * as workers from "./workers";`,
+        `workers.api["url"]`,
       ),
     );
     write("runtime/workers.ts", `export { worker as api } from "./api";`);
     await expect(build()).rejects.toThrow(
-      message("runtime/caller.ts:10", "target.url", "api"),
-    );
-  });
-
-  it("fails the build for a destructured read", async () => {
-    writeUrlProject(
-      callerModule(
-        `import { worker } from "./api";\nconst { url } = worker;`,
-        "url",
-      ),
-    );
-    await expect(build()).rejects.toThrow(
-      message("runtime/caller.ts:4", "worker.url", "api"),
+      message("runtime/caller.ts:9", "workers.api.url", "api"),
     );
   });
 

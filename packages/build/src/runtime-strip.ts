@@ -340,7 +340,9 @@ type Located = { file: string; node: Node };
 
 // A name followed by static member keys, such as `queues.orders` or
 // `queues["orders"]`.
-function memberPath(node: Node): { root: Node; keys: string[] } | undefined {
+export function memberPath(
+  node: Node,
+): { root: Node; keys: string[] } | undefined {
   const keys: string[] = [];
   while (node.type === "MemberExpression") {
     const property = node.property;
@@ -378,7 +380,7 @@ function importedValue(
 
 // The expression that an export of a module holds, following re-exports and
 // imports.
-function exportedValue(
+export function exportedValue(
   file: string,
   name: string,
   analyses: ModuleAnalyses,
@@ -411,7 +413,7 @@ function exportedValue(
 // The expression that a top-level name of a module holds: the initializer of
 // its const, its function declaration, or the export that it imports. A let
 // or var is undefined, as the module can assign another value to it.
-function localValue(
+export function localValue(
   file: string,
   name: string,
   analyses: ModuleAnalyses,

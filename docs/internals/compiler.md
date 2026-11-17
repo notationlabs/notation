@@ -360,19 +360,18 @@ The plugin also checks infra functions from packages. `sideEffects: false` only 
 
 An output, such as a Worker's URL, is known only at deploy. A value from an infra module, such as `orderQueue.url`, can't reach the function, because the check above fails a bundle that renders an infra module. A declaration is in a runtime module, which the bundle loads, so a read of `api.url` on a `$worker` passes that check. The `outputs:` clause of the mark lists the properties that hold outputs, and the runtime build checks them separately.
 
-In `generateBundle`, `runtimePlugin` and `bundlePlugin` call `findOutputRead` in `packages/build/src/output-reads.ts`. It looks at each project module in the chunk that renders code. For each reference in the module, it finds the value that the reference names, and fails the build when the value is a declaration whose mark lists the property that the code reads:
+In `generateBundle`, `runtimePlugin` and `bundlePlugin` call `findOutputRead` in `packages/build/src/output-reads.ts`. It looks at each project module in the chunk that renders code. For each reference in the module, it takes the outermost member expression with static keys, such as `api.url` or `api["url"]`. It resolves the name at its root with the resolver of the runtime strip, and fails the build when the value is the declaration call of its module and the next key is in the mark's `outputs:` clause:
 
-- The value is the module's own declaration, or an import of a declaration. The check follows imports under another name, re-exports, `export * from`, a member of a namespace import such as `workers.api`, and a top-level `const` that names one of these.
-- The read is a member, such as `api.url` or `api["url"]`, or a key of an object pattern, such as `const { url } = api`.
+- The name is the module's own declaration, a named import of one, or a namespace import whose first key names one, such as `workers.api.url`. The resolver follows imports under another name, re-exports and `export * from`.
 - A reference in the declaration's own options is left out, because the runtime strip removes or checks those options.
 
 ```
 runtime/api.ts:14 reads api.url, an output of $worker({ id: "api" }). An output is known only at deploy, so Worker code can't read it. Bind it to the Worker that needs it, and read it from env.
 ```
 
-The error names the first read that the check finds. As for infra modules, the check reads the code before minify.
+The error names the first read that the check finds. As for infra modules, the check reads the code before minify and before tree-shaking, so it can fail on a read in code that the bundler removed.
 
-The check can't see a read when the declaration is passed to a function that reads the property, when it is stored in an array or a map, or when the key is not a string literal. It doesn't analyse files in `node_modules/`. The runtime half of the declaration function covers these cases: the runtime `$worker` defines each output as a getter that isn't enumerable and that throws. The runtime half can't read the mark, so the provider keeps the list in a module that imports nothing, `packages/cloudflare/src/workers/outputs.ts`. A test checks that the `outputs:` clause of `$worker`'s mark lists the same names.
+The check doesn't follow a destructured read, such as `const { url } = api`, a `const` alias of a declaration, a declaration passed to a function that reads the property, a declaration in an array or a map, or a key that isn't a string literal. It doesn't analyse files in `node_modules/`. The runtime half of the declaration function covers these cases: the runtime `$worker` defines `url` as a getter that isn't enumerable and that throws. A test checks that each name in the `outputs:` clause of `$worker`'s mark is such a getter.
 
 ## Import cycles
 
