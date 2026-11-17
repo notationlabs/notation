@@ -1,6 +1,6 @@
 import { sortedJson } from "@notation/utils";
 import type { DeepPartial } from "./types";
-import type { BaseResource } from "./resource";
+import type { BaseResource, ResolvedDependencies } from "./resource";
 import {
   containsOutputRef,
   isPlainObject,
@@ -24,7 +24,7 @@ export type CollectContext = {
  * `createPlanViews`.
  */
 export type ContributionFunction<Deps, Values> = (context: {
-  deps: Deps;
+  deps: ResolvedDependencies<Deps>;
 }) => Values;
 
 // `contributor` returns the call site of the contribution. It is a function

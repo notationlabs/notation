@@ -640,11 +640,7 @@ describe("function contributions", () => {
     const fn = new Fn("fn", { config: { Url: "https://x" } });
     fn.contribute(
       ({ deps }) => ({
-        Environment: {
-          // The type of a function contribution's deps leaves config as
-          // inputs, but deploy and plan give its refs filled in.
-          Variables: { HOST: hostOf(deps.target.config.Url as string) },
-        },
+        Environment: { Variables: { HOST: hostOf(deps.target.config.Url) } },
       }),
       { deps: { target } },
     );
