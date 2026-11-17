@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   OutputRefStringError,
   UNKNOWN_AFTER_APPLY,
@@ -8,7 +8,7 @@ import {
   onEvaluationEnd,
   resource,
   text,
-  type BaseResource,
+  type OutputRef,
 } from "src";
 import { object, string } from "./validators";
 
@@ -75,10 +75,10 @@ const Fn = resource<{
 // group that waits for every module declares its resources.
 function lateQueue() {
   let queue: InstanceType<typeof Queue> | undefined;
-  const resolve = vi.fn((): BaseResource => queue!);
-  const url = deferredOutputRef<string>({
+  const resolve = vi.fn(() => queue!);
+  const url = deferredOutputRef({
     resourceId: "orders",
-    path: ["QueueUrl"],
+    key: "QueueUrl",
     resolve,
   });
   onEvaluationEnd(() => {
@@ -160,11 +160,27 @@ describe("deferredOutputRef", () => {
     expect(late.resolve).not.toHaveBeenCalled();
   });
 
+  it("takes its key and type from the resource that resolve returns", () => {
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    const url = deferredOutputRef({
+      resourceId: "orders",
+      key: "QueueUrl",
+      resolve: () => queue as typeof queue | undefined,
+    });
+    expectTypeOf(url).toEqualTypeOf<OutputRef<string>>();
+    deferredOutputRef({
+      resourceId: "orders",
+      // @ts-expect-error not a key of the queue
+      key: "QueueArn",
+      resolve: () => queue,
+    });
+  });
+
   it("finds its resource when it is made outside a resource graph", () => {
     const queue = new Queue("orders", { config: { QueueName: "orders" } });
-    const url = deferredOutputRef<string>({
+    const url = deferredOutputRef({
       resourceId: "orders",
-      path: ["QueueUrl"],
+      key: "QueueUrl",
       resolve: () => queue,
     });
     expect(url.resource).toBe(queue);
@@ -179,10 +195,10 @@ describe("deferredOutputRef", () => {
   ])(
     "throws, naming both, when resolve returns %s instead of the resource with its id",
     (found, make) => {
-      const url = deferredOutputRef<string>({
+      const url = deferredOutputRef({
         resourceId: "orders",
-        path: ["QueueUrl"],
-        resolve: make as () => BaseResource,
+        key: "QueueUrl",
+        resolve: make as () => InstanceType<typeof Queue> | undefined,
       });
       expect(() => url.resource).toThrow(
         `Output orders.QueueUrl resolved to ${found}, not to resource orders.`,

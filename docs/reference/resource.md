@@ -743,14 +743,14 @@ Make each state ref while infra is evaluated. Deploy reads the outputs of the re
 A resource group can create its resources once every infra module has loaded, as a [Worker](../providers/cloudflare/workers.md#url) does. Its outputs are needed while the modules load, before the resources exist. `deferredOutputRef` from `@notation/resource` returns an output ref whose resource is found later. It is for the code of a resource package:
 
 ```ts
-const url = deferredOutputRef<string>({
+const url = deferredOutputRef({
   resourceId: "worker:api:subdomain",
-  path: ["Url"],
+  key: "Url",
   resolve: () => group.subdomain,
 });
 ```
 
-It is an `OutputRef<T>`, and it goes wherever such a ref goes. It differs from a ref from `outputRef(key)` in three ways:
+`key` names an output of the resource, as in `outputRef(key)`. The key and the ref's type come from the type of the resource that `resolve` returns, so here `url` is an `OutputRef<string>`. It goes wherever such a ref goes. It differs from a ref from `outputRef(key)` in three ways:
 
 - **Its resource is found on the first read of `ref.resource`.** `resolve` is called on the first read, and on each later read until it returns the resource. The ref then keeps the resource. A read while the modules load throws, and names the ref. A read in an `onEvaluationEnd` callback calls `resolve`, which must then create the resource if it doesn't exist yet.
 - **Its resource's id is given up front.** `ref.resourceId` holds it, for this ref and every other. An `OutputRefStringError` thrown while the modules load names the ref, and contributions sort by the [canonical form](#derived-values) without finding the resource.

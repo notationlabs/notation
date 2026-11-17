@@ -180,8 +180,12 @@ class OutputRefClass extends Unstringable {
     }
   }
 
-  static deferred(options: DeferredOutputRefOptions): OutputRefClass {
-    const ref = new OutputRefClass(options.resourceId, [...options.path]);
+  static deferred(options: {
+    resourceId: string;
+    key: string;
+    resolve: () => BaseResource | undefined;
+  }): OutputRefClass {
+    const ref = new OutputRefClass(options.resourceId, [options.key]);
     ref.#resolve = options.resolve;
     ref.#collection = getActiveResourceCollection();
     return ref;
@@ -240,16 +244,31 @@ export const OutputRef = OutputRefClass as {
   readonly prototype: AnyOutputRef;
 };
 
-export type DeferredOutputRefOptions = {
+// The output keys and value types of a resource, read from its own
+// `outputRef`, so that a deferred ref is typed as `outputRef(key)` is.
+type OutputKeyOf<R> = R extends { outputRef(key: infer K): unknown }
+  ? K
+  : never;
+type OutputValueOf<R, K> = R extends {
+  outputRef(key: K): OutputRef<infer V>;
+}
+  ? V
+  : unknown;
+
+export type DeferredOutputRefOptions<
+  R extends BaseResource | undefined,
+  K extends string,
+> = {
   /** The id of the resource that `resolve` returns. */
   resourceId: string;
-  path: readonly string[];
+  /** The output of the resource, as for `outputRef(key)`. */
+  key: K;
   /**
    * Returns the resource. It is called on the first read of `ref.resource`,
    * once the infra modules have loaded, and on each later read until it
    * returns the resource.
    */
-  resolve: () => BaseResource | undefined;
+  resolve: () => R;
 };
 
 /**
@@ -257,12 +276,18 @@ export type DeferredOutputRefOptions = {
  * resource that a group creates once the infra modules have loaded. Its
  * resource's id is given up front, so that the ref can be described, and
  * contributions sorted, without the resource. The holder of the ref depends
- * on the resource, as for any output ref.
+ * on the resource, as for any output ref. The key and the ref's type come
+ * from the type of the resource that `resolve` returns.
  */
-export function deferredOutputRef<T = unknown>(
-  options: DeferredOutputRefOptions,
-): OutputRef<T> {
-  return OutputRefClass.deferred(options) as unknown as OutputRef<T>;
+export function deferredOutputRef<
+  R extends BaseResource | undefined,
+  K extends OutputKeyOf<NonNullable<R>> & string,
+>(
+  options: DeferredOutputRefOptions<R, K>,
+): OutputRef<OutputValueOf<NonNullable<R>, K>> {
+  return OutputRefClass.deferred(options) as unknown as OutputRef<
+    OutputValueOf<NonNullable<R>, K>
+  >;
 }
 
 /**

@@ -605,9 +605,9 @@ function registerWorker(
           `url was read on ${entry.describe()}, which was declared while no resource graph is being collected. Declare the Worker in an infra module, while the infra modules load.`,
         );
       }
-      return (url ??= deferredOutputRef<string>({
+      return (url ??= deferredOutputRef({
         resourceId: subdomainResourceId(config.id),
-        path: ["Url"],
+        key: "Url",
         // Not called during the Worker's own build: `group` isn't set until
         // the build returns, so the group would be built twice.
         resolve: () => entry.build().subdomain,
