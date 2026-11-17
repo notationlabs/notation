@@ -1,18 +1,14 @@
-import { describe, expect, expectTypeOf, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   OutputRefStringError,
   UNKNOWN_AFTER_APPLY,
   collectResourceGraph,
   deferredOutputRef,
-  isCredentialRef,
-  isOutputRef,
   mergeContributions,
   onEvaluationEnd,
   resource,
   text,
   type BaseResource,
-  type CredentialRef,
-  type OutputRef,
 } from "src";
 import { object, string } from "./validators";
 
@@ -162,41 +158,6 @@ describe("deferredOutputRef", () => {
       expect(joined["~describe"]()).toBe("<output orders.QueueUrl>/x");
     });
     expect(late.resolve).not.toHaveBeenCalled();
-  });
-
-  it("makes a credential ref with credential: true, without finding its resource", () => {
-    const resolve = vi.fn((): BaseResource => {
-      throw new Error("not called");
-    });
-    const token = deferredOutputRef<string>({
-      resourceId: "token",
-      path: ["Value"],
-      credential: true,
-      resolve,
-    });
-
-    expect(isOutputRef(token)).toBe(true);
-    expect(isCredentialRef(token)).toBe(true);
-    expect(token.resourceId).toBe("token");
-    expect(resolve).not.toHaveBeenCalled();
-    expectTypeOf(token).toEqualTypeOf<CredentialRef<string>>();
-    expectTypeOf(
-      deferredOutputRef<string>({ resourceId: "a", path: [], resolve }),
-    ).toEqualTypeOf<OutputRef<string>>();
-  });
-
-  it("fails when resolve returns a resource with another id", async () => {
-    let url!: OutputRef<string>;
-    await collectResourceGraph(() => {
-      url = deferredOutputRef<string>({
-        resourceId: "orders",
-        path: ["QueueUrl"],
-        resolve: () => new Queue("other", { config: { QueueName: "other" } }),
-      });
-    });
-    expect(() => url.resource).toThrow(
-      "Output orders.QueueUrl resolved to other, not orders.",
-    );
   });
 
   it("finds its resource when it is made outside a resource graph", () => {

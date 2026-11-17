@@ -157,52 +157,45 @@ abstract class Unstringable {
   }
 }
 
-class DeferredResource {
-  constructor(
-    readonly resourceId: string,
-    readonly resolve: () => BaseResource,
-    // The collection that was active when the ref was made, if any.
-    readonly collection: ResourceCollection | undefined,
-  ) {}
-}
-
 class OutputRefClass extends Unstringable {
   readonly [outputRefBrand] = true as const;
   readonly resourceId: string;
   #resource: BaseResource | undefined;
-  #deferred: DeferredResource | undefined;
+  #resolve: (() => BaseResource) | undefined;
+  // The collection that was active when a deferred ref was made, if any.
+  #collection: ResourceCollection | undefined;
 
+  // A string is the resource id of a deferred ref, which only `deferred` passes.
   constructor(
-    resource: BaseResource | DeferredResource,
+    resource: BaseResource | string,
     readonly path: readonly string[],
     readonly kind: RefKind = "output",
   ) {
     super();
-    if (resource instanceof DeferredResource) {
-      this.#deferred = resource;
-      this.resourceId = resource.resourceId;
+    if (typeof resource === "string") {
+      this.resourceId = resource;
     } else {
       this.#resource = resource;
       this.resourceId = resource.id;
     }
   }
 
+  static deferred(options: DeferredOutputRefOptions): OutputRefClass {
+    const ref = new OutputRefClass(options.resourceId, [...options.path]);
+    ref.#resolve = options.resolve;
+    ref.#collection = getActiveResourceCollection();
+    return ref;
+  }
+
   get resource(): BaseResource {
     if (this.#resource) return this.#resource;
-    const deferred = this.#deferred!;
-    if (deferred.collection && !deferred.collection.evaluationEnded) {
+    if (this.#collection && !this.#collection.evaluationEnded) {
       throw new Error(
-        `Output ${describeOutputRef(this)} was read while the infra modules load, before ${deferred.resourceId} exists. Place the ref whole in config, in a contribution or in a binding, or compute with it in text\`…\`, map() or all(). Deploy reads it once the modules have loaded.`,
+        `Output ${describeOutputRef(this)} was read while the infra modules load, before ${this.resourceId} exists. Place the ref whole in config, in a contribution or in a binding, or compute with it in text\`…\`, map() or all(). Deploy reads it once the modules have loaded.`,
       );
     }
-    const resource = deferred.resolve();
-    if (resource.id !== deferred.resourceId) {
-      throw new Error(
-        `Output ${describeOutputRef(this)} resolved to ${resource.id}, not ${deferred.resourceId}.`,
-      );
-    }
-    this.#resource = resource;
-    return resource;
+    this.#resource = this.#resolve!();
+    return this.#resource;
   }
 
   map(fn: (value: unknown) => unknown): Derived {
@@ -245,8 +238,6 @@ export type DeferredOutputRefOptions = {
   /** The id of the resource that `resolve` returns. */
   resourceId: string;
   path: readonly string[];
-  /** Makes a `CredentialRef`. Defaults to `false`. */
-  credential?: boolean;
   /**
    * Returns the resource. It is called on the first read of `ref.resource`,
    * once the infra modules have loaded.
@@ -262,26 +253,9 @@ export type DeferredOutputRefOptions = {
  * on the resource, as for any output ref.
  */
 export function deferredOutputRef<T = unknown>(
-  options: DeferredOutputRefOptions & { credential: true },
-): CredentialRef<T>;
-export function deferredOutputRef<T = unknown>(
-  options: DeferredOutputRefOptions & { credential?: false },
-): OutputRef<T>;
-export function deferredOutputRef<T = unknown>(
   options: DeferredOutputRefOptions,
-): OutputRef<T> | CredentialRef<T>;
-export function deferredOutputRef(
-  options: DeferredOutputRefOptions,
-): OutputRef | CredentialRef {
-  return new OutputRefClass(
-    new DeferredResource(
-      options.resourceId,
-      options.resolve,
-      getActiveResourceCollection(),
-    ),
-    [...options.path],
-    options.credential ? "credential" : "output",
-  ) as unknown as OutputRef | CredentialRef;
+): OutputRef<T> {
+  return OutputRefClass.deferred(options) as unknown as OutputRef<T>;
 }
 
 /**
@@ -1059,7 +1033,7 @@ function resolveDerived(
       found = lookup(input);
       if (found.known && isOwnPhysicalName(found.value)) {
         throw new Error(
-          `${derived["~describe"]()} reads ${describeOutputRef(input)}, the physical name of ${input.resource.id} itself. Deploy decides the name after the params, so it can only be placed whole.`,
+          `${derived["~describe"]()} reads ${describeOutputRef(input)}, the physical name of ${input.resourceId} itself. Deploy decides the name after the params, so it can only be placed whole.`,
         );
       }
     } else if (isDerived(input)) {
