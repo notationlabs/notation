@@ -245,6 +245,13 @@ describe("url", () => {
     });
   });
 
+  it("throws for a Worker that is declared while no resource graph is being collected", () => {
+    const api = $worker({ id: "api", compatibilityDate });
+    expect(() => api.url).toThrow(
+      'url was read on $worker({ id: "api" }), which was declared while no resource graph is being collected. Declare the Worker in an infra module, while the infra modules load.',
+    );
+  });
+
   it("throws at evaluation for a url option that is a boolean but not a literal", async () => {
     const serve = false as boolean;
     await collect(() => {

@@ -589,6 +589,7 @@ function registerWorker(
   Object.defineProperty(source.declaration, workerRegistration, {
     value: entry,
   });
+  const workers = declaredWorkers();
   // The subdomain is built with the Worker, once every module has loaded, so
   // `url` is a deferred ref. It is not enumerable, as the registration isn't.
   let url: OutputRef<string> | undefined;
@@ -599,6 +600,11 @@ function registerWorker(
           `url was read on ${entry.describe()}, which sets url: false, so it has no workers.dev URL. Remove url: false, or bind the Worker as a service.`,
         );
       }
+      if (!workers) {
+        throw new Error(
+          `url was read on ${entry.describe()}, which was declared while no resource graph is being collected. Declare the Worker in an infra module, while the infra modules load.`,
+        );
+      }
       return (url ??= deferredOutputRef<string>({
         resourceId: subdomainResourceId(config.id),
         path: ["Url"],
@@ -606,7 +612,6 @@ function registerWorker(
       }));
     },
   });
-  const workers = declaredWorkers();
   if (workers) {
     workers.push(entry);
     onEvaluationEnd(() => entry.build());
