@@ -48,6 +48,22 @@ describe("parseMark", () => {
     });
   });
 
+  it("reads the outputs of a declaration mark", () => {
+    expect(
+      parseMark(
+        "* @declaration shared: id; entry: default; outputs: url, name ",
+        f,
+      ),
+    ).toEqual({
+      kind: "declaration",
+      shared: ["id"],
+      runtime: [],
+      keys: [],
+      entry: "default",
+      outputs: ["url", "name"],
+    });
+  });
+
   it("fails for an unknown platform", () => {
     expect(() =>
       parseMark("* @declaration entry: default; platform: deno ", f),

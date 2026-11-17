@@ -70,6 +70,7 @@ export async function buildBundle(source: BundleSource): Promise<BuiltBundle> {
     plugins: [
       bundlePlugin({
         label,
+        platform,
         modules,
         analyses,
         onModuleIds: (ids) => (moduleIds = ids),

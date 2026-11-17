@@ -39,6 +39,13 @@ export type DeclarationMark = {
   entryOption?: string;
   /** The platform that runs the function. Defaults to `node`. */
   platform?: PlatformName;
+  /**
+   * Properties of the declaration's value that hold outputs, such as `url`.
+   * They are known only at deploy, so the runtime build fails a read of one.
+   */
+  outputs?: string[];
+  /** The name that the module declares the function with, such as `$worker`. */
+  name?: string;
 };
 
 /**
@@ -128,7 +135,12 @@ export function parseMark(
       .map((part) => part.trim())
       .filter(Boolean)) {
       const [name, value = ""] = clause.split(":").map((part) => part.trim());
-      if (name === "shared" || name === "runtime" || name === "keys") {
+      if (
+        name === "shared" ||
+        name === "runtime" ||
+        name === "keys" ||
+        name === "outputs"
+      ) {
         mark[name] = list(value);
       } else if (name === "entry") {
         if (!value) {
@@ -153,7 +165,7 @@ export function parseMark(
         mark.platform = value;
       } else {
         throw new Error(
-          `${where}: unknown clause "${name}" in the @declaration mark. ${fix("use shared, runtime, keys, entry, entryOption or platform.")}`,
+          `${where}: unknown clause "${name}" in the @declaration mark. ${fix("use shared, runtime, keys, entry, entryOption, platform or outputs.")}`,
         );
       }
     }
@@ -186,7 +198,7 @@ function markOfDeclaration(
   if (node.type === "FunctionDeclaration" && node.id) {
     const jsDoc = leadingJsDoc(module, commentStart);
     const mark = jsDoc && parseMark(jsDoc, where);
-    if (mark) marks.set(node.id.name, mark);
+    if (mark) marks.set(node.id.name, named(mark, node.id.name));
   }
   if (node.type === "VariableDeclaration" && node.declarations.length === 1) {
     const [declarator] = node.declarations;
@@ -195,9 +207,12 @@ function markOfDeclaration(
       return;
     const jsDoc = leadingJsDoc(module, commentStart);
     const mark = jsDoc && parseMark(jsDoc, where);
-    if (mark) marks.set(declarator.id.name, mark);
+    if (mark) marks.set(declarator.id.name, named(mark, declarator.id.name));
   }
 }
+
+const named = (mark: Mark, name: string): Mark =>
+  mark.kind === "declaration" ? { ...mark, name } : mark;
 
 function declaredNames(node: Node): string[] {
   if (node.type === "VariableDeclaration") {

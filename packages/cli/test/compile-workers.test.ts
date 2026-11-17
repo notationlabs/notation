@@ -65,7 +65,7 @@ function writeCloudflarePackage() {
       `  (globalThis.namespaces ??= []).push(namespace);`,
       `  return namespace;`,
       `}`,
-      `/** @declaration shared: id, bindings; runtime: entrypoint; entryOption: entrypoint; keys: bindings; entry: default; platform: workerd */`,
+      `/** @declaration shared: id, bindings; runtime: entrypoint; entryOption: entrypoint; keys: bindings; entry: default; platform: workerd; outputs: url */`,
       `export function $worker(config) {`,
       `  const worker = { kind: "INFRA_WORKER", id: config.id, bindings: config.bindings, check: () => checkExports(worker, config) };`,
       `  (globalThis.workers ??= []).push(worker);`,
@@ -378,6 +378,162 @@ export default {
     await expect(build()).rejects.toThrow(
       "runtime/router.ts calls worker at its top level, and it holds a declaration, so it can't be an infra module. Move the call to worker to an infra module.",
     );
+  });
+});
+
+describe("a read of a Worker's url in Worker code", () => {
+  const message = (at: string, read: string, id: string) =>
+    `${at} reads ${read}, an output of $worker({ id: "${id}" }). An output is known only at deploy, so Worker code can't read it. Bind it to the Worker that needs it, and read it from env.`;
+
+  const callerModule = (imports: string, read: string) => `
+import { $worker } from "@notation/cloudflare/workers";
+${imports}
+
+export const caller = $worker({ id: "caller" });
+
+export default {
+  async fetch() {
+    return new Response(String(${read}));
+  },
+};
+`;
+
+  function writeUrlProject(caller: string) {
+    writeProject();
+    write("runtime/caller.ts", caller);
+  }
+
+  it("fails the build for a read in the Worker's own module, with the file and line", async () => {
+    writeProject();
+    write(
+      "runtime/api.ts",
+      apiModule(reexport).replace(
+        "return new Response(",
+        "if (!worker.url) return new Response();\n    return new Response(",
+      ),
+    );
+    await expect(build()).rejects.toThrow(
+      message("runtime/api.ts:15", "worker.url", "api"),
+    );
+  });
+
+  it("fails the build for a read of another Worker's url through an import alias", async () => {
+    writeUrlProject(
+      callerModule(`import { worker as api } from "./api";`, "api.url"),
+    );
+    await expect(build()).rejects.toThrow(
+      message("runtime/caller.ts:9", "api.url", "api"),
+    );
+  });
+
+  it("follows a namespace import and a re-export, for a computed key", async () => {
+    writeUrlProject(
+      callerModule(
+        `import * as workers from "./workers";`,
+        `workers.api["url"]`,
+      ),
+    );
+    write("runtime/workers.ts", `export { worker as api } from "./api";`);
+    await expect(build()).rejects.toThrow(
+      message("runtime/caller.ts:9", "workers.api.url", "api"),
+    );
+  });
+
+  it("fails the build for a read in an option that the runtime build keeps, such as the class of a Durable Object", async () => {
+    writeProject(`export { counters } from "./counter";`);
+    write(
+      "runtime/counter.ts",
+      `
+import { DurableObject } from "cloudflare:workers";
+import { $durableObject } from "@notation/cloudflare/workers";
+import { caller as other } from "./caller";
+
+export const counters = $durableObject({
+  id: "counters",
+  class: class Counter extends DurableObject {
+    async fetch() {
+      return new Response(String(other.url));
+    }
+  },
+});
+`,
+    );
+    write(
+      "runtime/caller.ts",
+      `
+import { $worker as w } from "@notation/cloudflare/workers";
+
+export const caller = w({ id: "caller" });
+
+export default { fetch: () => new Response() };
+`,
+    );
+    await expect(build()).rejects.toThrow(
+      message("runtime/counter.ts:10", "other.url", "caller"),
+    );
+  });
+
+  it("builds a Durable Object whose container environmentVariables function reads a Worker's url", async () => {
+    writeProject(`export { rooms } from "./room";`);
+    write(
+      "runtime/room.ts",
+      `
+import { DurableObject } from "cloudflare:workers";
+import { $durableObject } from "@notation/cloudflare/workers";
+import { router } from "./router";
+
+export class Room extends DurableObject {}
+
+export const rooms = $durableObject({
+  id: "rooms",
+  class: Room,
+  container: {
+    image: { context: "containers/room" },
+    environmentVariables: () => ({ ROUTER_URL: router.url }),
+  },
+});
+`,
+    );
+    write(
+      "runtime/router.ts",
+      `
+import { $worker } from "@notation/cloudflare/workers";
+import { rooms } from "./room";
+
+export const router = $worker({
+  id: "router",
+  bindings: () => ({ ROOMS: rooms }),
+});
+
+export default { fetch: () => new Response() };
+`,
+    );
+    await build();
+    expect(read(apiBundle)).not.toContain("ROUTER_URL");
+  });
+
+  it("builds a Worker whose bindings read another Worker's url", async () => {
+    writeUrlProject(`
+import { $worker } from "@notation/cloudflare/workers";
+import { worker as api } from "./api";
+
+export const web = $worker({
+  id: "web",
+  bindings: () => ({ API_URL: api.url }),
+});
+
+export default { fetch: () => new Response() };
+`);
+    await build();
+    expect(read("dist/runtime/caller/index.mjs")).not.toContain("API_URL");
+  });
+
+  it("builds a Worker that reads a property that isn't an output", async () => {
+    writeUrlProject(
+      callerModule(`import { worker as api } from "./api";`, "api.id"),
+    );
+    await build();
+    expect(read("dist/runtime/caller/index.mjs")).toContain(`"api"`);
   });
 });
 

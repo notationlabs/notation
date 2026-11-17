@@ -8,7 +8,7 @@ import {
   type Reference,
 } from "./ast";
 import type { Declaration, ModuleAnalysis } from "./analyze";
-import type { ImportBinding, Mark } from "./marks";
+import type { DeclarationMark, ImportBinding, Mark } from "./marks";
 import { describeKind } from "./files";
 import type { ModuleAnalyses } from "./modules";
 
@@ -44,7 +44,7 @@ export function stripForRuntime(
   const { module } = analysis.table;
   const { mark } = declaration;
   const s = new MagicString(module.source);
-  const keptOptions = new Set([...mark.shared, ...mark.runtime]);
+  const keep = keptOptions(mark);
   // Nodes whose values the build removes, so their references don't count.
   const removed = new Set<Node>();
 
@@ -53,12 +53,12 @@ export function stripForRuntime(
   const properties = [...declaration.properties.entries()];
   const ranges: [number, number][] = [];
   properties.forEach(([key, property], index) => {
-    if (keptOptions.has(key)) return;
+    if (keep.has(key)) return;
     removed.add(property);
     const next = properties[index + 1]?.[1];
     const lastKept = properties
       .slice(0, index)
-      .findLast(([k]) => keptOptions.has(k))?.[1];
+      .findLast(([k]) => keep.has(k))?.[1];
     ranges.push(
       next
         ? [property.start, next.start]
@@ -69,7 +69,7 @@ export function stripForRuntime(
 
   for (const key of mark.keys) {
     const property = declaration.properties.get(key);
-    if (!property || !keptOptions.has(key)) continue;
+    if (!property || !keep.has(key)) continue;
     for (const entry of returnedObject(
       property,
       declaration,
@@ -83,7 +83,7 @@ export function stripForRuntime(
     }
   }
 
-  const kept = properties.filter(([key]) => keptOptions.has(key));
+  const kept = properties.filter(([key]) => keep.has(key));
   const keptProperties = kept.map(([, p]) => p);
   const added: string[] = [];
   for (const property of keptProperties) {
@@ -133,6 +133,11 @@ export function stripForRuntime(
       includeContent: true,
     }),
   };
+}
+
+/** The options of a declaration that the runtime build keeps. */
+export function keptOptions(mark: DeclarationMark): Set<string> {
+  return new Set([...mark.shared, ...mark.runtime]);
 }
 
 // An import is removed when one of its names was used, and none of them is
@@ -340,7 +345,9 @@ type Located = { file: string; node: Node };
 
 // A name followed by static member keys, such as `queues.orders` or
 // `queues["orders"]`.
-function memberPath(node: Node): { root: Node; keys: string[] } | undefined {
+export function memberPath(
+  node: Node,
+): { root: Node; keys: string[] } | undefined {
   const keys: string[] = [];
   while (node.type === "MemberExpression") {
     const property = node.property;
@@ -378,7 +385,7 @@ function importedValue(
 
 // The expression that an export of a module holds, following re-exports and
 // imports.
-function exportedValue(
+export function exportedValue(
   file: string,
   name: string,
   analyses: ModuleAnalyses,
@@ -411,7 +418,7 @@ function exportedValue(
 // The expression that a top-level name of a module holds: the initializer of
 // its const, its function declaration, or the export that it imports. A let
 // or var is undefined, as the module can assign another value to it.
-function localValue(
+export function localValue(
   file: string,
   name: string,
   analyses: ModuleAnalyses,

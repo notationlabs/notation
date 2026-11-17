@@ -5,6 +5,10 @@ import { UNKNOWN_AFTER_APPLY, isUnknownAfterApply } from "./diff-params";
 import { captureCallSiteLazily } from "./contributions";
 import { isOwnPhysicalName } from "./physical-name";
 import { isCredentialMarker } from "./credential";
+import {
+  getActiveResourceCollection,
+  type ResourceCollection,
+} from "./resource-collection";
 
 export class OutputRefStringError extends Error {
   /**
@@ -36,7 +40,14 @@ interface RefMembers<T, K extends RefKind> {
   readonly [outputRefBrand]: true;
   readonly kind: K;
   readonly "~value"?: () => T;
+  /**
+   * The resource whose output the ref stands for. For a ref from
+   * `deferredOutputRef`, the first read finds the resource, and a read while
+   * the infra modules load throws.
+   */
   readonly resource: BaseResource;
+  /** The id of `resource`, which is known when the ref is made. */
+  readonly resourceId: string;
   readonly path: readonly string[];
 }
 
@@ -146,19 +157,20 @@ abstract class Unstringable {
   }
 }
 
-class OutputRefClass extends Unstringable {
+abstract class RefBase extends Unstringable {
   readonly [outputRefBrand] = true as const;
+  abstract readonly resource: BaseResource;
 
   constructor(
-    readonly resource: BaseResource,
+    readonly resourceId: string,
     readonly path: readonly string[],
-    readonly kind: RefKind = "output",
+    readonly kind: RefKind,
   ) {
     super();
   }
 
   map(fn: (value: unknown) => unknown): Derived {
-    const callSite = captureCallSiteLazily(OutputRefClass.prototype.map, {
+    const callSite = captureCallSiteLazily(RefBase.prototype.map, {
       skipLibraryFrames: true,
     });
     assertDerivable(this as AnyOutputRef, () => `map() at ${site(callSite)}`);
@@ -167,6 +179,51 @@ class OutputRefClass extends Unstringable {
 
   protected stringError(): OutputRefStringError {
     return new OutputRefStringError(`Output ${describeOutputRef(this)}`);
+  }
+}
+
+class OutputRefClass extends RefBase {
+  constructor(
+    readonly resource: BaseResource,
+    path: readonly string[],
+    kind: RefKind = "output",
+  ) {
+    super(resource.id, path, kind);
+  }
+}
+
+// A ref whose resource is found on the first read of `resource`.
+class DeferredOutputRef extends RefBase {
+  #resource: BaseResource | undefined;
+  #resolve: () => BaseResource | undefined;
+  // The collection that was active when the ref was made, if any.
+  #collection: ResourceCollection | undefined;
+
+  constructor(options: {
+    resourceId: string;
+    key: string;
+    resolve: () => BaseResource | undefined;
+  }) {
+    super(options.resourceId, [options.key], "output");
+    this.#resolve = options.resolve;
+    this.#collection = getActiveResourceCollection();
+  }
+
+  get resource(): BaseResource {
+    if (this.#resource) return this.#resource;
+    if (this.#collection && !this.#collection.evaluationEnded) {
+      throw new Error(
+        `Output ${describeOutputRef(this)} was read while the infra modules load, before ${this.resourceId} exists. Place the ref whole in config, in a contribution or in a binding, or compute with it in text\`…\`, map() or all(). Deploy reads it once the modules have loaded.`,
+      );
+    }
+    const resource = this.#resolve();
+    if (resource?.id !== this.resourceId) {
+      throw new Error(
+        `Output ${describeOutputRef(this)} resolved to ${resource ? `resource ${resource.id}` : "no resource"}, not to resource ${this.resourceId}. Return the resource whose id is resourceId from resolve.`,
+      );
+    }
+    this.#resource = resource;
+    return resource;
   }
 }
 
@@ -192,6 +249,52 @@ export const OutputRef = OutputRefClass as {
   ): StateRef<T>;
   readonly prototype: AnyOutputRef;
 };
+
+// The output keys and value types of a resource, read from its own
+// `outputRef`, so that a deferred ref is typed as `outputRef(key)` is.
+type OutputKeyOf<R> = R extends { outputRef(key: infer K): unknown }
+  ? K
+  : never;
+type OutputValueOf<R, K> = R extends {
+  outputRef(key: K): OutputRef<infer V>;
+}
+  ? V
+  : unknown;
+
+export type DeferredOutputRefOptions<
+  R extends BaseResource | undefined,
+  K extends string,
+> = {
+  /** The id of the resource that `resolve` returns. */
+  resourceId: string;
+  /** The output of the resource, as for `outputRef(key)`. */
+  key: K;
+  /**
+   * Returns the resource. It is called on the first read of `ref.resource`,
+   * once the infra modules have loaded, and on each later read until it
+   * returns the resource.
+   */
+  resolve: () => R;
+};
+
+/**
+ * Makes a ref to an output of a resource that doesn't exist yet, such as a
+ * resource that a group creates once the infra modules have loaded. Its
+ * resource's id is given up front, so that the ref can be described, and
+ * contributions sorted, without the resource. The holder of the ref depends
+ * on the resource, as for any output ref. The key and the ref's type come
+ * from the type of the resource that `resolve` returns.
+ */
+export function deferredOutputRef<
+  R extends BaseResource | undefined,
+  K extends OutputKeyOf<NonNullable<R>> & string,
+>(
+  options: DeferredOutputRefOptions<R, K>,
+): OutputRef<OutputValueOf<NonNullable<R>, K>> {
+  return new DeferredOutputRef(options) as unknown as OutputRef<
+    OutputValueOf<NonNullable<R>, K>
+  >;
+}
 
 /**
  * The outputs of the targets of `~state` refs, from their state records at
@@ -240,7 +343,7 @@ export function recordedLookup(
   recorded: RecordedOutputs | undefined,
 ): OutputLookup {
   return (token) => {
-    const { id } = token.resource;
+    const id = token.resourceId;
     if (!recorded || !(id in recorded)) {
       throw new Error(
         `Output ${describeOutputRef(token)} is read from state, but the outputs in state were not read for ${id}. Make each ~state ref while infra is evaluated.`,
@@ -258,7 +361,8 @@ export function isOwnNameRef(
   owner: BaseResource,
   token: AnyOutputRef,
 ): boolean {
-  if (token.resource !== owner || token.path.length !== 1) return false;
+  if (token.resourceId !== owner.id || token.path.length !== 1) return false;
+  if (token.resource !== owner) return false;
   const item = owner.schema[token.path[0]!];
   return item?.propertyType === "param" && Boolean(item.physicalName);
 }
@@ -506,10 +610,10 @@ export function toCanonicalOutputRefs(value: unknown): unknown {
 }
 
 function describeOutputRef(token: {
-  resource: BaseResource;
+  resourceId: string;
   path: readonly string[];
 }): string {
-  return [token.resource.id, ...token.path].join(".");
+  return [token.resourceId, ...token.path].join(".");
 }
 
 /**
@@ -968,7 +1072,7 @@ function resolveDerived(
       found = lookup(input);
       if (found.known && isOwnPhysicalName(found.value)) {
         throw new Error(
-          `${derived["~describe"]()} reads ${describeOutputRef(input)}, the physical name of ${input.resource.id} itself. Deploy decides the name after the params, so it can only be placed whole.`,
+          `${derived["~describe"]()} reads ${describeOutputRef(input)}, the physical name of ${input.resourceId} itself. Deploy decides the name after the params, so it can only be placed whole.`,
         );
       }
     } else if (isDerived(input)) {
