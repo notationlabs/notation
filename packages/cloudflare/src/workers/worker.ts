@@ -15,7 +15,7 @@ import {
   type CredentialRef,
   type DeepInput,
   type OutputRef,
-  type Resolved,
+  type ResolvedValues,
 } from "@notation/resource";
 import * as std from "@notation/std/resources";
 import { isBundle, type BundleLike } from "@notation/build/resources";
@@ -314,13 +314,11 @@ export function $worker<
   const Id extends string,
   B extends Bindings = {},
   E = undefined,
->(
-  config: WorkerDeclarationConfig<Id, B, E>,
-): Worker<{ [K in keyof B]: Resolved<B[K]> }, E> {
+>(config: WorkerDeclarationConfig<Id, B, E>): Worker<ResolvedValues<B>, E> {
   assertWorkerId("$worker", config.id);
   assertCompatibilityDate(`$worker({ id: "${config.id}" })`, config);
   const declaration = { id: config.id } as unknown as Worker<
-    { [K in keyof B]: Resolved<B[K]> },
+    ResolvedValues<B>,
     E
   >;
   registerWorker(config, {
@@ -364,15 +362,13 @@ export function worker<
   const Id extends string,
   B extends Bindings = {},
   E = undefined,
->(
-  config: WorkerConfig<Id, B, E>,
-): Worker<{ [K in keyof B]: Resolved<B[K]> }, E> {
+>(config: WorkerConfig<Id, B, E>): Worker<ResolvedValues<B>, E> {
   assertWorkerId("worker()", config.id);
   const label = `worker({ id: "${config.id}" })`;
   assertCompatibilityDate(label, config);
   const { code } = config;
   const declaration = { id: config.id } as unknown as Worker<
-    { [K in keyof B]: Resolved<B[K]> },
+    ResolvedValues<B>,
     E
   >;
   if (!isBundle(code)) {

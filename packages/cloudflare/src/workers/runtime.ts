@@ -4,7 +4,7 @@ import type {
   DurableObjectDeclaration,
   Worker,
 } from "./declaration";
-import type { Resolved } from "@notation/resource";
+import type { ResolvedValues } from "@notation/resource";
 import type { DurableObjectDeclarationConfig } from "./durable-object";
 import type { WorkerDeclarationConfig } from "./worker";
 
@@ -21,13 +21,8 @@ export function $worker<
   const Id extends string,
   B extends Bindings = {},
   E = undefined,
->(
-  config: WorkerDeclarationConfig<Id, B, E>,
-): Worker<{ [K in keyof B]: Resolved<B[K]> }, E> {
-  return { id: config.id } as unknown as Worker<
-    { [K in keyof B]: Resolved<B[K]> },
-    E
-  >;
+>(config: WorkerDeclarationConfig<Id, B, E>): Worker<ResolvedValues<B>, E> {
+  return { id: config.id } as unknown as Worker<ResolvedValues<B>, E>;
 }
 
 /** Declares nothing at runtime. */
@@ -63,9 +58,6 @@ export function isWorkerGroup(_value: unknown): false {
  * The mark fails the runtime build of a Worker that calls it.
  * @resource
  */
-export function addBindings(
-  _worker: Worker<any>,
-  _bindings: Bindings,
-): never {
+export function addBindings(_worker: Worker<any>, _bindings: Bindings): never {
   throw infraOnly("addBindings()");
 }

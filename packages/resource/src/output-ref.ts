@@ -86,6 +86,9 @@ export type Resolved<T> = T extends
   ? V
   : T;
 
+/** `Resolved` of each property of `T`. */
+export type ResolvedValues<T> = { [K in keyof T]: Resolved<T[K]> };
+
 /** A value, or a ref or a derived value that deploy fills in with one. */
 export type Input<T> = T | OutputRef<T> | Derived<T>;
 

@@ -62,5 +62,6 @@ export {
   type OutputLookup,
   type RecordedOutputs,
   type Resolved,
+  type ResolvedValues,
   type StateRef,
 } from "./output-ref";
