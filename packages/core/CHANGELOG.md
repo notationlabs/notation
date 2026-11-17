@@ -1,5 +1,14 @@
 # @notation/core
 
+## 0.27.0
+
+### Patch Changes
+
+- @notation/reconciler@0.27.0
+- @notation/resource@0.27.0
+- @notation/state@0.27.0
+- @notation/utils@0.27.0
+
 ## 0.26.0
 
 ### Minor Changes

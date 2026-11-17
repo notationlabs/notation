@@ -1,5 +1,15 @@
 # @notation/aws
 
+## 0.27.0
+
+### Patch Changes
+
+- @notation/build@0.27.0
+- @notation/core@0.27.0
+- @notation/resource@0.27.0
+- @notation/std@0.27.0
+- @notation/utils@0.27.0
+
 ## 0.26.0
 
 ### Minor Changes
