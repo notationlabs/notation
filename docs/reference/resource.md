@@ -723,7 +723,7 @@ A state ref differs from an output ref in five ways:
 - **It resolves to the output in the target's state record at the start of the deploy.** Deploy reads these outputs once, after it takes the deployment hold, in the step `notation:recorded-outputs`. When this deploy replaces the target, the ref resolves to the output from before the replace. A resumed deploy uses the outputs that this step recorded. Plan reads the same outputs from state, so the value is known at plan.
 - **It resolves to `undefined` when the target has no record**, or only a `creating` record. TypeScript types the ref as `StateRef<T>`, whose value is a `T` or `undefined`. A `StateRef` doesn't fit an `OutputRef`, so config doesn't take it.
 - **It reads only an output that only a replace changes.** `outputRef(key)` throws unless the output is a param that is `immutable`, `primaryKey` or `secondaryKey`, or that has `physicalName`. An output that an update changes would be read one deploy late, with no error. It also throws for a `hidden` param, which the state record does not hold.
-- **It can only be placed in a contribution, where the value can be `undefined`.** `create` and `update` read the refs in config from the live outputs of their targets, which a state ref's target may not have yet. `getDependencies()` throws when config holds a state ref. In a contribution, TypeScript takes a state ref only where `undefined` fits, such as an optional field.
+- **It can only be placed in a contribution, where the value can be `undefined`.** `create` and `update` read the refs in config from the live outputs of their targets, which a state ref's target may not have yet. `getDependencies()` throws when config holds a state ref. In a contribution, TypeScript takes a state ref only where `undefined` fits, such as an optional field. An item of an array is not such a place.
 
 Make each state ref while infra is evaluated. Deploy reads the outputs of the resources that state refs name before it resolves any params, and a state ref made later fails at deploy.
 
@@ -823,6 +823,7 @@ The rules for `collect`:
 - `contribute` accepts only collected params, and a collected param is optional in config.
 - `collect` receives the value from config first, if there is one, and then every contribution sorted by content. So moving a `contribute` call to another file never changes the result.
 - When there is no value in config and no contribution, `collect` is not called and the param is left unset.
+- `contribute` takes the type of the items that `collect` declares. When `collect` declares no type, each contribution can leave out any field of an object, but not an item of an array. A rule that joins lists declares whole items, such as `(items: WorkerBinding[][]) => items.flat()`, so that each contributed item gives every required field.
 
 `mergeContributions` is a `collect` rule for maps. It merges the maps key by key, and fails when two contributions set one key to different values. The error names each contribution by the `file:line` of its `contribute` call, and gives the path of the key:
 

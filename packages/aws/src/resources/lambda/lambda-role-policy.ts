@@ -100,12 +100,11 @@ const lambdaRolePolicySchema = lambdaRolePolicy.defineSchema({
     presence: "required",
     value: policyDocumentValue,
     // Statements are concatenated in the order the engine sorts them into,
-    // so the document does not depend on the order code ran in.
-    collect: (items) => ({
+    // so the document does not depend on the order code ran in. Each
+    // statement is whole, so a contribution gives its required fields.
+    collect: (items: Partial<PolicyDocument>[]) => ({
       Version: "2012-10-17",
-      Statement: items.flatMap(
-        (item) => (item.Statement ?? []) as ResolvedPolicyStatement[],
-      ),
+      Statement: items.flatMap((item) => item.Statement ?? []),
     }),
   },
 } as const);

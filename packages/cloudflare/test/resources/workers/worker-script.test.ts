@@ -2,7 +2,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  vi,
+} from "vitest";
 import { setConfigFile } from "@notation/core";
 import {
   collectResourceGraph,
@@ -12,7 +20,10 @@ import {
   ResourceOperationPendingError,
 } from "@notation/resource";
 import { decideAction } from "@notation/reconciler";
-import { WorkerScript } from "src/resources/workers/worker-script";
+import {
+  WorkerScript,
+  type WorkerScriptInstance,
+} from "src/resources/workers/worker-script";
 import { calls, fail, mockFetch, ok, type Call } from "../../mock-api";
 
 let root: string;
@@ -1547,5 +1558,51 @@ describe("WorkerScript during a gradual rollout", () => {
     await script.update!(params as any, {} as any, params, params);
 
     expect(puts()).toHaveLength(1);
+  });
+});
+
+// The type checker checks these tests. The calls are in a function that is
+// not called.
+describe("WorkerScript contributions", () => {
+  it("takes a ~state ref only where undefined fits", () => {
+    const host = {} as WorkerScriptInstance;
+    const binder = {} as WorkerScriptInstance;
+    const source = {
+      namespaceId: "counters",
+      workerId: "web",
+      nameBody: "app--dev--web",
+    };
+    expectTypeOf(() => {
+      const name = binder["~state"].outputRef("ScriptName");
+      host.contribute({
+        DurableObjectTransferSources: [{ ...source, scriptName: name }],
+      });
+      host.contribute({
+        // @ts-expect-error namespaceId is required
+        DurableObjectTransferSources: [{ ...source, namespaceId: name }],
+      });
+      host.contribute({
+        // @ts-expect-error an item of the list can't be undefined
+        DurableObjectTransferSources: [name],
+      });
+      host.contribute({
+        // @ts-expect-error each item gives every required field
+        DurableObjectTransferSources: [{ namespaceId: "counters" }],
+      });
+      host.contribute({
+        Bindings: [
+          {
+            type: "durable_object_namespace",
+            name: "COUNTERS",
+            class_name: "Counter",
+            script_name: name,
+          },
+        ],
+      });
+      host.contribute({
+        // @ts-expect-error a binding's name is required
+        Bindings: [{ type: "service", name, service: "app--dev--web" }],
+      });
+    }).toBeFunction();
   });
 });

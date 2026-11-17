@@ -170,6 +170,25 @@ describe("collected params", () => {
     );
   });
 
+  it("takes a ~state ref in a field of a merged contribution, and not as an item of a list", () => {
+    const queue = new Queue("queue", { config: { QueueName: "q" } });
+    const policy = new Policy("policy", { config: { PolicyName: "p" } });
+    const name = queue["~state"].outputRef("QueueName");
+    expect(() => {
+      policy.contribute({
+        PolicyDocument: { Statement: [{ Effect: name, Action: ["s:Get"] }] },
+      });
+      policy.contribute({
+        // @ts-expect-error an item of a list can't be undefined
+        PolicyDocument: { Statement: [{ Effect: "Allow", Action: [name] }] },
+      });
+      policy.contribute({
+        // @ts-expect-error an item of a list can't be undefined
+        PolicyDocument: { Statement: [name] },
+      });
+    }).not.toThrow();
+  });
+
   it("fails on two values for one key, naming both contributors", async () => {
     const fn = new Fn("fn", { config: { FunctionName: "f", Role: "r" } });
     fn.contribute({ Environment: { Variables: { MODE: "a" } } });
