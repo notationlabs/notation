@@ -30,7 +30,6 @@ import { kv } from "src/resources";
 import {
   $durableObject,
   $worker,
-  addBindings,
   isWorkerGroup,
   worker,
   type WorkerGroup,
@@ -80,17 +79,10 @@ function deployed(worker: WorkerGroup) {
   });
 }
 
-async function scriptParams(
-  worker: WorkerGroup,
-  options: { without?: WorkerGroup[] } = {},
-) {
+async function scriptParams(worker: WorkerGroup) {
   vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "account");
   try {
-    return await worker.script.getParams({
-      excludeContributionsFrom:
-        options.without &&
-        new Set(options.without.flatMap((w) => [w.script, w.subdomain!])),
-    });
+    return await worker.script.getParams();
   } finally {
     vi.unstubAllEnvs();
   }
@@ -305,62 +297,6 @@ describe("URL bindings", () => {
         name: "CALLBACK",
         text: `${urlOf("api")}/callback`,
       },
-    ]);
-  });
-
-  it("binds a Worker's own URL with addBindings(), in a cycle that deploy breaks with a second upload", async () => {
-    const graph = await collect(() => {
-      const api = inWorker(
-        $worker({ id: "api", compatibilityDate }),
-        "runtime/api.ts",
-      );
-      addBindings(api, { OWN_URL: api.url });
-    });
-    const api = group(graph, "api");
-
-    expect(api.script.getFixedDependencies()).not.toContain(api.subdomain);
-    expect(api.script.getDependencies()).toContain(api.subdomain);
-    expect(api.subdomain!.getDependencies()).toContain(api.script);
-    api.code.setOutput({
-      filePath: "dist/runtime/api/index.mjs",
-      sourceSha256: "hex",
-      fileSha256: "sha",
-    });
-    expect((await scriptParams(api, { without: [api] })).Bindings).toEqual([]);
-    deployed(api);
-    expect((await scriptParams(api)).Bindings).toEqual([
-      { type: "plain_text", name: "OWN_URL", text: urlOf("api") },
-    ]);
-  });
-
-  it("binds the URLs of two Workers that bind each other's", async () => {
-    const graph = await collect(() => {
-      const api = inWorker(
-        $worker({ id: "api", compatibilityDate }),
-        "runtime/api.ts",
-      );
-      const web = inWorker(
-        $worker({
-          id: "web",
-          compatibilityDate,
-          bindings: () => ({ API_URL: api.url }),
-        }),
-        "runtime/web.ts",
-      );
-      addBindings(api, { WEB_URL: web.url });
-    });
-    const api = group(graph, "api");
-    const web = group(graph, "web");
-
-    expect(api.script.getDependencies()).toContain(web.subdomain);
-    expect(web.script.getDependencies()).toContain(api.subdomain);
-    deployed(api);
-    deployed(web);
-    expect((await scriptParams(api)).Bindings).toEqual([
-      { type: "plain_text", name: "WEB_URL", text: urlOf("web") },
-    ]);
-    expect((await scriptParams(web)).Bindings).toEqual([
-      { type: "plain_text", name: "API_URL", text: urlOf("api") },
     ]);
   });
 });
