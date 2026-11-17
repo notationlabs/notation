@@ -88,7 +88,7 @@ Use 1 to 64 letters, digits, hyphens and underscores. TypeScript reports a strin
 env: () => ({ ORDER_QUEUE_URL: orderQueue.url, LOG_LEVEL: "info" }),
 ```
 
-- Each value is an `Input<string>`: a string, an output ref to a string such as `orderQueue.url`, or a derived value such as `` text`${api.url}/callback` ``. Deploy fills in the real value. See [Output refs](../reference/resource.md#output-refs).
+- Each value is an `Input<string>` or a `CredentialRef<string>`: a string, an output ref to a string such as `orderQueue.url`, a derived value such as `` text`${api.url}/callback` ``, or a credential of a resource. Deploy fills in the real value. See [Output refs](../reference/resource.md#output-refs).
 - `lambda.env()` returns the values by name. In the function, it reads them from `process.env`, and throws when one is not set.
 - Lambda limits a function's environment variables to 4 KB in total. If the variables are over the limit, the deploy fails with an error that names the function.
 

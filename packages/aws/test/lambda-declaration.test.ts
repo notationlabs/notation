@@ -3,9 +3,12 @@ import type { APIGatewayProxyEventV2, SQSEvent, SQSRecord } from "aws-lambda";
 import { setConfigFile } from "@notation/core";
 import {
   collectResourceGraph,
+  credentialMarker,
+  resource,
   text,
   type StandardSchemaV1,
 } from "@notation/resource";
+import * as v from "valibot";
 import * as infra from "src/lambda";
 import {
   $lambda,
@@ -107,6 +110,52 @@ test("env is set as the function's environment variables", async () => {
 
   expect((await group.fn.getParams()).Environment).toEqual({
     Variables: { TABLE: "orders", STAGE: "dev" },
+  });
+});
+
+const Token = resource<{
+  Key: { Id: string };
+  CreateParams: {};
+  UpdateParams: {};
+  ReadResult: { Id: string };
+}>({ type: "test/lambda-declaration/token", provider: "test" })
+  .defineSchema({
+    Id: {
+      propertyType: "computed",
+      value: v.string(),
+      presence: "required",
+      primaryKey: true,
+    },
+    Value: { propertyType: "credential", value: v.string() },
+  })
+  .defineOperations({
+    create: async () => ({ Id: "1", Value: "secret" }),
+    delete: async () => undefined,
+  });
+
+test("a credential in env is set as an environment variable", async () => {
+  const graph = await collectResourceGraph(() => {
+    const token = new Token("token");
+    token.setOutput({
+      Id: "1",
+      Value: credentialMarker("token", "Value", "v1"),
+    } as { Id: string });
+    inModule(
+      $lambda({
+        id: "orders",
+        env: () => ({ TOKEN: token.credentials.Value }),
+      }),
+    );
+  });
+  const group = lambdaGroup(graph, "orders");
+  group.role.setOutput({ Arn: "arn:role" } as any);
+  group.fn.dependencies.zipFile.setOutput({
+    filePath: "orders.zip",
+    fileSha256: "sha",
+  } as any);
+
+  expect((await group.fn.getParams()).Environment).toEqual({
+    Variables: { TOKEN: credentialMarker("token", "Value", "v1") },
   });
 });
 
@@ -313,6 +362,18 @@ test("LambdaEnv and env() give the values of output refs and derived values", ()
     // @ts-expect-error env takes a ref to a string
     env: () => ({ N: orders.url.map((u) => u.length) }),
   });
+});
+
+test("LambdaEnv and env() give a credential as a string", () => {
+  const token = new Token("token");
+  const fn = $lambda({
+    id: "orders",
+    env: () => ({ TOKEN: token.credentials.Value, STAGE: "dev" }),
+  });
+  type Env = { TOKEN: string; STAGE: string };
+
+  expectTypeOf<LambdaEnv<typeof fn>>().toEqualTypeOf<Readonly<Env>>();
+  expectTypeOf(fn.env()).toEqualTypeOf<Readonly<Env>>();
 });
 
 test("an SQS handler can return batch item failures only when the mapping reports them", () => {

@@ -1,4 +1,8 @@
-import type { Input, StandardSchemaV1 } from "@notation/resource";
+import type {
+  CredentialRef,
+  Input,
+  StandardSchemaV1,
+} from "@notation/resource";
 import type {
   APIGatewayEventRequestContextJWTAuthorizer,
   APIGatewayProxyEventV2,
@@ -511,10 +515,10 @@ export interface Lambda<
 }
 
 /**
- * The variables that a declaration binds: each a string, or an output ref or
- * a derived value that deploy fills in.
+ * The variables that a declaration binds: each a string, or an output ref, a
+ * derived value or a credential that deploy fills in.
  */
-export type EnvVars = Record<string, Input<string>>;
+export type EnvVars = Record<string, Input<string> | CredentialRef<string>>;
 
 type HttpHandler<Event> = (
   event: Event,

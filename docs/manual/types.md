@@ -72,7 +72,7 @@ lambda.env().ORDER_QUEUE_URL; // string
 lambda.env().ORDERS_URL; // type error: the declaration doesn't bind ORDERS_URL
 ```
 
-`orderQueue.url` is an `OutputRef<string>` in infra code, and `lambda.env()` gives its value, a `string`. `$lambda` types the declaration with the values, so the type of an exported declaration doesn't name a type of `@notation/resource`. `LambdaEnv<typeof lambda>` is the type of the values, for code that receives them as a parameter. `WorkerEnv<typeof worker>` does the same for a Worker: a binding to an output ref, a derived value or a credential is a `string`.
+`orderQueue.url` is an `OutputRef<string>` in infra code, and `lambda.env()` gives its value, a `string`. A credential in `env` is a `string` too. `$lambda` types the declaration with the values, so the type of an exported declaration doesn't name a type of `@notation/resource`. `LambdaEnv<typeof lambda>` is the type of the values, for code that receives them as a parameter. `WorkerEnv<typeof worker>` does the same for a Worker: a binding to an output ref, a derived value or a credential is a `string`.
 
 ## Output refs are typed as refs
 
