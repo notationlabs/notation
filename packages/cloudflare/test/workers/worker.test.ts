@@ -383,6 +383,35 @@ describe("$worker", () => {
     ]);
   });
 
+  it("fails for a sensitive output as plain text, whole or in a derived value", async () => {
+    for (const bind of [
+      (secret: InstanceType<typeof secretsStore.SecretsStoreSecret>) =>
+        secret.outputRef("Value"),
+      (secret: InstanceType<typeof secretsStore.SecretsStoreSecret>) =>
+        text`Bearer ${secret.outputRef("Value")}`,
+    ]) {
+      await expect(
+        collect(() => {
+          const store = new secretsStore.SecretsStore("store");
+          const secret = new secretsStore.SecretsStoreSecret("secret", {
+            config: { Value: "v" },
+            dependencies: { store },
+          });
+          inWorker(
+            $worker({
+              id: "api",
+              compatibilityDate,
+              bindings: () => ({ TOKEN: bind(secret) }),
+            }),
+            "runtime/api.ts",
+          );
+        }),
+      ).rejects.toThrow(
+        `$worker({ id: "api" }) in runtime/api.ts binds TOKEN to the sensitive output secret.Value. A plain-text binding is recorded in state, so a Worker can't bind a sensitive output.`,
+      );
+    }
+  });
+
   it("fails for an R2 bucket whose jurisdiction is an output ref", async () => {
     await expect(
       collect(() => {

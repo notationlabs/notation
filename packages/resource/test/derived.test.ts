@@ -6,9 +6,11 @@ import {
   UNKNOWN_AFTER_APPLY,
   ValueValidationError,
   all,
+  credentialMarker,
   isDerived,
   isOutputRef,
   mergeContributions,
+  ownPhysicalName,
   resource,
   text,
 } from "src";
@@ -587,5 +589,103 @@ describe("deriveParams", () => {
       Target: "https://sqs/orders",
       Host: "sqs",
     });
+  });
+});
+
+describe("deriveParams with a marker in config", () => {
+  type NamedConfig = { Label?: string | string[]; Secret?: string };
+  const named = (
+    type: `${string}/${string}/${string}`,
+    derive: (config: NamedConfig) => NamedConfig,
+  ) =>
+    resource<{
+      Key: { Name: string };
+      CreateParams: { Name: string } & NamedConfig;
+      UpdateParams: NamedConfig;
+      ReadResult: {};
+    }>({ type, provider: "test" })
+      .defineSchema({
+        Name: {
+          propertyType: "param",
+          value: string(),
+          presence: "required",
+          primaryKey: true,
+          immutable: true,
+          physicalName: { maxLength: 64 },
+        },
+        Label: {
+          propertyType: "param",
+          value: object<string | string[]>(),
+          presence: "optional",
+        },
+        Secret: {
+          propertyType: "param",
+          value: string(),
+          presence: "optional",
+        },
+      })
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        delete: async () => undefined,
+        deriveParams: ({ config }) => derive(config),
+      });
+  const Reader = named("test/derived/reader", (config) => ({
+    Label: `${config.Label}${config.Secret ?? ""}`,
+  }));
+  const Passer = named("test/derived/passer", () => ({}));
+
+  const deployedToken = () => {
+    const token = new Token("token", { config: { Name: "t" } });
+    // Deploy records a credential in the output as a marker.
+    token.setOutput({
+      Id: "1",
+      Name: "t",
+      Value: credentialMarker("token", "Value", "v1"),
+    } as { Id: string; Name: string });
+    return token;
+  };
+
+  it("throws when deriveParams reads the resource's own physical name", async () => {
+    const reader = new Reader("reader");
+    (reader.config as Record<string, unknown>).Label = [
+      reader.outputRef("Name"),
+    ];
+    const message =
+      "reader.Label.0 is the physical name of reader itself, which deploy decides after the params, so deriveParams can't read it.";
+    await expect(reader.getParams()).rejects.toThrow(message);
+    await expect(reader.planParams()).rejects.toThrow(message);
+  });
+
+  it("throws when deriveParams reads a credential", async () => {
+    const reader = new Reader("reader", {
+      config: { Label: ["x"], Secret: deployedToken().credentials.Value },
+    });
+    const message =
+      "reader.Secret is the credential token.Value, which deploy puts in the params only for the call to an operation, so deriveParams can't read it.";
+    await expect(reader.getParams()).rejects.toThrow(message);
+    await expect(reader.planParams()).rejects.toThrow(message);
+  });
+
+  it("keeps the markers in the params when deriveParams doesn't read them", async () => {
+    const passer = new Passer("passer", {
+      config: { Secret: deployedToken().credentials.Value },
+    });
+    (passer.config as Record<string, unknown>).Label = passer.outputRef("Name");
+    const expected = {
+      Label: ownPhysicalName("Name"),
+      Secret: credentialMarker("token", "Value", "v1"),
+    };
+    expect(await passer.getParams()).toEqual(expected);
+    expect(await passer.planParams()).toEqual(expected);
+  });
+});
+
+describe("outputRef", () => {
+  it("throws for a credential, and points to credentials", () => {
+    const token = new Token("token", { config: { Name: "t" } });
+    expect(() => token.outputRef("Value" as any)).toThrow(
+      "Value of token is a credential. Use token.credentials.Value for a ref to it.",
+    );
   });
 });

@@ -4,6 +4,7 @@ import type { DurableObject } from "./durable-value";
 import { UNKNOWN_AFTER_APPLY } from "./diff-params";
 import { captureCallSiteLazily } from "./contributions";
 import { isOwnPhysicalName } from "./physical-name";
+import { isCredentialMarker } from "./credential";
 
 export class OutputRefStringError extends Error {
   /**
@@ -262,7 +263,7 @@ export function isDependencyRef(
   holder: BaseResource,
   token: AnyOutputRef,
 ): boolean {
-  return token.kind !== "state" && !isOwnNameRef(holder, token);
+  return !isStateRef(token) && !isOwnNameRef(holder, token);
 }
 
 /**
@@ -279,6 +280,14 @@ export function isOutputRef(value: unknown): value is AnyOutputRef {
     value !== null &&
     (value as { [outputRefBrand]?: unknown })[outputRefBrand] === true
   );
+}
+
+export function isCredentialRef(value: unknown): value is CredentialRef {
+  return isOutputRef(value) && value.kind === "credential";
+}
+
+export function isStateRef(value: unknown): value is StateRef {
+  return isOutputRef(value) && value.kind === "state";
 }
 
 export function isPlainObject(
@@ -331,14 +340,27 @@ export function containsOutputRef(value: unknown): boolean {
   return found;
 }
 
+const isRefOrDerived = (value: unknown): boolean =>
+  isOutputRef(value) || isDerived(value);
+
 /** Whether a value holds an output ref or a derived value. */
 export function containsRefOrDerived(value: unknown): boolean {
-  if (isOutputRef(value) || isDerived(value)) return true;
-  if (Array.isArray(value)) return value.some(containsRefOrDerived);
-  if (isPlainObject(value)) {
-    return Object.values(value).some(containsRefOrDerived);
-  }
-  return false;
+  return containsMatch(value, isRefOrDerived);
+}
+
+// Whether `matches` holds for the value, or for a value in the arrays and
+// plain objects in it.
+function containsMatch(
+  value: unknown,
+  matches: (value: unknown) => boolean,
+): boolean {
+  if (matches(value)) return true;
+  const entries = Array.isArray(value)
+    ? value
+    : isPlainObject(value)
+      ? Object.values(value)
+      : [];
+  return entries.some((entry) => containsMatch(entry, matches));
 }
 
 /**
@@ -535,13 +557,15 @@ export function createPlanViews() {
      * refs and derived values that are left throw on a read.
      */
     config<V>(resolved: V): V {
-      return pendingReadView(resolved, (unresolved) => {
-        let resource: BaseResource | undefined;
-        forEachOutputRef(unresolved, (token) => {
-          resource ??= token.resource;
-        });
-        return throwPending(resource!);
-      }) as V;
+      return guardedReadView(resolved, isRefOrDerived, views.pending) as V;
+    },
+    /** Throws `PendingOutput` for the first resource that `unresolved` reads. */
+    pending(unresolved: unknown): never {
+      let resource: BaseResource | undefined;
+      forEachOutputRef(unresolved, (token) => {
+        resource ??= token.resource;
+      });
+      return throwPending(resource!);
     },
   };
 
@@ -624,25 +648,69 @@ function dependencyView(
   return Object.create(dep, view);
 }
 
-// Copies the objects and arrays that hold a ref or a derived value, with a
-// getter in place of each, which calls `onRead`.
-function pendingReadView(
-  value: unknown,
-  onRead: (unresolved: unknown) => never,
+/**
+ * A view of the config that `deriveParams` receives, at plan and at deploy.
+ * Reading a marker in it throws, as `deriveParams` would compute with the
+ * marker in place of the value. An `OwnPhysicalName` stands for a name that
+ * deploy decides after the params. A credential marker stands for a value
+ * that deploy puts in place of the marker only for the call to an
+ * operation. Reading a ref or a derived value that is left in config, which
+ * only plan leaves, calls `onPending`.
+ */
+export function deriveParamsConfigView(
+  owner: BaseResource,
+  config: unknown,
+  onPending?: (unresolved: unknown) => never,
 ): unknown {
-  if (isOutputRef(value) || isDerived(value)) return onRead(value);
-  if (!containsRefOrDerived(value)) return value;
+  const guarded = (value: unknown) =>
+    isOwnPhysicalName(value) ||
+    isCredentialMarker(value) ||
+    (onPending !== undefined && isRefOrDerived(value));
+  return guardedReadView(config, guarded, (value, path) => {
+    const param = [owner.id, ...path].join(".");
+    if (isOwnPhysicalName(value)) {
+      throw new Error(
+        `${param} is the physical name of ${owner.id} itself, which deploy decides after the params, so deriveParams can't read it.`,
+      );
+    }
+    if (isCredentialMarker(value)) {
+      const { resource, name } = value.$credential;
+      throw new Error(
+        `${param} is the credential ${resource}.${name}, which deploy puts in the params only for the call to an operation, so deriveParams can't read it.`,
+      );
+    }
+    return onPending!(value);
+  });
+}
+
+// Copies the objects and arrays that hold a value that `guarded` matches,
+// with a getter in place of each, which calls `onRead` with the value and
+// its path.
+function guardedReadView(
+  value: unknown,
+  guarded: (value: unknown) => boolean,
+  onRead: (value: unknown, path: string[]) => never,
+  path: string[] = [],
+): unknown {
+  if (guarded(value)) return onRead(value, path);
+  if (!containsMatch(value, guarded)) return value;
   const copy: Record<string, unknown> | unknown[] = Array.isArray(value)
     ? new Array(value.length)
     : {};
   for (const [key, entry] of Object.entries(value as object)) {
-    if (isOutputRef(entry) || isDerived(entry)) {
+    const at = [...path, key];
+    if (guarded(entry)) {
       Object.defineProperty(copy, key, {
         enumerable: true,
-        get: () => onRead(entry),
+        get: () => onRead(entry, at),
       });
     } else {
-      (copy as Record<string, unknown>)[key] = pendingReadView(entry, onRead);
+      (copy as Record<string, unknown>)[key] = guardedReadView(
+        entry,
+        guarded,
+        onRead,
+        at,
+      );
     }
   }
   return copy;
@@ -788,13 +856,12 @@ function site(callSite: () => string | undefined): string {
 // A value computed from a credential would be recorded in state as a plain
 // param. A `~state` ref can only be placed whole in a contribution.
 function assertDerivable(value: unknown, where: () => string): void {
-  if (!isOutputRef(value)) return;
-  if (value.kind === "credential") {
+  if (isCredentialRef(value)) {
     throw new Error(
       `${where()} reads the credential ${describeOutputRef(value)}. A credential can only be placed whole, because a value computed from it would be recorded in state as a plain param.`,
     );
   }
-  if (value.kind === "state") {
+  if (isStateRef(value)) {
     throw new Error(
       `${where()} reads the ~state ref ${describeOutputRef(value)}. A ~state ref can only be placed whole in a contribution.`,
     );

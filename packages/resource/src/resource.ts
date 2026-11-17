@@ -40,11 +40,13 @@ import {
   createPlanViews,
   deployLookup,
   deployViews,
+  deriveParamsConfigView,
   forEachOutputRef,
   isDependencyRef,
   isDerived,
   isOutputRef,
   isOwnNameRef,
+  isStateRef,
   markUnknownOutputRefs,
   planLookup,
   resolveOutputRefs,
@@ -526,6 +528,11 @@ export abstract class Resource<
   outputRef<K extends keyof T["output"] & string>(
     key: K,
   ): OutputRef<T["output"][K]> {
+    if (this.schema[key]?.propertyType === "credential") {
+      throw new Error(
+        `${key} of ${this.id} is a credential. Use ${this.id}.credentials.${key} for a ref to it.`,
+      );
+    }
     return new OutputRef(this, [key]);
   }
 
@@ -650,7 +657,7 @@ export abstract class Resource<
     forEachOutputRef(this.config, (token) => {
       // Create and update resolve config with the live output of each ref,
       // which a `~state` ref's target may not have yet.
-      if (token.kind === "state") {
+      if (isStateRef(token)) {
         throw new Error(
           `The config of ${this.id} holds a ~state ref to ${token.resource.id}. A ~state ref can only be placed in a contribution.`,
         );
@@ -691,7 +698,7 @@ export abstract class Resource<
     const config = this.#resolveRefs(this.config, false, recordedOutputs);
     const derivedParams = await this.deriveParams({
       id: this.id,
-      config: config as C,
+      config: deriveParamsConfigView(this, config) as C,
       deps: deployViews(this.dependencies) as ResolvedDependencies<D>,
     });
     return (await this.#combineParams(config, derivedParams, {
@@ -713,6 +720,8 @@ export abstract class Resource<
    *
    * A ref to the resource's own `physicalName` param is an `OwnPhysicalName`
    * in the result, here and in `getParams`, for the reconciler to fill in.
+   * A credential is a credential marker. Reading either of them in the
+   * config that `deriveParams` receives throws.
    */
   async planParams({
     recordedOutputs,
@@ -725,7 +734,7 @@ export abstract class Resource<
     const derivedParams = await tryAtPlan(views, () =>
       this.deriveParams({
         id: this.id,
-        config: views.config(config) as C,
+        config: deriveParamsConfigView(this, config, views.pending) as C,
         deps: views.of(this.dependencies) as ResolvedDependencies<D>,
       }),
     );
@@ -818,7 +827,7 @@ export abstract class Resource<
     const lookup: OutputLookup = plan ? planLookup : deployLookup;
     const lookupRecorded = recordedLookup(recordedOutputs);
     return resolveOutputRefs(value, (token) =>
-      token.kind === "state"
+      isStateRef(token)
         ? lookupRecorded(token)
         : isOwnNameRef(this, token)
           ? { known: true, value: ownPhysicalName(token.path[0]!) }

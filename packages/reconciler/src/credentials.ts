@@ -5,6 +5,7 @@ import {
   findCredentialMarkers,
   forEachOutputRef,
   isCredentialMarker,
+  isCredentialRef,
   isCredentialSource,
   isPlainObject,
   mapCredentialMarkers,
@@ -338,7 +339,7 @@ export function assertNoHiddenCredential(resource: BaseResource): void {
     const item = resource.schema[field];
     if (item?.propertyType !== "param" || !item.hidden) continue;
     forEachOutputRef(value, (ref) => {
-      if (ref.kind !== "credential") return;
+      if (!isCredentialRef(ref)) return;
       const name = String(ref.path[0]);
       throw new Error(
         `${resource.id} cannot take the credential ${name} of ${ref.resource.id} in ${field}: ${field} is a hidden param, which state does not record`,
@@ -389,7 +390,7 @@ export function takesCredential(
     .some(
       (ref) =>
         ref.resource === producer &&
-        ref.kind === "credential" &&
+        isCredentialRef(ref) &&
         (name === undefined || ref.path[0] === name),
     );
 }
