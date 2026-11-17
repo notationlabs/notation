@@ -94,7 +94,11 @@ export type ContributionInput<V> = {
 
 /**
  * The dependencies as `deriveParams` receives them: each with its config
- * filled in.
+ * filled in. An entry can be a view of the dependency, an object whose
+ * prototype is the dependency. So it can differ from the dependency in an
+ * identity check, a `WeakMap` keyed by the dependency doesn't find it, and
+ * a method that reads a private field of the dependency throws on it.
+ * `outputRef`, `credentials` and `~state` run on the dependency.
  */
 export type ResolvedDependencies<D> = {
   [K in keyof D]: ResolvedDependency<D[K]>;

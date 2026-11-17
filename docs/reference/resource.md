@@ -490,14 +490,27 @@ const LambdaIntegration = defineResource<{ ... }>({ type: "aws/apiGateway/Lambda
   }));
 ```
 
-`requireDependencies` declares typed dependency slots. `deriveParams` receives `{ id, config, deps }` and returns properties computed from dependency outputs. At deploy it runs after its dependencies have been provisioned, with their real outputs. At plan, a dependency that has no output yet throws `PendingOutput` when `deriveParams` reads its `output`; see [Unknown values](reconciler.md#unknown-values).
+`requireDependencies` declares typed dependency slots. `deriveParams` receives `{ id, config, deps }` and returns properties computed from dependency outputs. At deploy it runs after its dependencies have been provisioned, with their real outputs. At plan, a dependency that has no output yet throws `PendingOutput` when `deriveParams` reads its `output`; see [Unknown values](../internals/reconciler.md#unknown-values).
 
 `config`, and the `config` of each dependency, have their [output refs and derived values](#output-refs) filled in. So `deriveParams` reads config as plain values, which its type says:
 
 - **At deploy**, every ref in config is known, and `deriveParams` receives the values.
 - **At plan**, `deriveParams` receives a view of config. Reading a value that plan knows gives the value. Reading a ref or a derived value that plan doesn't know throws `PendingOutput`, as a read of a pending output in `deps` does. Plan then marks every param that config doesn't set as unknown.
 
+Two values in config can't be read, at plan or at deploy, and reading one throws with the path of the param:
+
+- a ref to the resource's own [physical name](#physical-names), because deploy decides the name after the params.
+- a [credential](#credentials), because deploy puts its value in the params only for the call to an operation.
+
+`deriveParams` can leave either in config without reading it, and deploy fills it in.
+
 A `deriveParams` that annotates `deps` types it as `ResolvedDependencies<Deps>`, which types the `config` of each dependency as plain params.
+
+An entry of `deps` can be a view of the dependency, an object whose prototype is the dependency, with its config filled in or its pending outputs guarded. So:
+
+- `deps.queue === queue` can be false.
+- A `WeakMap` or a `Set` that holds the dependency doesn't find the view.
+- A method of the dependency that reads a private field (`#field`) throws when it is called on the view. `outputRef`, `credentials` and `~state` run on the dependency, so they work.
 
 A resource takes its ID first, then its config and dependencies:
 
@@ -583,6 +596,8 @@ The function of `map`:
 - **returns a value that state can record.** A promise fails, and so does a value that holds a ref or a derived value at any depth.
 - **fails plan or deploy when it throws.** The error names the call site of `map`. In `ref.map(f).map(g)`, each `map` has its own call site.
 - **is not async.**
+
+Two `map` calls of the same ref at one call site have the same canonical form while the ref is unknown. This happens when your own helper calls `map`, such as `const suffix = (ref, s) => ref.map((url) => url + s)`: each call of `suffix` maps at the same line inside it. Plan can't tell the two values apart, so when they set one key to different values, plan finds no conflict, and deploy fails.
 
 `text` checks each part when it joins them. A part must be a string or a number, so an optional output that is `undefined` at deploy fails, and doesn't become an empty string.
 
@@ -860,7 +875,7 @@ importer.policy.contribute(
 
 `contribute` takes the function and, in `deps`, the resources that the function reads. At deploy, deploy runs the function with the real outputs of `deps`, and collects the result like a plain contribution. A function contribution has three costs that a contribution of values doesn't:
 
-- **At plan**, the function receives the same views of its deps as `deriveParams` (see [Unknown values](reconciler.md#unknown-values)). When the queue has no output yet, reading `deps.queue.output` throws, and plan marks every collected param of the policy unknown. With `text`, only the path of `Resource` is unknown.
+- **At plan**, the function receives the same views of its deps as `deriveParams` (see [Unknown values](../internals/reconciler.md#unknown-values)). When the queue has no output yet, reading `deps.queue.output` throws, and plan marks every collected param of the policy unknown. With `text`, only the path of `Resource` is unknown.
 - **In a cycle**, a function contribution counts as setting every collected param. See [Cycles](#cycles).
 - **It names the resource, not the output.** The function reads `orderQueue.queue`, the resource inside the group, where `orderQueue.arn` is the value it needs.
 

@@ -399,17 +399,19 @@ At plan, some resources have not been created yet, so their outputs do not exist
 
 **State refs.** Plan resolves each [state ref](../reference/resource.md#state-refs) from the outputs in state, as deploy does at its start, so the value is never unknown. A target with no record gives `undefined`.
 
-**`deriveParams`.** Plan calls `deriveParams` with a view of each dependency. Reading the view's `output` throws `PendingOutput` when the dependency has no output yet. Plan cannot tell which params depend on that output, so it handles each result like this:
+**Derived values.** Plan computes a derived value from `text`, `map` or `all` when it knows every ref that the value reads. Otherwise plan marks the value unknown at its own path, as it does an output ref.
 
-| `deriveParams` at plan                         | Plan shows                                |
-| ---------------------------------------------- | ----------------------------------------- |
-| reads no pending output                        | the params it returns, as known           |
-| reads a pending output, then returns or throws | every param not set in config, as unknown |
-| throws without reading a pending output        | an error: the plan fails, as deploy would |
+**`deriveParams`.** Plan calls `deriveParams` with a view of config and a view of each dependency. In the view of config, plan has filled in the refs and derived values that it knows, and reading one that it doesn't know throws `PendingOutput`. The view of a dependency gives its config in the same way. Reading the view's `output` throws `PendingOutput` when the dependency has no output yet, and reading a required output that its output lacks throws too. Plan cannot tell which params depend on that value, so it handles each result like this:
+
+| `deriveParams` at plan                        | Plan shows                                |
+| --------------------------------------------- | ----------------------------------------- |
+| reads no pending value                        | the params it returns, as known           |
+| reads a pending value, then returns or throws | every param not set in config, as unknown |
+| throws without reading a pending value        | an error: the plan fails, as deploy would |
 
 A dependency whose output `deriveParams` never reads only orders the deploy, so it does not make any param unknown.
 
-**Function contributions.** Plan runs each function contribution with the same views. When the function reads a pending output, whether it then returns or throws, plan marks every collected param of the receiving resource unknown. When it throws without reading one, the plan fails. Otherwise plan uses the function's result.
+**Function contributions.** Function contributions are deprecated: a contribution of values with `text`, `map` or `all` makes only its own path unknown. Plan runs each function contribution with the same views of its deps. When the function reads a pending output, whether it then returns or throws, plan marks every collected param of the receiving resource unknown. When it throws without reading one, the plan fails. Otherwise plan uses the function's result.
 
 ## Dependency edges
 
