@@ -1,23 +1,27 @@
-# EventBridge
+# Amazon EventBridge
 
-`@notation/aws/event-bridge` creates event buses, rules that send the events on a bus to a Lambda function, and schedules that invoke a Lambda function. A function receives the events of a rule in one of two ways:
+Route application and AWS service events with EventBridge buses and pattern-matching rules, and invoke Lambda handlers on recurring schedules with automatically scoped permissions.
 
-| Function-led                                              | Infra-led                                                    |
-| --------------------------------------------------------- | ------------------------------------------------------------ |
-| `event: () => eventBridge.bind(bus).defineRule(options)`  | `event: () => eventBridge.schema(OrderShipped)`              |
-| The declaration makes the rule.                           | Infra makes rules with `rule({ id, bus, pattern, target })`. |
-| `decode()` validates the detail with the `schema` option. | `decode()` validates the detail with `OrderShipped`.         |
+For AWS credential and region setup, see [AWS Overview](./overview.md).
 
-A function receives the events of a schedule in the same two ways:
+Install `@aws-sdk/client-eventbridge` if your publishers send events from Lambda:
 
-| Function-led                                                | Infra-led                                                        |
-| ----------------------------------------------------------- | ---------------------------------------------------------------- |
-| `event: () => eventBridge.defineSchedule({ id, schedule })` | `event: () => eventBridge.schema(null)`                          |
-| The declaration makes the schedule.                         | Infra makes schedules with `schedule({ id, schedule, target })`. |
+```sh [Terminal]
+@pm.add("@aws-sdk/client-eventbridge")
+```
 
-`eventBridge` comes from `@notation/aws/lambda`. `eventBus()`, `defaultEventBus()`, `rule()`, `schedule()`, `rate()`, `cron()` and `once()` come from `@notation/aws/event-bridge`.
+Wire a custom event bus, a publisher Lambda that sends `OrderPlaced` events, and a consumer Lambda that matches those events with a pattern rule:
 
-## `eventBus(config)`
+::code-group
+
+```ts [shared/schema.ts]
+import * as v from "valibot";
+
+export const OrderPlaced = v.object({
+  orderId: v.string(),
+  total: v.number(),
+});
+```
 
 ```ts [infra/orders.ts]
 import { eventBus } from "@notation/aws/event-bridge";
@@ -25,75 +29,39 @@ import { eventBus } from "@notation/aws/event-bridge";
 export const ordersBus = eventBus({ id: "orders" });
 ```
 
-### Config
+```ts [runtime/create-order.ts]
+import { EventBridgeClient, PutEventsCommand } from "@aws-sdk/client-eventbridge";
+import { $lambda, type LambdaHandler } from "@notation/aws/lambda";
+import { ordersBus } from "../infra/orders";
 
-```ts [@notation/aws/event-bridge]
-type EventBusConfig = {
-  id: string;
+const client = new EventBridgeClient();
+
+export const lambda = $lambda({
+  id: "create-order",
+  env: () => ({ ORDERS_BUS_NAME: ordersBus.name }),
+  policy: () => [ordersBus.grant(["PutEvents"])],
+});
+
+export const handler: LambdaHandler<typeof lambda> = async () => {
+  await client.send(
+    new PutEventsCommand({
+      Entries: [
+        {
+          EventBusName: lambda.env().ORDERS_BUS_NAME,
+          Source: "shop",
+          DetailType: "OrderPlaced",
+          Detail: JSON.stringify({ orderId: "ord_123", total: 149.5 }),
+        },
+      ],
+    }),
+  );
 };
 ```
 
-`id` keys the bus in state, so changing it replaces the bus. Use 1 to 64 letters, digits, hyphens and underscores. See [IDs](lambda.md#ids) for how TypeScript checks an ID. Deploy generates the bus's AWS name when it first creates the bus, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--orders-1a2b3c4d`, where the instance is 8 random hex characters.
-
-You can't set the bus's AWS name. See [AWS names](../../manual/project-config.md#aws-names).
-
-AWS does not delete a bus that has rules. When a deploy deletes a bus, it deletes the rules on the bus first.
-
-This also works when the same deploy removes the last EventBridge rule in your code. Notation loads the class of the old rule from the provider package that its state record names, so it knows to delete the rule before the bus.
-
-When a deploy replaces a bus, it creates the new bus first. Each rule on the bus is then replaced, because its bus changed, and the new rule is created first too. At the end of the deploy, deploy deletes the old rules and then the old bus.
-
-A bus has no schema. One bus carries events of many types, and each function declares the schema of the events that it receives.
-
-### `arn` and `name`
-
-`ordersBus.arn` and `ordersBus.name` are output refs: they don't exist until AWS creates the bus, but you can place them in another resource's config now. Notation makes that resource depend on the bus and fills in the real value at deploy. See [Output refs](../../reference/resource.md#output-refs).
-
-Each is typed `OutputRef<string>`, so a parameter typed `string` doesn't take it. Turning one into a string, for example in a template literal, throws. To build a value from one, make a derived value with `text` or `map`; see [Derived values](../../reference/resource.md#derived-values).
-
-### `bus.grant(actions)`
-
-`grant` returns a policy statement for the bus. A declaration adds it to its function's role with the `policy` option. For example, to let the `checkout` function send events to `ordersBus`:
-
-```ts [runtime/checkout.ts]
-import { $lambda } from "@notation/aws/lambda";
-import { ordersBus } from "infra/orders";
-
-export const lambda = $lambda({
-  id: "checkout",
-  policy: () => [ordersBus.grant(["PutEvents"])],
-  env: () => ({ ORDERS_BUS_NAME: ordersBus.name }),
-});
-```
-
-The function sends events with `PutEventsCommand` from `@aws-sdk/client-eventbridge`, and names the bus in each entry's `EventBusName`. Nothing checks that the detail of an event that a sender writes matches a schema.
-
-```ts [@notation/aws/event-bridge]
-type EventBusAction = "PutEvents";
-```
-
-## `defaultEventBus()`
-
-`defaultEventBus()` returns the account's default event bus. AWS makes the default bus, and AWS services, such as S3 or EC2, send their events to it. It has `arn`, `name` and `grant()`, as a bus from `eventBus()` has.
-
-```ts [infra/buses.ts]
-import { defaultEventBus } from "@notation/aws/event-bridge";
-
-export const defaultBus = defaultEventBus();
-```
-
-Each call returns the same bus. Notation reads the bus to get its ARN, and never changes or deletes it.
-
-## `eventBridge.bind(bus).defineRule(options)`
-
-A declaration names the bus and the events that its function receives in `event`:
-
-::code-group
-
 ```ts [runtime/fulfil-order.ts]
 import { $lambda, eventBridge, type LambdaHandler } from "@notation/aws/lambda";
-import { ordersBus } from "infra/orders";
-import { OrderPlaced } from "shared/schema";
+import { ordersBus } from "../infra/orders";
+import { OrderPlaced } from "../shared/schema";
 
 export const lambda = $lambda({
   id: "fulfil-order",
@@ -107,97 +75,61 @@ export const lambda = $lambda({
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
   const { detail: order } = await lambda.decode(event);
-  console.log(order.orderId);
+  console.log("fulfil", order.orderId, order.total);
 };
-```
-
-```ts [infra/orders.ts]
-import { eventBus } from "@notation/aws/event-bridge";
-
-export const ordersBus = eventBus({ id: "orders" });
 ```
 
 ::
 
-The infra module only declares the bus. When infra has finished loading, the declaration makes two things:
+`ordersBus.name` and `ordersBus.arn` are deploy-time output refs (see [Outputs & Contributions](../../core/outputs-and-contributions.md)), and `eventBridge.bind(ordersBus).defineRule()` provisions the rule and invoke permission automatically.
 
-1. **An EventBridge rule** on `ordersBus`, `order-placed`, which sends the events that match `pattern` to the function.
-2. **A Lambda permission** that lets the rule invoke the function.
+## Content filtering
 
-`eventBridge.bind(bus)` returns an object with one method, `defineRule()`. To make a rule on the default bus, declare it in an infra module, such as `export const defaultBus = defaultEventBus()`, and bind `defaultBus`. A call to `defaultEventBus()` in the declaration fails the runtime build, as any call to a resource function does.
+Filter events by envelope fields and nested `detail` conditions using `EventPattern`:
 
-### Options
+```ts [infra/orders.ts]
+import { rule, type EventPattern } from "@notation/aws/event-bridge";
+import { ordersBus } from "./orders";
+import { lambda as highValueOrder } from "../runtime/high-value-order";
 
-```ts [@notation/aws/lambda]
-type RuleOptions = {
-  id: string;
-  pattern: EventPattern;
-  enabled?: boolean;
-  retry?: RetryOptions;
-};
-
-// The options of defineRule()
-type DefineRuleOptions = RuleOptions & {
-  schema: StandardSchemaV1;
-};
-
-type RetryOptions = {
-  maxAttempts?: number;
-  maxEventAge?: number;
-};
-```
-
-`id` keys the rule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores. See [IDs](lambda.md#ids) for how TypeScript checks an ID. Deploy generates the rule's AWS name when it first creates the rule, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--order-placed-1a2b3c4d`, where the instance is 8 random hex characters. You can't set the rule's AWS name.
-
-`pattern` is the [event pattern](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns.html) that the rule matches. Each field holds a list of values, and the field matches when the event's field has one of them. A value can also be a content filter, such as `{ prefix: "order-" }` or `{ numeric: [">", 100] }`. `detail` holds a pattern for the event's detail, field by field:
-
-```ts
-pattern: {
+const highValuePattern: EventPattern = {
   source: ["shop"],
   "detail-type": ["OrderPlaced"],
-  detail: { currency: ["GBP", "EUR"], total: [{ numeric: [">", 100] }] },
-}
-```
+  detail: {
+    orderId: [{ prefix: "ord_" }],
+    total: [{ numeric: [">=", 100] }],
+    channel: [{ "anything-but": "test" }],
+  },
+};
 
-A pattern with no fields throws when infra runs. Notation sends the pattern to AWS as JSON, and AWS checks the rest of it at deploy.
-
-`schema` is a [Standard Schema](https://standardschema.dev) for the detail of each event. `decode()` validates the detail with it; see [Validating events](#validating-events).
-
-**`defineRule()` needs a schema.** A rule whose events can have any detail declares a schema that accepts any value, such as valibot's `v.unknown()`.
-
-`enabled: false` disables the rule, so it sends no events. The rule stays in AWS. When you remove `enabled`, the next deploy enables the rule again.
-
-`retry` sets how EventBridge retries an event that it fails to deliver to the function, for example when Lambda throttles the invocation. `maxAttempts` is the number of retries, from 0 to 185. `maxEventAge` is the number of seconds that EventBridge keeps retrying an event, from 60 to 86,400. Notation sets a field that you leave out to EventBridge's default: 185 attempts, or 86,400 seconds (24 hours). A rule with no `retry` has no retry policy, and EventBridge uses the same defaults. EventBridge invokes the function asynchronously, so an error that the handler throws is not a failed delivery. Lambda retries such an invocation itself, as it does for any asynchronous invocation.
-
-The rule sends the EventBridge event to the function as it is.
-
-### Validating events
-
-`lambda.decode(event)` validates the event's `detail` with the rule's `schema`. It returns the event with the validated value in place of `detail`, so `detail` has the schema's output type. The detail is already an object, so `decode()` doesn't parse JSON. When the detail is not valid, `decode()` throws a `DecodeError` whose `part` is `"detail"`. See [Validating bodies with `decode()`](../../manual/functions.md#validating-bodies-with-decode).
-
-Import the schema from a shared module, such as `shared/schema.ts` in `files.shared`, or from a package. **This matters because the function loads the schema, but not the infra module.** In the function's bundle, the runtime build replaces `ordersBus` with `{}`:
-
-```ts [runtime/fulfil-order.ts, as the runtime build strips it]
-export const lambda = $lambda({
-  id: "fulfil-order",
-  event: () =>
-    eventBridge.bind({}).defineRule({
-      id: "order-placed",
-      pattern: { source: ["shop"], "detail-type": ["OrderPlaced"] },
-      schema: OrderPlaced,
-    }),
+rule({
+  id: "high-value-orders",
+  bus: ordersBus,
+  pattern: highValuePattern,
+  target: () => highValueOrder,
 });
 ```
 
-The `infra/orders` import is gone. The other options stay as they are, so `schema` must come from a shared module or a package, and `pattern` can't refer to a value from an infra module.
+Every specified field must match (AND), and at least one item in each field's array must match (OR). Empty patterns (`{}`) throw at declaration time.
 
-## `eventBridge.schema(schema)`
+## Infra-owned rules
 
-A declaration that infra makes rules for names the schema of their detail, and no rule:
+Use `eventBridge.schema()` in a runtime module with `rule()` in `infra/` to attach multiple rules to one Lambda, target a `lambda()` group, or keep runtime modules free of `infra/` imports:
+
+::code-group
+
+```ts [shared/schema.ts]
+import * as v from "valibot";
+
+export const OrderShipped = v.object({
+  orderId: v.string(),
+  carrier: v.string(),
+});
+```
 
 ```ts [runtime/record-shipment.ts]
 import { $lambda, eventBridge, type LambdaHandler } from "@notation/aws/lambda";
-import { OrderShipped } from "shared/schema";
+import { OrderShipped } from "../shared/schema";
 
 export const lambda = $lambda({
   id: "record-shipment",
@@ -206,21 +138,13 @@ export const lambda = $lambda({
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
   const { detail: shipment } = await lambda.decode(event);
-  console.log(shipment.orderId, shipment.carrier);
+  console.log("shipped", shipment.orderId, shipment.carrier);
 };
 ```
 
-`lambda.decode(event)` validates the event's detail with `OrderShipped`, as it does with the rule's schema for `defineRule()`. The declaration doesn't import infra, so the runtime build leaves `eventBridge.schema(OrderShipped)` as it is.
-
-`eventBridge.schema(null)` declares a function that receives scheduled events, which have no detail. See [`schedule(config)`](#scheduleconfig). `eventBridge.schema()` with no argument is a type error.
-
-## `rule(config)`
-
-`rule()` sends the events on a bus that match a pattern to a function, from infra. It makes the same rule and permission as `defineRule()`. It returns nothing.
-
 ```ts [infra/orders.ts]
 import { eventBus, rule } from "@notation/aws/event-bridge";
-import { lambda as recordShipment } from "runtime/record-shipment";
+import { lambda as recordShipment } from "../runtime/record-shipment";
 
 export const ordersBus = eventBus({ id: "orders" });
 
@@ -232,36 +156,15 @@ rule({
 });
 ```
 
-`runtime/record-shipment.ts` is the declaration with `eventBridge.schema(OrderShipped)` above. `rule()` takes no schema: the function validates each event's detail with the schema of its declaration. Nothing checks that the events that the pattern matches have a detail that the schema accepts, so an event that does not fit fails in `decode()`.
+::
 
-```ts [@notation/aws/event-bridge]
-type RuleConfig = RuleOptions & {
-  bus: EventBus;
-  target: RuleTarget;
-};
-```
+Set `enabled: false` on `rule()` or `defineRule()` to keep the rule provisioned in AWS with `State: "DISABLED"` so it pauses matching events.
 
-The other options are the [options of `defineRule()`](#options), without `schema`. `bus` is a bus from `eventBus()` or `defaultEventBus()`.
+## Scheduled rules
 
-`target` is a declaration, passed as a function such as `() => recordShipment`, or a Lambda group from [`lambda()`](lambda.md#lambdaconfig), passed as it is. See [Wiring a declaration](lambda.md#wiring-a-declaration). The target can be:
+Run a Lambda on a recurring `rate()` or UTC `cron()` schedule either inside `$lambda` with `eventBridge.defineSchedule()` or centrally with `schedule()`:
 
-| Target                                                  | Result   |
-| ------------------------------------------------------- | -------- |
-| A declaration with `eventBridge.schema(OrderShipped)`   | Targeted |
-| A declaration with no `event`                           | Targeted |
-| A Lambda group from `lambda()`                          | Targeted |
-| A declaration with `eventBridge.schema(null)`           | Throws   |
-| A declaration with `defineRule()` or `defineSchedule()` | Throws   |
-
-A declaration with `eventBridge.schema(null)` receives scheduled events, so `rule()` throws for it, and it is a type error too.
-
-A declaration with `defineRule()` already makes its rule, so `rule()` throws for it. Make the rule in one place: remove the `rule()` call, or declare the function with `eventBridge.schema()`.
-
-To send the events of several patterns to one function, declare it with `eventBridge.schema()`, and call `rule()` once for each pattern. Each rule makes its own permission.
-
-## `eventBridge.defineSchedule(options)`
-
-A declaration names its schedule in `event`:
+::code-group
 
 ```ts [runtime/nightly-digest.ts]
 import { $lambda, eventBridge, type LambdaHandler } from "@notation/aws/lambda";
@@ -269,11 +172,7 @@ import { rate } from "@notation/aws/event-bridge";
 
 export const lambda = $lambda({
   id: "nightly-digest",
-  event: () =>
-    eventBridge.defineSchedule({
-      id: "nightly-digest",
-      schedule: rate(1, "day"),
-    }),
+  event: () => eventBridge.defineSchedule({ id: "nightly-digest", schedule: rate(1, "day") }),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
@@ -281,115 +180,150 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 };
 ```
 
-When infra has finished loading, the declaration makes an EventBridge rule on the default bus that targets the function, and the permission that lets the rule invoke it. Infra declares nothing for it.
-
-The runtime build keeps the options. `@notation/aws/event-bridge` sets `"sideEffects": false`, so the bundle includes `rate()` and leaves out the rest of the package.
-
-```ts [@notation/aws/lambda]
-type ScheduleOptions = {
-  id: string;
-  schedule: Schedule;
-};
-```
-
-`id` works as it does for [`schedule()`](#scheduleconfig).
-
-## `schedule(config)`
-
-Infra makes a schedule for a declaration with `eventBridge.schema(null)`:
-
-::code-group
-
-```ts [infra/schedule.ts]
-import { schedule, rate } from "@notation/aws/event-bridge";
-import { lambda as logEvent } from "runtime/log-event";
-
-schedule({
-  id: "log-every-minute",
-  schedule: rate(1, "minute"),
-  target: () => logEvent,
-});
-```
-
-```ts [runtime/log-event.ts]
+```ts [runtime/weekday-report.ts]
 import { $lambda, eventBridge, type LambdaHandler } from "@notation/aws/lambda";
 
 export const lambda = $lambda({
-  id: "log-event",
+  id: "weekday-report",
   event: () => eventBridge.schema(null),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
-  console.log("Scheduled event fired:", event);
+  console.log("report at", event.time);
 };
+```
+
+```ts [infra/schedule.ts]
+import { cron, schedule } from "@notation/aws/event-bridge";
+import { lambda as weekdayReport } from "../runtime/weekday-report";
+
+schedule({
+  id: "weekday-report",
+  schedule: cron("0 9 ? * MON-FRI *"),
+  target: () => weekdayReport,
+});
 ```
 
 ::
 
-A scheduled event has no detail, so its function declares `eventBridge.schema(null)`, and has no `decode()`.
+Scheduled rules run on the account's `"default"` event bus. Because scheduled events have no application `detail` schema, `lambda.decode` is typed as `never` and throws at runtime.
 
-`logEvent` is the declaration from the runtime module `runtime/log-event.ts`. `schedule` takes it as a function, `() => logEvent`, and calls the function when infra has finished loading. See [Wiring a declaration](lambda.md#wiring-a-declaration). `schedule` creates the same rule and permission as `defineSchedule()`. It returns nothing.
+## Default event bus
 
-### Schedule config
+Call `defaultEventBus()` to subscribe rules to AWS service events on the account's built-in `"default"` event bus without modifying or deleting the bus:
 
-```ts [@notation/aws/event-bridge]
-type ScheduleConfig = {
-  id: string;
-  schedule: Schedule;
-  target: ScheduleTarget; // RuleTarget<null>: () => declaration, or a Lambda group
+```ts [infra/orders.ts]
+import { defaultEventBus } from "@notation/aws/event-bridge";
+
+export const accountBus = defaultEventBus();
+```
+
+Repeated calls to `defaultEventBus()` return the same singleton `DefaultEventBusGroup`.
+
+## Invalid event details
+
+For pattern rules, `await lambda.decode(event)` validates `event.detail` directly (without JSON parsing) and throws `DecodeError` (`part: "detail"`) on schema mismatches:
+
+```ts [runtime/fulfil-order.ts]
+import { $lambda, DecodeError, eventBridge, type LambdaHandler } from "@notation/aws/lambda";
+import { ordersBus } from "../infra/orders";
+import { OrderPlaced } from "../shared/schema";
+
+export const lambda = $lambda({
+  id: "fulfil-order",
+  event: () =>
+    eventBridge.bind(ordersBus).defineRule({
+      id: "order-placed",
+      pattern: { source: ["shop"], "detail-type": ["OrderPlaced"] },
+      schema: OrderPlaced,
+    }),
+});
+
+export const handler: LambdaHandler<typeof lambda> = async (event) => {
+  try {
+    const { detail: order } = await lambda.decode(event);
+    console.log("fulfil", order.orderId, order.total);
+  } catch (error) {
+    if (error instanceof DecodeError && error.part === "detail") {
+      console.error("invalid event detail", error.issues);
+      return;
+    }
+    throw error;
+  }
 };
 ```
 
-`target` can be a declaration with `eventBridge.schema(null)`, a declaration with no `event`, or a Lambda group from [`lambda()`](lambda.md#lambdaconfig). A declaration with a detail schema, such as `eventBridge.schema(OrderShipped)`, receives the events of rules, so `schedule()` throws for it. A declaration with `eventBridge.defineSchedule()` already makes its schedule, so `schedule()` throws for it too. Schedule the function in one place: remove the `schedule()` call, or declare the function with `eventBridge.schema(null)`.
+## Reference
 
-The rule sends the EventBridge event to the function as it is.
+### Bus options
 
-`id` keys the schedule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores. See [IDs](lambda.md#ids) for how TypeScript checks an ID. Deploy generates the AWS name of the EventBridge rule when it first creates the rule, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--log-every-minute-1a2b3c4d`, where the instance is 8 random hex characters.
+`@notation/aws/event-bridge` exports two bus constructors returning subclasses of `EventBus`: `eventBus({ id })` declares a custom `EventBusGroup` (`id` is `1` to `64` name-safe characters matching `[A-Za-z0-9_-]`; changing `id` replaces the bus), and `defaultEventBus()` returns the singleton `DefaultEventBusGroup` reading the account's `"default"` event bus.
 
-You can't set the rule's AWS name. See [AWS names](../../manual/project-config.md#aws-names).
+Both expose these properties and helpers:
 
-## Schedule types
+| Property | Description |
+| :--- | :--- |
+| `arn` | `OutputRef<string>` resolving to the event bus ARN |
+| `name` | `OutputRef<string>` resolving to the event bus name |
+| `bus` | Underlying `@notation/aws/resources` `EventBus` or `DefaultEventBus` resource |
+| `grant(actions)` | Returns an IAM `Allow` `PolicyStatement` for `events:<action>` on `bus.arn` |
 
-### `rate(value, unit)`
+`EventBusAction` accepts `"PutEvents"`.
 
-```ts [infra/schedule.ts]
-import { rate } from "@notation/aws/event-bridge";
+### Rule options
 
-rate(1, "minute");
-rate(5, "minutes");
-rate(1, "hour");
-rate(12, "hours");
-rate(1, "day");
-```
+`rule(config)` and `eventBridge.bind(bus).defineRule(options)` share these options:
 
-```ts [@notation/aws/event-bridge]
-type RateUnit = "minute" | "minutes" | "hour" | "hours" | "day" | "days";
-```
+| Option | Description |
+| :--- | :--- |
+| `id` | Required `NameSafe<Id>` string identifying the rule |
+| `bus` | Required `EventBus` from `eventBus()` or `defaultEventBus()` on `rule()` |
+| `pattern` | Required non-empty `EventPattern` |
+| `target` | Required `RuleTarget` thunk or `LambdaGroup` on `rule()` |
+| `schema` | Required `StandardSchemaV1` validator for `event.detail` on `defineRule()` |
+| `enabled` | Optional `boolean` controlling rule state; defaults to `true` |
+| `retry` | Optional `RetryOptions` for failed deliveries to the target Lambda |
 
-### `cron(expression)`
+`id` must be `1` to `64` name-safe characters, and `target` accepts a `() => lambda` thunk or a `LambdaGroup`. Pass `v.unknown()` to `schema` for arbitrary payloads, and set `enabled: false` to provision the rule in `"DISABLED"` state. `rule()` rejects self-bound `$lambda` targets, scheduled targets (`eventBridge.schema(null)`), and targets declared for other event sources.
 
-```ts [infra/schedule.ts]
-import { cron } from "@notation/aws/event-bridge";
+### Event pattern structure
 
-cron("0 12 * * ? *");
-cron("0/15 * * * ? *");
-```
+`EventPattern` matches envelope fields and nested `detail` properties (`DetailPattern`):
 
-### `once(date)`
+| Field | Description |
+| :--- | :--- |
+| Envelope fields | `id`, `version`, `time`, `source`, `"detail-type"`, `account`, `region`, and `resources` |
+| Detail fields | Nested `detail` object mapping field names to `PatternMatcher[]` or nested `DetailPattern` objects |
+| Matchers | `string \| number \| boolean \| null` or content filters such as `{ prefix }`, `{ "anything-but" }`, and `{ numeric }` |
 
-```ts [infra/schedule.ts]
-import { once } from "@notation/aws/event-bridge";
+### Retry policy
 
-once(new Date("2027-12-31T23:59:00Z"));
-```
+`RetryOptions` accepts `maxAttempts` (whole number from `0` to `185`, defaulting to `185`) and `maxEventAge` (whole number of seconds from `60` to `86_400`, defaulting to `86_400`). Values outside these integer bounds throw before deployment.
 
-## Handler
+### Schedule options
 
-`LambdaHandler<typeof lambda>` types `event` from the declaration:
+`schedule(config)` and `eventBridge.defineSchedule(options)` accept:
 
-| `event`                                                                     | Handler event                                  |
-| --------------------------------------------------------------------------- | ---------------------------------------------- |
-| `eventBridge.bind(bus).defineRule(options)` or `eventBridge.schema(schema)` | `EventBridgeEvent<string, unknown>`            |
-| `eventBridge.defineSchedule(options)` or `eventBridge.schema(null)`         | `EventBridgeEvent<"Scheduled Event", unknown>` |
+| Option | Description |
+| :--- | :--- |
+| `id` | Required `NameSafe<Id>` string keying the rule in state |
+| `schedule` | Required `Schedule` built with `rate(value, unit)` or `cron(cronExpression)` |
+| `target` | Required `ScheduleTarget` thunk or `LambdaGroup` on `schedule()` |
 
-The handler's `event.detail` is `unknown`. `decode()` returns the event with `detail` typed as the schema's output.
+`id` must be `1` to `64` name-safe characters, and `target` accepts a `() => lambda` thunk or a `LambdaGroup`. `rate(value, unit)` builds `rate(<value> <unit>)` where `unit` (`RateUnit`) is `"minute" | "minutes" | "hour" | "hours" | "day" | "days"` (singular for `1`, plural for `> 1`), and `cron(cronExpression)` builds `cron(<cronExpression>)` using EventBridge's 6-field UTC syntax (`minutes hours day-of-month month day-of-week year`). `schedule()` rejects `$lambda` targets with a detail schema (`eventBridge.schema(schema)`), self-defined schedules or rules, and targets declared for other event sources.
+
+### Handler types
+
+`@notation/aws/lambda` supports both `$lambda`-derived and standalone EventBridge handler types:
+
+| Type | Description |
+| :--- | :--- |
+| `LambdaHandler<typeof lambda>` | Derives `EventBridgeEvent` and `void \| Promise<void>` from `$lambda` |
+| `EventBridgeHandler<TypeDescription, DetailType>` | Standalone rule handler type for `lambda()` |
+| `EventBridgeScheduleHandler` | Alias for `EventBridgeHandler<"Scheduled Event", any>` |
+
+`LambdaHandler<typeof lambda>` types `event` as `EventBridgeEvent<string, unknown>` for rules or `EventBridgeEvent<"Scheduled Event", unknown>` for schedules.
+
+### Physical naming
+
+Custom buses generate stage-scoped physical names up to `256` characters, and rules up to `64` characters per bus (see [Physical Names](../../core/physical-names.md)).

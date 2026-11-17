@@ -1,68 +1,121 @@
 # notation compile
 
-```sh
-notation compile [--config <path>]
+`notation compile` validates module boundaries and builds your infrastructure entrypoint and runtime bundles into `dist/` without running deploy-time code or requiring cloud credentials.
+
+## Usage
+
+Run `notation compile` from your project root to validate and build the project described by `notation.config.ts`:
+
+```sh [Terminal]
+@pm.dlx("notation compile")
 ```
 
-| Option            | Meaning                                                     |
-| ----------------- | ----------------------------------------------------------- |
-| `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
+Pass `--config` to target a config file outside the current working directory:
 
-Compiles the entry file and its runtime modules to `dist/`. The output is the same for every stage, so `compile` takes no `--stage`. The compiler uses Rolldown, and runs two passes:
+```sh [Terminal]
+@pm.dlx("notation compile --config apps/orders/notation.config.ts")
+```
 
-1. **Infrastructure compilation** – the compiler bundles the infra entry point to `dist/infra/<entry>.mjs`, with a source map. Packages stay external, and imports through tsconfig `paths` are bundled. Each [runtime module](../manual/file-conventions.md#runtime-modules) that the entry imports is replaced by a stripped copy, which keeps only the declaration and the top-level statements that it uses:
+Because `notation compile` bundles TypeScript without running `tsc` typechecking, pair it with a `typecheck` script in `package.json`:
+
+```json [package.json]
+{
+  "scripts": {
+    "compile": "notation compile",
+    "typecheck": "tsc --noEmit"
+  }
+}
+```
+
+## Options
+
+`notation compile` accepts only `--config <path>` (default: nearest `notation.config.ts`). Because it builds without resolving a stage or evaluating infrastructure code, it does not accept `--stage`, `--json`, or `--pretty` and requires no cloud credentials.
+
+## Boundary validation
+
+Before emitting bundles, `notation compile` enforces Notation's split-compilation rules across `infra`, `runtime`, and `shared` modules – catching misplaced declarations, forbidden cross-layer imports, static reads of declaration outputs in runtime code, and invalid Worker exports before deploy.
+
+## Compilation phases
+
+`notation compile` runs two build passes: first building a deploy-time infrastructure bundle, then compiling each declared function or Worker into an isolated runtime bundle.
+
+Both AWS Lambda and Cloudflare Worker declaration modules go through this two-phase build:
 
 ::code-group
 
-```ts [runtime/todos.ts]
-import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
-import { api } from "./utils";
+```ts [runtime/orders.ts]
+import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { orderQueue } from "../infra/orders";
 
 export const lambda = $lambda({
-  id: "todos",
-  timeout: 5,
-  memory: 64,
-  event: () => apiGateway.schema(null),
+  id: "orders",
+  event: () => sqs.bind(orderQueue),
 });
 
-const todos = await api.get<any[]>("/todos");
-
-export const handler: LambdaHandler<typeof lambda> = async () => todos;
+export const handler: LambdaHandler<typeof lambda> = async (event) => {
+  for (const record of event.Records) await lambda.decode(record);
+};
 ```
 
-```ts [infra build]
-import { $lambda, apiGateway } from "@notation/aws/lambda";
+```ts [runtime/api.ts]
+import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
+import { orderCache } from "../infra/orders";
 
-export const lambda = __notation_declaredIn(
-  $lambda({
-    id: "todos",
-    timeout: 5,
-    memory: 64,
-    event: () => apiGateway.schema(null),
-  }),
-  "runtime/todos.ts",
-  "lambda",
-);
+export const worker = $worker({
+  id: "api",
+  compatibilityDate: "2026-10-12",
+  bindings: () => ({ ORDERS_CACHE: orderCache }),
+});
 
-function __notation_declaredIn(value, path, binding, moduleExports) {
-  /* ... */
-}
+export default {
+  async fetch(_req, env) {
+    return Response.json(await env.ORDERS_CACHE.get("latest"));
+  },
+} satisfies WorkerHandler<typeof worker>;
 ```
 
 ::
 
-`__notation_declaredIn` records the module's path, relative to the project root, against the declaration. When infra runs, `$lambda` reads the record to find the function's bundle.
+### Infrastructure bundle
 
-2. **Runtime compilation** – the compiler bundles each runtime module that the first pass found to `dist/<module path>/index.mjs`, such as `dist/runtime/todos/index.mjs`. The bundle exports the module's `handler`, so Lambda calls `index.handler`. The declaration keeps only `id`, `event`, and the names in `env`. Infra modules are left out, and the build fails if the function uses an infra module or calls a resource function such as `queue()`.
+The first pass bundles `entry` and declaration modules into ESM under `dist/`, stripping runtime handlers so deploy never loads runtime SDKs.
 
-**The first pass also compiles runtime modules that the entry doesn't import.** It scans the files that `files.runtime` in `notation.config.ts` matches, and the infra bundle imports each runtime module that it finds after the entry. See [Runtime modules that infra doesn't import](../manual/file-conventions.md#runtime-modules-that-infra-doesnt-import).
+### Runtime bundles
 
-The build fails with the file and line when:
+The second pass emits one standalone ESM bundle for each declaration with a runtime entry, stripping deploy-only options. Entryless declarations such as `$durableObject` are bundled into the Worker that binds them.
 
-- a runtime module doesn't export `handler`,
-- a runtime module has more than one declaration,
-- an infra module imports a name from a runtime module that the declaration doesn't use,
-- `$lambda` is not called as `const name = $lambda({ ... })` at the top level, with an object literal,
-- `event` refers to an infra module,
-- a shared module breaks its rules. See [Shared modules](../manual/file-conventions.md#shared-modules), or
-- the function uses an infra module, or a resource function from a package. The error names each use and the chain of imports. The check reads the code before minify, so an unused call to an infra helper or to `queue()` also fails the build. If a file that `files.infra` doesn't match calls the resource function at its top level, the error says to add the file to `files.infra`. If that file holds a declaration, the error says to move the call to an infra module instead. If the file is outside the root or in a package folder, and not in `node_modules`, the error says that if the function doesn't use a value from the file, the nearest `package.json` can set `"sideEffects": false`, so that the bundler can leave the file out. If the function does use a value from it, the error says to read infra values through the declaration's `env()`, and to move a plain value that the function needs to a file that doesn't call a resource function.
+## Generated artifacts
+
+For an `entry` of `infra/orders.ts` with `runtime/orders.ts` (AWS) or `runtime/api.ts` (Cloudflare), `notation compile` writes the following outputs under `dist/`:
+
+```text [dist/]
+dist/
+├── infra/
+│   ├── orders.mjs
+│   └── orders.mjs.map
+├── chunks/
+└── runtime/
+    ├── orders/
+    │   └── index.mjs
+    └── api/
+        └── index.mjs
+```
+
+`notation compile` writes only compiled bundles and source maps under `dist/` without creating state or deployment caches.
+
+## Skipping compilation
+
+To reuse the `dist/` build emitted by `notation compile` in a separate deploy step, pass `--no-compile` to [`notation deploy`](./deploy.md):
+
+```sh [Terminal]
+@pm.dlx("notation compile")
+@pm.dlx("notation deploy --stage prod --no-compile")
+```
+
+Compilation behavior differs across deploy and preview commands:
+
+| Command | Behavior |
+| :--- | :--- |
+| `notation deploy --no-compile` | Deploys directly from `dist/` without rebuilding |
+| `notation plan` | Always compiles before evaluating changes and has no `--no-compile` flag |
+| `notation watch` | Compiles continuously in watch mode and deploys each updated build |

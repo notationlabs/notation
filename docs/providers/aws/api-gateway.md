@@ -1,401 +1,342 @@
 # API Gateway
 
-`@notation/aws/api-gateway` builds HTTP APIs backed by Lambda functions. A Lambda function receives the requests of a route in one of two ways:
+Expose public or JWT-authenticated HTTP endpoints backed by AWS API Gateway v2 HTTP APIs and Lambda proxy integrations.
 
-| Function-led                                                                  | Infra-led                                                                                 |
-| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `event: () => apiGateway.bind(todoApi).defineRoute({ method, path, schema })` | `event: () => apiGateway.schema(NewTodo)`                                                 |
-| The declaration makes one route on an API that infra declares.                | Infra makes routes with `router(todoApi).post("/todos", () => todos)`.                    |
-| `decode()` validates with the route's `schema` and the authorizer's claims.   | `decode()` validates with `NewTodo`, and with the claims schema of `.authSchema(Claims)`. |
+For AWS credential and region setup, see [AWS Overview](./overview.md).
 
-`apiGateway` comes from `@notation/aws/lambda`. `api()`, `jwtAuthorizer()` and `router()` come from `@notation/aws/api-gateway`, and only run in infra.
-
-## `api(config)`
-
-```ts [infra/api.ts]
-import { api } from "@notation/aws/api-gateway";
-
-export const todoApi = api({ id: "todo-api" });
-```
-
-### Config
-
-```ts [@notation/aws/api-gateway]
-type ApiConfig = {
-  id: string;
-};
-```
-
-`id` keys the API in state, so changing it replaces the API. Use 1 to 64 letters, digits, hyphens and underscores. See [IDs](lambda.md#ids) for how TypeScript checks an ID. Deploy generates the API's AWS name when it first creates the API, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--todo-api-1a2b3c4d`, where the instance is 8 random hex characters.
-
-You can't set the API's AWS name. See [AWS names](../../manual/project-config.md#aws-names).
-
-The routes, integrations and permissions of an API take their state keys from the IDs that they connect. A route is keyed `api-route:<api id>:<METHOD> <path>`, such as `api-route:todo-api:POST /todos`, an integration `api-integration:<api id>:<lambda id>`, and a permission `api-permission:<api id>:<lambda id>`.
-
-`api()` also makes the `$default` stage, which deploys each change.
-
-## `apiGateway.bind(api).defineRoute(options)`
-
-A declaration names the API and the route that its function serves in `event`:
+Define a shared payload schema, a `$lambda` HTTP handler, and an API Gateway router that wires `POST /orders` to that function:
 
 ::code-group
 
-```ts [runtime/create-todo.ts]
-import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
-import { todoApi } from "infra/api";
-import { NewTodo } from "shared/schema";
+```ts [shared/orders.ts]
+import * as v from "valibot";
 
-export const lambda = $lambda({
-  id: "create-todo",
-  event: () =>
-    apiGateway
-      .bind(todoApi)
-      .defineRoute({ method: "POST", path: "/todos", schema: NewTodo }),
-});
-
-export const handler: LambdaHandler<typeof lambda> = async (event) => {
-  const { body: todo } = await lambda.decode(event);
-  return { statusCode: 201, body: JSON.stringify(todo) };
-};
-```
-
-```ts [infra/api.ts]
-import { api } from "@notation/aws/api-gateway";
-
-export const todoApi = api({ id: "todo-api" });
-```
-
-::
-
-The infra module only declares the API. When infra has finished loading, the declaration makes the route `POST /todos` on `todoApi` to the `create-todo` function. See [What each route generates](#what-each-route-generates).
-
-### Options
-
-```ts [@notation/aws/lambda]
-type ApiGatewayRouteOptions = {
-  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  path: `/${string}`;
-  schema: StandardSchemaV1 | null;
-  auth?: JwtAuthorizerGroup; // from jwtAuthorizer()
-};
-```
-
-`schema` validates the body of a request in `lambda.decode(event)`. **`schema` is required.** A route whose requests have no body, such as `GET /todos`, passes `schema: null`, and then `decode()` rejects a request with a body. See [Request bodies](#request-bodies). `auth` puts the route behind a JWT authorizer; see [JWT authorization](#jwt-authorization).
-
-### In the runtime build
-
-**The function doesn't load `infra/api.ts`.** The runtime build replaces `todoApi` with `{}`, because `api()` is marked `@resource runtime:` with no options, and the function reads nothing from the API:
-
-```ts [runtime/create-todo.ts, as the runtime build strips it]
-export const lambda = $lambda({
-  id: "create-todo",
-  event: () =>
-    apiGateway
-      .bind({}) // <- todoApi
-      .defineRoute({ method: "POST", path: "/todos", schema: NewTodo }),
+export const NewOrder = v.object({
+  orderId: v.string(),
+  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
 });
 ```
 
-`NewTodo` stays as it is, so it must come from a shared module or a package. An authorizer in `auth` becomes an object of its claims schema; see [JWT authorization](#jwt-authorization).
+```ts [runtime/create-order.ts]
+import { $lambda, apiGateway, DecodeError, type LambdaHandler } from "@notation/aws/lambda";
+import { NewOrder } from "../shared/orders";
 
-`defineRoute()` makes one route. To serve several routes from one function, declare it with `apiGateway.schema(body)` and route it from infra with `router()`.
-
-## `apiGateway.schema(body)`
-
-A declaration that infra routes to names the schema of its request bodies, and no API:
-
-```ts [runtime/todos.ts]
-import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
-import { NewTodo } from "shared/schema";
-
-export const lambda = $lambda({
-  id: "todos",
-  event: () => apiGateway.schema(NewTodo),
-});
-```
-
-`body` is required. A function that only serves `GET` routes takes no body, so it calls `apiGateway.schema(null)`.
-
-The event of `apiGateway.schema(body)` has the kind `apiGateway`, so only routes with no authorizer can invoke the function. For routes behind a JWT authorizer, call `.authSchema()` on the event:
-
-| Call                                            | Kind             | Routes that can invoke the function                             |
-| ----------------------------------------------- | ---------------- | --------------------------------------------------------------- |
-| `apiGateway.schema(NewTodo)`                    | `apiGateway`     | Routes with no authorizer                                       |
-| `apiGateway.schema(NewTodo).authSchema(Claims)` | `apiGateway-jwt` | Routes whose authorizer has the claims schema `Claims`, or none |
-| `apiGateway.schema(NewTodo).authSchema()`       | `apiGateway-jwt` | Routes with any JWT authorizer                                  |
-
-```ts [@notation/aws/lambda]
-apiGateway.schema(body: StandardSchemaV1 | null).authSchema(claims?: StandardSchemaV1);
-```
-
-## `router(api)`
-
-```ts [infra/api.ts]
-import { api, router } from "@notation/aws/api-gateway";
-import { lambda as todos } from "runtime/todos";
-
-const todoApi = api({ id: "todo-api" });
-const todoRouter = router(todoApi);
-
-todoRouter.get("/todos", () => todos);
-todoRouter.post("/todos", () => todos);
-```
-
-`todos` is the declaration from the runtime module `runtime/todos.ts`. The router methods take it as a function, `() => todos`, and call the function when infra has finished loading. See [Wiring a declaration](lambda.md#wiring-a-declaration). The methods also take a Lambda group from [`lambda()`](lambda.md#lambdaconfig), as it is.
-
-Both routes call the one `todos` function. Its handler reads `event.routeKey`, such as `GET /todos` or `POST /todos`, to tell them apart.
-
-### Available methods
-
-- `.get(path, target)`
-- `.post(path, target)`
-- `.put(path, target)`
-- `.patch(path, target)`
-- `.delete(path, target)`
-- `.withAuthorizer(authorizer)`, which returns the same five methods for routes behind the authorizer
-
-The route methods return nothing.
-
-### Targets
-
-| Target                                                     | Route with no authorizer | Route with an authorizer                                         |
-| ---------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------- |
-| A declaration with `apiGateway.schema(body)`               | Routed                   | Throws                                                           |
-| A declaration with `.authSchema(claims)`                   | Throws                   | Routed if the authorizer's `claims` is the same schema, or unset |
-| A declaration with `.authSchema()`                         | Throws                   | Routed                                                           |
-| A declaration with no `event`                              | Routed                   | Routed                                                           |
-| A Lambda group from `lambda()`                             | Routed                   | Routed                                                           |
-| A declaration with `apiGateway.bind(api).defineRoute(...)` | Throws                   | Throws                                                           |
-
-A declaration with `defineRoute()` already makes its route, so `router()` throws for it. Route the function in one place: remove the router call, or declare the function with `apiGateway.schema(body)`.
-
-TypeScript checks the same pairings, except for the last row.
-
-### What each route generates
-
-Each route, from `router()` or from `defineRoute()`, produces a full resource subgraph:
-
-- **API Gateway route** – the HTTP method + path binding
-- **Lambda integration** – connects the API to the Lambda function. Routes on one API that call one function share it
-- **Lambda invoke permission** – allows API Gateway to call the function. Routes on one API that call one function share it
-
-### Request bodies
-
-Request bodies are JSON. `lambda.decode(event)` decodes the body in two steps:
-
-```text
-request body → base64 decode, if isBase64Encoded is set → JSON.parse → body schema → body
-```
-
-The body schema only sees the parsed value, never the raw string. So the outcome depends on the body schema and on the body that the client sends:
-
-| Body schema  | Request body           | `body` in the result   |
-| ------------ | ---------------------- | ---------------------- |
-| `NewTodo`    | `{"title":"Buy milk"}` | The parsed JSON        |
-| `NewTodo`    | `Buy milk`             | Throws a `DecodeError` |
-| `NewTodo`    | Empty, or none         | `undefined`, validated |
-| `v.string()` | `"Buy milk"`           | `"Buy milk"`           |
-| `v.string()` | `Buy milk`             | Throws a `DecodeError` |
-| `null`       | Empty, or none         | `undefined`            |
-| `null`       | Any other body         | Throws a `DecodeError` |
-
-**A text body is sent as a JSON string.** A route that takes text declares a string schema, such as `v.string()`, and the client sends the text with its quotes, as `"Buy milk"`. Plain `Buy milk` is not JSON, so `decode()` throws a `DecodeError` with the message "The request body is not valid JSON." A JSON body that the schema rejects throws a `DecodeError` with the schema's issues.
-
-Form bodies and binary bodies are not supported yet.
-
-An empty body is validated as `undefined`, so the schema decides whether a request may have no body. See [Validating bodies with `decode()`](../../manual/functions.md#validating-bodies-with-decode).
-
-## JWT authorization
-
-A JWT authorizer is a resource on an API. It holds the token's issuer and audience, and a schema for the token's claims:
-
-```ts [infra/api.ts]
-import { api, jwtAuthorizer } from "@notation/aws/api-gateway";
-import { Claims } from "shared/claims";
-
-export const userApi = api({ id: "user-api" });
-
-export const userAuth = jwtAuthorizer({
-  id: "user-auth",
-  api: userApi,
-  issuer: "https://myaccount.auth0.com/",
-  audience: ["https://my-api"],
-  claims: Claims,
-});
-```
-
-A declaration puts its route behind the authorizer with `auth`:
-
-```ts [runtime/user.ts]
-import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
-import { userApi, userAuth } from "infra/api";
-
-export const lambda = $lambda({
-  id: "user",
-  event: () =>
-    apiGateway.bind(userApi).defineRoute({
-      method: "GET",
-      path: "/user",
-      schema: null,
-      auth: userAuth,
-    }),
+export const createOrder = $lambda({
+  id: "create-order",
+  event: () => apiGateway.schema(NewOrder),
 });
 
-export const handler: LambdaHandler<typeof lambda> = async (event) => {
-  const { claims } = await lambda.decode(event); // <- throws a DecodeError for claims that Claims rejects
-  return { message: claims.sub };
-};
-```
-
-In the runtime build, `userAuth` becomes `{ claims: Claims }`, with `Claims` imported from where `infra/api.ts` imports it. `jwtAuthorizer()` is marked `@resource runtime: claims`, so the claims schema must come from a shared module, as a queue's schema does for `sqs.bind()`.
-
-Infra routes to a declaration with `withAuthorizer()`:
-
-::code-group
-
-```ts [infra/api.ts]
-router(userApi)
-  .withAuthorizer(userAuth)
-  .get("/profile", () => profile);
-```
-
-```ts [runtime/profile.ts]
-export const lambda = $lambda({
-  id: "profile",
-  event: () => apiGateway.schema(null).authSchema(Claims),
-});
-```
-
-::
-
-**The claims check compares objects, not types.** `withAuthorizer()` routes throw when the authorizer's `claims` is another object than the one in `.authSchema(Claims)`. TypeScript also checks the pairing: a declaration whose claims schema has another type than the authorizer's is a type error.
-
-Either side can leave out the claims schema:
-
-- An authorizer with no `claims` can route to a declaration with any claims schema, because the function still validates the claims.
-- A declaration with `.authSchema()` and no claims schema can be routed from any authorizer. The function then doesn't validate the claims.
-
-`withAuthorizer()` also throws for an authorizer on another API.
-
-### Claims in `decode()`
-
-For a request through a JWT authorizer, `lambda.decode(event)` reads `event.requestContext.authorizer.jwt.claims`, validates them with the claims schema, and returns them as a top-level `claims` field, next to `body`:
-
-| Declaration                                      | `claims` in the result of `decode()`              |
-| ------------------------------------------------ | ------------------------------------------------- |
-| `.authSchema(Claims)`, or `auth` with `Claims`   | The output type of `Claims`                       |
-| `.authSchema()`, or `auth` with no claims schema | The claims as API Gateway sends them, `JwtClaims` |
-| No authorizer                                    | No `claims` field                                 |
-
-`decode()` throws a `DecodeError` when the claims are not valid, and when the request has no claims. It leaves `requestContext` as API Gateway sent it.
-
-A `DecodeError` has a `part` field, which is `"claims"` for an error in the claims and `"body"` for an error in the body. `decode()` checks the claims before the body. A handler can use `part` to choose the status code:
-
-```ts [runtime/user.ts]
-export const handler: LambdaHandler<typeof lambda> = async (event) => {
+export const handler: LambdaHandler<typeof createOrder> = async (event) => {
   try {
-    const { claims } = await lambda.decode(event);
-    return { message: claims.sub };
+    const { body: order } = await createOrder.decode(event);
+    return { statusCode: 201, body: JSON.stringify({ orderId: order.orderId }) };
   } catch (error) {
     if (!(error instanceof DecodeError)) throw error;
-    const statusCode = error.part === "claims" ? 403 : 400;
-    return { statusCode, body: error.message };
+    return { statusCode: 400, body: JSON.stringify({ issues: error.issues }) };
   }
 };
 ```
 
-**API Gateway passes each claim as a string.** An HTTP API's JWT authorizer turns every claim value into a string before it calls the function. A number such as `exp` arrives as `"1700000000"`, and an array such as `["admin", "staff"]` arrives as `"[admin staff]"`. So a claims schema reads strings, and converts the ones that it needs as other types:
+```ts [infra/api.ts]
+import { api, router } from "@notation/aws/api-gateway";
+import { createOrder } from "../runtime/create-order";
 
-```ts [shared/claims.ts]
+export const ordersApi = api({ id: "orders-api" });
+router(ordersApi).post("/orders", () => createOrder);
+```
+
+::
+
+Each `api()` call provisions an HTTP API (`ProtocolType: "HTTP"`) with an auto-deploying `$default` stage serving from the root URL. Handlers can return either a structured HTTP response (`{ statusCode, headers?, body?, cookies?, isBase64Encoded? }`) or a JSON-serializable object returned with status `200`.
+
+## Multiple routes
+
+Route multiple HTTP paths on `router(ordersApi)` to one `$lambda` handler and dispatch on `event.routeKey`:
+
+::code-group
+
+```ts [shared/orders.ts]
 import * as v from "valibot";
 
-export const Claims = v.object({
-  sub: v.string(),
-  exp: v.pipe(v.string(), v.transform(Number)),
-  groups: v.optional(
-    v.pipe(
-      v.string(),
-      v.transform((value) => value.slice(1, -1).split(" ").filter(Boolean)),
-    ),
-  ),
+export const NewOrder = v.object({
+  orderId: v.string(),
+  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
 });
 ```
 
-The AWS documentation shows the claims only as strings, and doesn't describe how other values are converted. Check the claims that your identity provider's tokens hold, by logging `event.requestContext.authorizer.jwt.claims` once.
+```ts [runtime/orders.ts]
+import { $lambda, apiGateway, DecodeError, type LambdaHandler } from "@notation/aws/lambda";
+import { NewOrder } from "../shared/orders";
 
-The handler's event types `requestContext.authorizer.jwt.claims` as `JwtClaims`, the loose type from `aws-lambda`, which allows numbers, booleans and arrays that API Gateway doesn't send. Read the typed claims from the result of `decode()`.
+export const orders = $lambda({
+  id: "orders",
+  event: () => apiGateway.schema(NewOrder),
+});
 
-### JwtAuthorizerConfig
-
-```ts [@notation/aws/api-gateway]
-type JwtAuthorizerConfig = {
-  id: string;
-  name?: string;
-  api: ApiGroup;
-  issuer: string;
-  audience: string[];
-  scopes?: string[];
-  claims?: StandardSchemaV1;
+export const handler: LambdaHandler<typeof orders> = async (event) => {
+  if (event.routeKey === "GET /orders/{id}") {
+    return { orderId: event.pathParameters?.id };
+  }
+  if (event.routeKey === "POST /orders") {
+    try {
+      const { body } = await orders.decode(event);
+      return { statusCode: 201, body: JSON.stringify(body) };
+    } catch (error) {
+      if (!(error instanceof DecodeError)) throw error;
+      return { statusCode: 400, body: JSON.stringify({ issues: error.issues }) };
+    }
+  }
+  return { items: [] };
 };
 ```
 
-`id` keys the authorizer in state, together with its API's `id`. The state key is `api-authorizer:<api id>:<id>`, such as `api-authorizer:todo-api:user-auth`. Use 1 to 64 letters, digits, hyphens and underscores. See [IDs](lambda.md#ids) for how TypeScript checks an ID. Two authorizers of one API can't share an `id`, but two APIs can each have an authorizer with the same `id`.
+```ts [infra/api.ts]
+import { api, router } from "@notation/aws/api-gateway";
+import { orders } from "../runtime/orders";
 
-**The `issuer` and `audience` don't affect the state key.** Changing them updates the authorizer in place, and the routes keep pointing at it. Two authorizers on one API can have the same `issuer` and `audience` if their IDs differ. An HTTP API allows 10 authorizers.
+const ordersApi = api({ id: "orders-api" });
+const ordersRouter = router(ordersApi);
 
-In AWS, the authorizer is named after its `id`, such as `user-auth`, or after `name` when you set it. The name has no `<app>--<stage>--` prefix, because an authorizer's name only needs to be unique inside its API, and the API's name has the prefix already.
+ordersRouter.get("/orders", () => orders);
+ordersRouter.get("/orders/{id}", () => orders);
+ordersRouter.post("/orders", () => orders);
+```
 
-The authorizer owns its API Gateway authorizer resource. Each route of the authorizer requires its `scopes`.
+::
 
-## Integrations after an unknown create
+When one `$lambda` serves both bodyless `GET` and JSON `POST` routes, call `decode(event)` only in the `POST` branch. Paths support parameter templates like `"/orders/{id}"` and greedy segments like `"/orders/{proxy+}"` via `event.pathParameters`, leaving path and query parameters as raw string maps.
 
-Notation looks for an API, an authorizer or a route before it creates one, and takes over the one that it finds. After a create with an unknown outcome, it looks the resource up again before it creates it again. An API and an authorizer are found by name, and a route by its route key. An integration has no name and no unique key, so Notation cannot look it up. It is created again in two cases:
+## Declaration-owned routes
 
-1. The process stops after AWS creates the integration and before Notation records it. The next run creates it again.
-2. `CreateIntegration` times out or gets a server error after AWS has created it. The deploy fails, and the next deploy creates it again.
-
-The extra integration has no route pointing at it, so traffic is unaffected. Notation does not record it and does not delete it. Deleting the API deletes it. An extra integration counts toward the quota of 300 integrations per API. Delete an extra one in the console if an API reaches its quota.
-
-An API can also be created twice, because AWS does not keep an API's name unique. Notation looks for the API's name with `GetApis` one second after a create with an unknown outcome, which is a `CreateApi` call that timed out or got a server error, or a process that stopped before Notation recorded the API. If AWS created the API and `GetApis` does not list it yet, Notation creates a second API. Notation records the second API and does not delete the first. A later lookup by name then fails, and its error lists the IDs of the APIs with the name. Delete all but one. The same holds for an authorizer, with `CreateAuthorizer` and `GetAuthorizers`.
-
-A route is not created twice. API Gateway refuses a second route with the same route key, and deploy then finds the existing route by its route key and takes it over.
-
-## Full example
-
-Infrastructure and runtime side-by-side:
+Use `apiGateway.bind(api).defineRoute()` inside `$lambda` when a runtime module owns a single route alongside its handler:
 
 ::code-group
 
 ```ts [infra/api.ts]
-import { api, router } from "@notation/aws/api-gateway";
-import { lambda as todos } from "runtime/todos";
+import { api } from "@notation/aws/api-gateway";
 
-const todoApi = api({ id: "todo-api" });
-const todoRouter = router(todoApi);
-
-todoRouter.get("/todos", () => todos);
-todoRouter.get("/todos/count", () => todos);
+export const ordersApi = api({ id: "orders-api" });
 ```
 
-```ts [runtime/todos.ts]
-import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
-import { api } from "./utils";
+```ts [runtime/get-order.ts]
+import { $lambda, apiGateway, DecodeError, type LambdaHandler } from "@notation/aws/lambda";
+import { ordersApi } from "../infra/api";
 
-export const lambda = $lambda({
-  id: "todos",
-  timeout: 5,
-  memory: 64,
-  event: () => apiGateway.schema(null),
+export const getOrder = $lambda({
+  id: "get-order",
+  event: () =>
+    apiGateway.bind(ordersApi).defineRoute({
+      method: "GET",
+      path: "/orders/{id}",
+      schema: null,
+    }),
 });
 
-const todos = await api.get<any[]>("/todos");
-
-export const handler: LambdaHandler<typeof lambda> = async (event) => {
-  if (event.routeKey === "GET /todos/count") return todos.length;
-  return todos;
+export const handler: LambdaHandler<typeof getOrder> = async (event) => {
+  try {
+    await getOrder.decode(event);
+    return { orderId: event.pathParameters?.id };
+  } catch (error) {
+    if (!(error instanceof DecodeError)) throw error;
+    return { statusCode: 400, body: error.message };
+  }
 };
 ```
 
 ::
 
-From these two files, Notation declares an API Gateway HTTP API and a deployment stage, one Lambda function with its IAM role, zip package and CloudWatch log group, one Lambda integration, one invoke permission, and two API Gateway routes. Both routes call the `todos` function, and its handler branches on `event.routeKey`.
+Pass `schema: null` on routes that must reject non-empty request bodies. Self-bound `defineRoute()` targets cannot also be wired through `router()`.
+
+## JWT authorization
+
+Use `jwtAuthorizer()` to validate bearer tokens in `$request.header.Authorization` at API Gateway before requests reach your Lambda functions:
+
+::code-group
+
+```ts [shared/jwt.ts]
+import * as v from "valibot";
+
+// API Gateway passes every JWT claim value as a string.
+export const OrderClaims = v.object({
+  sub: v.string(),
+  exp: v.pipe(v.string(), v.transform(Number)),
+  scope: v.string(),
+});
+```
+
+```ts [infra/api.ts]
+import { api, jwtAuthorizer, router } from "@notation/aws/api-gateway";
+import { customerOrders } from "../runtime/customer-orders";
+import { OrderClaims } from "../shared/jwt";
+
+export const ordersApi = api({ id: "orders-api" });
+
+export const ordersAuth = jwtAuthorizer({
+  id: "orders-auth",
+  api: ordersApi,
+  issuer: "https://auth.example.com/",
+  audience: ["https://orders.example.com"],
+  scopes: ["orders:read"],
+  claims: OrderClaims,
+});
+
+router(ordersApi).withAuthorizer(ordersAuth).get("/orders", () => customerOrders);
+```
+
+```ts [runtime/customer-orders.ts]
+import { $lambda, apiGateway, DecodeError, type LambdaHandler } from "@notation/aws/lambda";
+import { OrderClaims } from "../shared/jwt";
+
+export const customerOrders = $lambda({
+  id: "customer-orders",
+  event: () => apiGateway.schema(null).authSchema(OrderClaims),
+});
+
+export const handler: LambdaHandler<typeof customerOrders> = async (event) => {
+  try {
+    const { claims } = await customerOrders.decode(event);
+    return { customerId: claims.sub, expiresAt: claims.exp };
+  } catch (error) {
+    if (!(error instanceof DecodeError)) throw error;
+    return { statusCode: error.part === "claims" ? 403 : 400, body: error.message };
+  }
+};
+```
+
+::
+
+API Gateway HTTP APIs stringify all JWT claim values (including numbers and booleans), so use schema transforms when you need typed non-string claims (see [Types](../../core/types.md)). Branch on `error.part === "claims"` to return `403` for invalid claims and `400` for invalid bodies.
+
+## Endpoint outputs
+
+`api()` returns an `ApiGroup` exposing the underlying `Api` resource at `.api` (there is no `.url` shorthand). Read the deployed base URL via `.api.outputRef("ApiEndpoint")` or compose paths with `text` (see [Outputs & Contributions](../../core/outputs-and-contributions.md)):
+
+```ts [infra/webhooks.ts]
+import { api } from "@notation/aws/api-gateway";
+import { lambda } from "@notation/aws/lambda";
+import { text } from "@notation/resource";
+
+export const ordersApi = api({ id: "orders-api" });
+
+export const webhook = lambda({
+  id: "webhook",
+  code: { type: "file", path: "external/webhook.mjs" },
+});
+
+webhook.fn.contribute({
+  Environment: {
+    Variables: {
+      API_BASE_URL: ordersApi.api.outputRef("ApiEndpoint"),
+      ORDERS_URL: text`${ordersApi.api.outputRef("ApiEndpoint")}/orders`,
+    },
+  },
+});
+```
+
+You can also inspect `ApiEndpoint` as a clickable link in [notation dashboard](../../cli/dashboard.md).
+
+## CORS
+
+`api({ id })` accepts only `id`, and `.api.contribute()` does not support `CorsConfiguration`. Return `Access-Control-Allow-Origin` headers from your Lambda handlers for simple requests, or declare low-level `apiGateway.Api` and `apiGateway.Stage` resources from `@notation/aws/resources` when API-level `OPTIONS` preflight handling is required:
+
+```ts [infra/cors-api.ts]
+import { apiGateway } from "@notation/aws/resources";
+
+export const publicApi = new apiGateway.Api("api:public-api", {
+  config: {
+    ProtocolType: "HTTP",
+    CorsConfiguration: {
+      AllowOrigins: ["https://shop.example.com"],
+      AllowMethods: ["GET", "POST", "OPTIONS"],
+      AllowHeaders: ["content-type", "authorization"],
+      AllowCredentials: true,
+      MaxAge: 300,
+    },
+  },
+});
+
+export const publicStage = new apiGateway.Stage("api:public-api:stage", {
+  config: { StageName: "$default", AutoDeploy: true },
+  dependencies: { api: publicApi },
+});
+```
+
+## Reference
+
+### API options
+
+`api(config)` accepts `{ id }` (`NameSafe<Id>`, `1` to `64` characters matching `[A-Za-z0-9_-]`; changing `id` replaces the API) and returns an `ApiGroup` containing an `Api` (`ProtocolType: "HTTP"`) and an auto-deploying `$default` `Stage`. Access the underlying `Api` resource via `.api` (`outputRef("ApiEndpoint")`, `outputRef("ApiId")`, `outputRef("ExecuteApiSourceArn")`).
+
+### Router methods
+
+`router(apiGroup)` exposes `.get(path, target)`, `.post(path, target)`, `.put(path, target)`, `.patch(path, target)`, `.delete(path, target)`, and `.withAuthorizer(authorizer)`:
+
+- **`path`** (`` `/${string}` ``, required) – Route path starting with `/`, supporting parameter templates such as `"/orders/{id}"` and greedy paths such as `"/orders/{proxy+}"`.
+- **`target`** (`ApiGatewayTarget`, required) – A `() => fn` thunk returning a `$lambda` declaration (with `apiGateway.schema(...)` or no `event`), or a `LambdaGroup` from `lambda()`.
+
+Router validation and integration rules:
+
+- **Shared integrations** – Multiple routes on one API targeting the same Lambda share one `LambdaIntegration` and one `LambdaPermission`; routes across two APIs create one pair per API.
+- **Unique routes** – Duplicate `METHOD /path` routes on the same API, non-HTTP `$lambda` triggers, and self-bound `defineRoute()` targets throw.
+
+### Route options
+
+`apiGateway.bind(api).defineRoute(options)` accepts four options:
+
+| Option | Description |
+| :--- | :--- |
+| `method` | Required HTTP method: `"GET"`, `"POST"`, `"PUT"`, `"PATCH"`, or `"DELETE"` |
+| `path` | Required route path starting with `/` |
+| `schema` | Required `StandardSchemaV1` body validator, or `null` for bodyless routes |
+| `auth` | Optional `JwtAuthorizerGroup` created by `jwtAuthorizer()` on the same `api` |
+
+### JWT authorizer options
+
+`jwtAuthorizer(config)` creates a `JwtAuthorizerGroup`:
+
+| Option | Description |
+| :--- | :--- |
+| `id` | Required `IdOption<Id>` scoped to the API |
+| `name` | Optional AWS authorizer name override; defaults to `id` |
+| `api` | Required `ApiGroup` whose routes this authorizer guards |
+| `issuer` | Required OIDC or JWT issuer URL mapped to `JwtConfiguration.Issuer` |
+| `audience` | Required `string[]` of allowed JWT audiences mapped to `JwtConfiguration.Audience` |
+| `scopes` | Optional `string[]` of required OAuth scopes; defaults to `[]` |
+| `claims` | Optional `StandardSchemaV1` validator used by `decode()` on JWT claims |
+
+`jwtAuthorizer()` sets `IdentitySource` to `["$request.header.Authorization"]` and `AuthorizerType` to `"JWT"`. `id` must be `1` to `64` name-safe characters (changing it replaces the authorizer), and `name` omits the stage prefix.
+
+`JwtAuthorizerGroup` (detectable via `isJwtAuthorizerGroup()`) exposes `.api`, `.auth` (`AuthInstance`), `.claims`, and `.scopes`.
+
+| Rule | Behavior |
+| :--- | :--- |
+| Same API required | `withAuthorizer(auth)` and `defineRoute({ auth })` throw if `auth` belongs to another API |
+| Unique name per API | Both `id` and `name ?? id` must be unique within an API |
+| Auth mode match | Public routes reject `.authSchema(...)` and protected routes reject `apiGateway.schema(body)` |
+| Claims schema identity | Authorizer and `.authSchema()` schemas must reference the same validator instance when both are set |
+| Unchecked claims | Omitting `claims` or calling `.authSchema()` with no arguments returns raw `JwtClaims` |
+
+### Request decoding
+
+Calling `await fn.decode(event)` runs these steps in order:
+
+1. **JWT claims** – Validates `requestContext.authorizer.jwt.claims` on `apiGateway-jwt` events, throwing `DecodeError` (`part: "claims"`) on failure.
+2. **Base64 decoding** – Decodes `event.body` from base64 to UTF-8 when `isBase64Encoded` is `true`.
+3. **Null body schema** – Rejects non-empty bodies with `DecodeError` (`part: "body"`) when `schema` is `null`.
+4. **Standard Schema body** – Parses JSON bodies (or passes `undefined` when empty) and validates against the schema.
+5. **Decoded result** – Returns `{ ...event, body }` (plus `claims` on protected routes), preserving request metadata.
+
+### Payload responses
+
+Lambda integrations use `PayloadFormatVersion: "2.0"`. `LambdaHandler<typeof fn>` types `event` as `APIGatewayProxyEventV2` (or `APIGatewayJWTProxyEventV2<JwtClaims>` for protected routes) and the return type as `ApiGatewayResult`.
+
+### Standalone handler types
+
+When deploying external handlers with `lambda()`, `@notation/aws/lambda` exports:
+
+| Type | Description |
+| :--- | :--- |
+| `ApiGatewayHandler` | `(event: APIGatewayProxyEventV2, context: Context) => ApiGatewayResult \| Promise<ApiGatewayResult>` |
+| `JWTAuthorizedApiGatewayHandler<ClaimsType>` | Handler typed with `APIGatewayJWTProxyEventV2<ClaimsType>` |
+| `APIGatewayJWTProxyEventV2<T>` | HTTP v2 event with `requestContext.authorizer.jwt.claims` typed as `T` |
+| `JwtClaims` | Raw API Gateway JWT claims map |

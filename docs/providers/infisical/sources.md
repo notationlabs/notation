@@ -1,96 +1,187 @@
 # Infisical
 
-`@notation/infisical/resources` exports `InfisicalSecret`, a [source](../../manual/secrets.md#sources) that reads one secret from [Infisical](https://infisical.com). Its credential, `value`, is the secret's value, which another resource takes as `source.credentials.value`.
+Sync secrets from Infisical into AWS, Cloudflare, or custom Notation resources at deploy time. Secret values stay out of state, plans, and error output while upstream changes still trigger downstream updates.
 
-```sh
-npm install @notation/infisical
+## Installation
+
+Install `@notation/infisical` alongside `@notation/core` and your cloud provider package:
+
+```sh [Terminal]
+@pm.add("@notation/infisical")
 ```
 
-## `InfisicalSecret`
+## Quickstart
 
-The Stripe key of the `orders` service, written to the Cloudflare Secrets Store:
+Declare `InfisicalSecret` from `@notation/infisical/resources` in an infrastructure module, then pass `.credentials.value` to an AWS Lambda function or a Cloudflare Worker:
+
+::code-group
 
 ```ts [infra/secrets.ts]
-import { secretsStore } from "@notation/cloudflare/resources";
 import { deployment } from "@notation/core";
 import { InfisicalSecret } from "@notation/infisical/resources";
 
-const { stage } = deployment();
-const store = new secretsStore.SecretsStore("store");
-
-const stripeKey = new InfisicalSecret("stripe-key", {
+export const stripeKey = new InfisicalSecret("stripe-key", {
   config: {
-    projectId: "4f2a…",
-    environment: stage === "prod" ? "prod" : "dev",
+    projectId: process.env.INFISICAL_PROJECT_ID!,
+    environment: deployment().stage,
     path: "/orders",
     key: "STRIPE_KEY",
   },
 });
+```
 
-new secretsStore.SecretsStoreSecret("stripe-key-secret", {
-  config: { Value: stripeKey.credentials.value },
-  dependencies: { store },
+```ts [runtime/create-order.ts]
+import {
+  $lambda,
+  apiGateway,
+  type LambdaHandler,
+} from "@notation/aws/lambda";
+import { stripeKey } from "../infra/secrets";
+import { NewOrder } from "../shared/schema";
+
+export const createOrder = $lambda({
+  id: "create-order",
+  event: () => apiGateway.schema(NewOrder),
+  env: () => ({
+    STRIPE_KEY: stripeKey.credentials.value,
+  }),
 });
+
+export const handler: LambdaHandler<typeof createOrder> = async (event) => {
+  const { body: order } = await createOrder.decode(event);
+  const { STRIPE_KEY } = createOrder.env();
+  return {
+    statusCode: 202,
+    body: JSON.stringify({ orderId: order.orderId, configured: Boolean(STRIPE_KEY) }),
+  };
+};
 ```
 
-| Config        | Description                                                                                                       |
-| ------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `projectId`   | Required. The ID of the Infisical project.                                                                        |
-| `environment` | Required. The environment's slug, such as `prod`. To pick it by stage, use [`deployment()`](../../manual/secrets.md#a-value-that-depends-on-the-stage). |
-| `path`        | Required. The folder of the secret, such as `/orders`.                                                            |
-| `key`         | Required. The secret's key.                                                                                       |
-| `track`       | Optional. `"scrypt"` or `"hmac"`. See [Tracking a value](../../manual/secrets.md#tracking-a-value).                |
+```ts [runtime/orders.ts]
+import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
+import { stripeKey } from "../infra/secrets";
 
-`INFISICAL_DOMAIN` sets the URL of the Infisical instance. It defaults to `https://app.infisical.com`.
+export const ordersWorker = $worker({
+  id: "orders",
+  compatibilityDate: "2026-10-12",
+  bindings: () => ({
+    STRIPE_KEY: stripeKey.credentials.value,
+  }),
+});
 
-- The source reads a shared secret in the folder, or a shared secret imported into the folder. A personal override is not read.
-- For an imported secret without `track`, deploy cannot load an earlier version. If the imported secret was edited after plan read it, deploy fails and asks you to run deploy again.
-- Plan and deploy fail when the folder doesn't have the key, when the identity can't read secret values, and when the value is empty.
-- Plan reads the value of every `InfisicalSecret`, so the identity that runs plan needs permission to read values. Plan keeps the value in memory, and does not record it.
-- Without `track`, deploy loads a secret with a reference at its current value, and not at a fixed version. When a deploy is resumed after the secret, or a secret that it refers to, was edited, the resources written before and after the resume can have different values.
-
-## When the value is written
-
-Without `track`, the `revision` of the source is the secret's ID and its Infisical version, such as `version:9c2e…:14`. A resource that takes the value is written when the version changes:
-
-```text
-~ update infisical/secrets/InfisicalSecret stripe-key
-~ update cloudflare/secrets-store/SecretsStoreSecret stripe-key-secret
+export default {
+  async fetch(_request, env) {
+    return Response.json({ configured: Boolean(env.STRIPE_KEY) });
+  },
+} satisfies WorkerHandler<typeof ordersWorker>;
 ```
 
-Deploy loads the value at the version in the `revision`, so every resource that takes the value gets the same value, even when the secret is edited during the deploy. The ID is in the `revision` because Infisical numbers a secret that is deleted and added again from 1. If the secret was deleted and added again after plan read it, deploy fails:
+::
 
-```text
-`STRIPE_KEY` in Infisical project 4f2a…, environment prod, path /orders was deleted and added again after deploy read it. Run deploy again.
-```
+`deployment().stage` maps each Notation stage to an Infisical environment slug, and `.credentials.value` binds directly into AWS [`$lambda`](../aws/lambda.md) `env` or Cloudflare [`$worker`](../cloudflare/workers.md) `bindings`.
 
-Some projects keep only the newest versions of a secret. When the version in the `revision` is gone, deploy fails, and the next plan records the current version.
+## Cloudflare Secrets Store
 
-### Secrets that refer to other secrets
+When multiple Workers need the same shared secret, pass `InfisicalSecret.credentials.value` into Cloudflare [`SecretsStoreSecret`](../cloudflare/secrets.md) and bind the store secret to each Worker:
 
-A secret can refer to another secret:
-
-```text
-DB_PASSWORD   = correct-horse                                      version 4
-DATABASE_URL  = postgres://app:${DB_PASSWORD}@db.internal/orders   version 14
-```
-
-When `DB_PASSWORD` changes, Infisical leaves `DATABASE_URL` at version 14. So for a secret with a reference, an unchanged version does not mean an unchanged value, and the source cannot use the version.
-
-| `track` | The secret          | `revision`                 | A resource that takes the value is written |
-| ------- | ------------------- | -------------------------- | ------------------------------------------ |
-| not set | has no reference    | the secret's ID and version | when the version changes                   |
-| not set | has a reference     | the deploy's execution ID  | on every deploy                            |
-| set     | either              | a hash of the value        | when the value changes                     |
-
-To find out whether a secret has a reference, plan reads the secret twice: once as it is stored, and once with each reference replaced by the value that it names. The two values differ exactly when the secret has a reference. Infisical replaces the references, so every form of reference works, including a reference to another environment or another project.
-
-**Without `track`, a secret with a reference is written on every deploy,** and every plan shows the two updates above. When someone adds a reference to a secret in Infisical, that secret is written on every deploy from then on. This is the sign to add `track`:
+::code-group
 
 ```ts [infra/secrets.ts]
-new InfisicalSecret("database-url", {
+import { deployment } from "@notation/core";
+import { secretsStore } from "@notation/cloudflare/resources";
+import { InfisicalSecret } from "@notation/infisical/resources";
+
+const store = new secretsStore.SecretsStore("account-store");
+
+const webhookSource = new InfisicalSecret("webhook-secret-source", {
   config: {
-    projectId: "4f2a…",
+    projectId: process.env.INFISICAL_PROJECT_ID!,
+    environment: deployment().stage,
+    path: "/orders",
+    key: "WEBHOOK_SECRET",
+  },
+});
+
+export const webhookSecret = new secretsStore.SecretsStoreSecret(
+  "webhook-secret",
+  {
+    config: { Value: webhookSource.credentials.value },
+    dependencies: { store },
+  },
+);
+```
+
+```ts [runtime/webhooks.ts]
+import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
+import { webhookSecret } from "../infra/secrets";
+
+export const webhooksWorker = $worker({
+  id: "webhooks",
+  compatibilityDate: "2026-10-12",
+  bindings: () => ({
+    WEBHOOK_SECRET: webhookSecret,
+  }),
+});
+
+export default {
+  async fetch(_request, env) {
+    const signingKey = await env.WEBHOOK_SECRET.get();
+    return Response.json({ configured: Boolean(signingKey) });
+  },
+} satisfies WorkerHandler<typeof webhooksWorker>;
+```
+
+::
+
+## Authentication
+
+`@notation/infisical` authenticates with Infisical in a fixed precedence order during `plan` and `deploy`:
+
+1. **Access token (`INFISICAL_TOKEN`)** – Used directly as a `Bearer` token.
+2. **Universal Auth (`INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`, `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET`)** – Exchanges a client ID and secret for a token (both must be set).
+3. **OIDC Auth (`INFISICAL_IDENTITY_ID`)** – Exchanges `INFISICAL_JWT` or a GitHub Actions `id-token: write` token (with optional `INFISICAL_OIDC_AUDIENCE`).
+
+If no valid credential set is configured, Notation fails with the required environment variable names.
+
+Configure GitHub Actions OIDC authentication by granting `id-token: write` and exporting `INFISICAL_IDENTITY_ID`:
+
+```yaml [.github/workflows/deploy.yml]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - run: notation deploy --stage prod
+        env:
+          INFISICAL_IDENTITY_ID: ${{ vars.INFISICAL_IDENTITY_ID }}
+          INFISICAL_PROJECT_ID: ${{ vars.INFISICAL_PROJECT_ID }}
+```
+
+## Self-hosted instances
+
+Set `INFISICAL_DOMAIN` to point `@notation/infisical` at a self-hosted Infisical instance instead of Infisical Cloud (`https://app.infisical.com`):
+
+```sh [Terminal]
+export INFISICAL_DOMAIN="https://vault.example.com/api/"
+```
+
+Notation strips trailing slashes and any trailing `/api` segment while keeping subpath prefixes such as `https://example.com/infisical`.
+
+## Tracking secret references
+
+When a secret in Infisical interpolates another secret (such as `postgres://app:${DB_PASSWORD}@db:5432/orders`), Infisical does not bump the parent secret's version when `${DB_PASSWORD}` changes. Without `track`, Notation must update downstream consumers on every deploy to keep referenced values fresh.
+
+Set `track: "hmac"` to hash the final expanded value so downstream consumers update only when the resolved secret actually changes:
+
+```ts [infra/secrets.ts]
+import { InfisicalSecret } from "@notation/infisical/resources";
+
+export const dbUrl = new InfisicalSecret("orders-database-url", {
+  config: {
+    projectId: process.env.INFISICAL_PROJECT_ID!,
     environment: "prod",
     path: "/orders",
     key: "DATABASE_URL",
@@ -99,46 +190,60 @@ new InfisicalSecret("database-url", {
 });
 ```
 
-With `track`, plan reads the value with each reference replaced, and records a hash of it. The hash changes when `DATABASE_URL` is edited, and when any secret that it refers to is edited. With `track`, the source always uses the hash, even for a secret with no reference, so the config alone says how the secret is tracked. A secret with no reference does not need `track`, because its version already changes exactly when its value does.
+Export the same `NOTATION_TRACK_KEY` on every machine and CI runner that executes `plan` or `deploy` with `track: "hmac"`:
 
-## Credentials
-
-`InfisicalSecret` logs in with the first of these that is set:
-
-| Variables                                                                         | Login                                                                                                                                                        |
-| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `INFISICAL_TOKEN`                                                                 | An access token, used as it is.                                                                                                                              |
-| `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID` and `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` | A machine identity's client ID and secret, through [universal auth](https://infisical.com/docs/documentation/platform/identities/universal-auth).            |
-| `INFISICAL_IDENTITY_ID`                                                           | A machine identity that uses [OIDC auth](https://infisical.com/docs/documentation/platform/identities/oidc-auth/general), with the CI platform's OIDC token. |
-
-With `INFISICAL_IDENTITY_ID`, the OIDC token is `INFISICAL_JWT` if it is set. Otherwise, in GitHub Actions, the source requests a token from GitHub. The job needs the permission `id-token: write`:
-
-```yaml [.github/workflows/deploy.yml]
-permissions:
-  id-token: write
-  contents: read
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    env:
-      INFISICAL_IDENTITY_ID: ${{ vars.INFISICAL_IDENTITY_ID }}
-    steps:
-      - uses: actions/checkout@v4
-      - run: npx notation deploy --stage prod
+```sh [Terminal]
+export NOTATION_TRACK_KEY="your-shared-track-key"
 ```
 
-GitHub sets the token's audience to the URL of the repository's owner, such as `https://github.com/octo-org`, which is what [Infisical's GitHub guide](https://infisical.com/docs/documentation/platform/identities/oidc-auth/github) puts in the identity's audiences. Set `INFISICAL_OIDC_AUDIENCE` to request another audience.
+`track: "hmac"` also stabilizes secrets imported into `path` from another folder or environment, because Infisical does not pin versions on imported secrets.
 
-On another CI platform, put its OIDC token in `INFISICAL_JWT`. In GitLab CI, for example:
+## Reference
 
-```yaml [.gitlab-ci.yml]
-deploy:
-  id_tokens:
-    INFISICAL_JWT:
-      aud: https://gitlab.com
-  variables:
-    INFISICAL_IDENTITY_ID: "…"
-  script:
-    - npx notation deploy --stage prod
-```
+### InfisicalSecret
+
+`InfisicalSecret` (`infisical/secrets/InfisicalSecret`) from `@notation/infisical/resources` declares a read-only credential source resource.
+
+#### Parameters
+
+Every `InfisicalSecret` accepts these `config` parameters (all required `string` values except optional `track`):
+
+| Parameter | Description |
+| :--- | :--- |
+| `projectId` | Infisical project ID containing the secret |
+| `environment` | Infisical environment slug such as `"dev"`, `"prod"`, or `deployment().stage` |
+| `path` | Normalized folder path inside the environment such as `"/"` or `"/orders"` |
+| `key` | Secret key name in Infisical |
+| `track` | `"hmac"` or `"scrypt"` mode that hashes expanded values instead of pinning versions |
+
+#### Properties
+
+Each `InfisicalSecret` instance exposes:
+
+- **`revision`** (`string`, computed output) – Opaque revision string stored in Notation state without plaintext.
+- **`credentials.value`** (`CredentialRef<string>`, credential) – Typed [credential reference](../../core/secrets.md) passed to downstream consumer resources.
+
+#### Secret scope
+
+`InfisicalSecret` reads only shared secrets (`type: "shared"`) so personal overrides never leak into shared deployments, and resolves secrets imported into `path`. As a read-only credential source, it never writes to Infisical, cannot be targeted with `--replace`, and removing it from code deletes only its Notation state record.
+
+### Change tracking modes
+
+`InfisicalSecret` queries Infisical live on every `plan` and `deploy`, updating downstream consumers only when `revision` or source parameters change:
+
+| Mode | Behavior |
+| :--- | :--- |
+| `undefined` | Pins secret ID and version on static secrets, or re-deploys on every run for `${...}` references |
+| `"hmac"` | Compares a salted HMAC-SHA256 digest of the expanded value using `NOTATION_TRACK_KEY` |
+| `"scrypt"` | Compares a salted scrypt digest of the expanded value with no external key |
+
+Use `"hmac"` for arbitrary secrets, `${...}` references, and imported secrets (`NOTATION_TRACK_KEY` must be set), and use `"scrypt"` only for high-entropy generated secrets. Leaving `track` unset on `${...}` references fetches the live expanded value on resume, so consumers updated before and after a mid-deploy edit can receive different values. If an expanded value changes mid-deploy or `track` changes relative to state, `deploy` aborts cleanly and prompts you to re-run.
+
+### Errors
+
+`@notation/infisical/resources` exports `SecretReplacedError` and `InfisicalApiError`:
+
+- **`SecretReplacedError`** – Thrown when a secret is deleted and recreated mid-deploy; re-running `deploy` picks up the new secret.
+- **`InfisicalApiError`** – Thrown on non-OK API responses other than handled cases, exposing `.status` and the response message.
+
+Missing (`404`) or empty (`""`) secrets throw an error naming the missing key and path, hidden secret values fail with instructions to grant read permissions, and secret values are scrubbed from error messages and stack traces.

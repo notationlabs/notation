@@ -1,130 +1,226 @@
 # Containers
 
-`@notation/cloudflare/resources` declares Cloudflare Containers with three resources:
+Cloudflare Containers pairs each Durable Object instance with a Linux container. Attach `container` to `$durableObject` for local Docker builds, or compose `ContainerImage`, `ContainerApplication`, and `ContainerRegistry` in `infra/` for custom images and private registries.
 
-- `containers.ContainerImage` builds an image with Docker, and pushes it to the account's Cloudflare registry.
-- `containers.ContainerApplication` runs the containers of a Durable Object namespace that a `WorkerScript` hosts.
-- `containers.ContainerRegistry` gives Containers the credentials to pull images from a private registry, such as AWS ECR.
+Deploying Containers requires a Cloudflare **Workers Paid** plan with Containers enabled, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` with `Workers Scripts: Edit` and `Containers: Edit` (see [Cloudflare Overview](./overview.md)), and a running Docker daemon with Buildx for local builds.
 
-A namespace that `$durableObject` declares runs containers with the `container` option, and deploy declares the image and the application for it. See [Containers](workers.md#containers) on the Workers page. The resources below declare containers with the resources API.
+## Durable Object containers
 
-## Example
+Pair a `Dockerfile`, a `$durableObject` class that starts and proxies `this.ctx.container`, and a hosting `$worker`:
 
-The infra below builds the image in `sandbox/`, and runs it for the `Sandbox` class of a Worker:
+::code-group
 
-```ts [infra/main.ts]
+```dockerfile [containers/order-runner/Dockerfile]
+FROM node:22-alpine
+WORKDIR /app
+COPY server.mjs .
+EXPOSE 8080
+CMD ["node", "server.mjs"]
+```
+
+```ts [runtime/order-runner.ts]
+import { DurableObject } from "cloudflare:workers";
+import { $durableObject } from "@notation/cloudflare/workers";
+
+export class OrderRunner extends DurableObject {
+  async fetch(request: Request): Promise<Response> {
+    const container = this.ctx.container;
+    if (!container) return new Response("Container runtime disabled", { status: 500 });
+    if (!container.running) container.start();
+    return await container.getTcpPort(8080).fetch(request);
+  }
+}
+
+export const orderRunners = $durableObject({
+  id: "order-runners",
+  class: OrderRunner,
+  container: {
+    image: { context: "containers/order-runner" },
+    maxInstances: 4,
+    instanceType: "basic",
+    environmentVariables: { LOG_LEVEL: "info" },
+  },
+});
+```
+
+```ts [runtime/api.ts]
+import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
+import { orderRunners } from "./order-runner";
+export { OrderRunner } from "./order-runner";
+
+export const api = $worker({
+  id: "api",
+  compatibilityDate: "2026-10-12",
+  bindings: () => ({ ORDER_RUNNERS: orderRunners }),
+});
+
+export default {
+  async fetch(request, env) {
+    return env.ORDER_RUNNERS.getByName("default").fetch(request);
+  },
+} satisfies WorkerHandler<typeof api>;
+```
+
+::
+
+When a Worker binds `orderRunners` and exports `OrderRunner`, Notation enables containers on that `WorkerScript` and adds `ContainerImage` and `ContainerApplication` to its `WorkerGroup`. Moving `export { OrderRunner }` to another Worker transfers the namespace and recreates `ContainerApplication` there; removing `container` deletes only `ContainerApplication`.
+
+To pass outputs declared later (such as `api.url`) into container environment variables, pass a callback with an explicit return type (`(): Record<string, Input<string>> => ({ API_URL: api.url })`) so TypeScript avoids circular inference on the hosting Worker.
+
+## Custom images
+
+Instantiate `ContainerImage` from `@notation/cloudflare/resources` in `infra/` to build a `linux/amd64` Docker image, push it to `registry.cloudflare.com`, and obtain a digest-pinned `Image` output:
+
+```ts [infra/image.ts]
+import { containers } from "@notation/cloudflare/resources";
+
+export const orderRunnerImage = new containers.ContainerImage("order-runner:image", {
+  config: {
+    Repository: "team/order-runner",
+    Context: "containers/order-runner",
+    Dockerfile: "containers/order-runner/Dockerfile",
+    BuildArgs: { NODE_ENV: "production" },
+  },
+});
+```
+
+## Custom applications
+
+Wire `ContainerApplication` directly in `infra/` to attach custom CPU, memory, disk, or network settings to a container-enabled Durable Object namespace (`container: true`) on a `WorkerScript`:
+
+```ts [infra/orders-container.ts]
 import { containers, workers } from "@notation/cloudflare/resources";
 import { fs } from "@notation/std/resources";
 
-const code = new fs.File("worker:api:code", {
-  config: { filePath: "worker/index.js" },
-});
+const code = new fs.File("worker:api:code", { config: { filePath: "worker/index.js" } });
 
-const script = new workers.WorkerScript("worker:api", {
+export const apiScript = new workers.WorkerScript("worker:api", {
   config: {
     CompatibilityDate: "2026-10-12",
-    Bindings: [
-      {
-        type: "durable_object_namespace",
-        name: "SANDBOX",
-        class_name: "Sandbox",
-      },
-    ],
-    DurableObjectNamespaces: [
-      { id: "sandboxes", className: "Sandbox", container: true },
-    ],
+    Bindings: [{ type: "durable_object_namespace", name: "ORDER_RUNNERS", class_name: "OrderRunner" }],
+    DurableObjectNamespaces: [{ id: "order-runners", className: "OrderRunner", container: true }],
   },
   dependencies: { code },
 });
 
-const image = new containers.ContainerImage("sandbox:image", {
-  config: { Repository: "sandbox", Context: "sandbox" },
+const image = new containers.ContainerImage("order-runner:image", {
+  config: { Repository: "order-runner", Context: "containers/order-runner" },
 });
 
-new containers.ContainerApplication("sandbox", {
+export const orderRunnerApp = new containers.ContainerApplication("order-runner", {
   config: {
-    Name: "sandbox",
-    HostedNamespaceId: "sandboxes",
-    MaxInstances: 5,
-    Configuration: { image: image.outputRef("Image"), instance_type: "lite" },
+    Name: "orders-dev-runner",
+    HostedNamespaceId: "order-runners",
+    MaxInstances: 4,
+    Configuration: {
+      image: image.outputRef("Image"),
+      vcpu: 1,
+      memory_mib: 3072,
+      disk: { size_mb: 4000 },
+      environment_variables: [{ name: "LOG_LEVEL", value: "info" }],
+      network: { mode: "private" },
+    },
   },
-  dependencies: { script },
+  dependencies: { script: apiScript },
 });
 ```
 
-`image.outputRef("Image")` is the image's reference, pinned by its digest, such as `registry.cloudflare.com/<account>/sandbox@sha256:...`. Deploy sets the reference after it pushes the image. The application depends on the image, so deploy pushes the image before it creates or updates the application.
+## Private registries
 
-## `ContainerImage`
+Register pull credentials with `ContainerRegistry` and call `.dependOn(registry)` on `ContainerApplication` to pull digest-pinned images from private `"DockerHub"`, `"ECR"`, or `"GAR"` repositories:
 
-| Param        | Description                                                                                                                                                                          |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Repository` | Required. The repository in the account's Cloudflare registry, such as `sandbox` or `team/sandbox`. Use lowercase letters, digits, `.`, `_` and `-`. Changing it replaces the image. |
-| `Context`    | Required. The build context directory, relative to the project root.                                                                                                                 |
-| `Dockerfile` | The Dockerfile, relative to the project root. Defaults to `Dockerfile` in the build context.                                                                                         |
-| `BuildArgs`  | Values for `docker build --build-arg`, by name. Don't put secrets here: Docker keeps the values in the image's history.                                                              |
+```ts [infra/private-registry.ts]
+import { containers } from "@notation/cloudflare/resources";
+import { apiScript } from "./orders-container";
 
-The output `Image` is the image pinned by the digest that the registry holds for the pushed tag.
-
-### Docker
-
-Deploy runs the `docker` CLI on the machine that runs `notation deploy`. Docker, or a tool that provides the `docker` CLI and daemon such as OrbStack or Colima, must be installed and running, with the buildx plugin, which `docker build --load` and `--provenance` need. Deploy runs `docker info` first, and fails with a message to start Docker when the daemon doesn't answer. Plan doesn't need Docker. To read an image, plan and deploy request pull credentials for the registry, and ask the registry for the tag's digest.
-
-To push an image, deploy:
-
-1. Gets the account's namespace in the registry from Cloudflare.
-2. Runs `docker build --load --platform linux/amd64 --provenance=false`. Cloudflare runs containers on `linux/amd64` only. Provenance is turned off so that the registry holds one image manifest, not an index.
-3. Gets push credentials for `registry.cloudflare.com` that expire after 15 minutes, and runs `docker login` with them. This step comes after the build, because a build can take longer than 15 minutes.
-4. Runs `docker push`.
-
-`docker login` saves the credentials in your Docker config, as `wrangler deploy` does.
-
-### Changes
-
-The image's tag is the first 32 hex characters of a SHA-256 of the build's input:
-
-- the path, permission bits and bytes of each file in the build context, and the target of each symbolic link,
-- the Dockerfile,
-- the build args,
-- the platform.
-
-Plan and deploy hash the input on each run. When the input changes, the tag changes, and deploy replaces the image: it builds and pushes the image under the new tag. The application's `Configuration.image` then holds the new digest, so deploy starts a rollout. When the input is the same, the tag is the same, and deploy builds nothing. The input doesn't include base images or anything that a `RUN` step downloads. To build again after a base image changes, pin `FROM` by digest and change the digest, or change a build arg.
-
-Plan and deploy skip each `.git` directory in the build context when they hash it. They don't read `.dockerignore`, so a change to a file that `.dockerignore` excludes also builds the image again. A rebuild from Docker's cache usually has the same digest, and when the digest is the same, deploy starts no rollout. To keep plans fast, use a build context directory that holds only the files that the image needs.
-
-A change to `Context`, `Dockerfile` or `BuildArgs` that leaves the input the same changes nothing. These params are not kept in state.
-
-When a deploy stops after the push and runs again, it pushes the same tag again, and nothing changes.
-
-### Delete
-
-Delete does nothing: the image stays in the registry after a replace or a destroy. After a replace, the application can start instances from the old digest until its rollout ends, so the old image must stay available. To delete old images, run `wrangler containers images list` and `wrangler containers images delete`.
-
-When the registry no longer has the image's tag, deploy builds and pushes the image again.
-
-## `ContainerApplication`
-
-A change to `Configuration` starts a rollout that replaces the instances, 25% of them at a time. Pin the image by its digest. A new image pushed under the same tag doesn't change `Configuration`, so it starts no rollout.
-
-An application that pulls its image from a private registry should `dependOn` the `ContainerRegistry` for that registry.
-
-### Placement
-
-By default, Cloudflare starts a container in the location nearest to the request that has the image. `Constraints` limits where the containers run. For a `$durableObject`, set `container.constraints`.
-
-```ts
-new containers.ContainerApplication("sandbox", {
+const registry = new containers.ContainerRegistry("ecr-registry", {
   config: {
-    // …
-    Constraints: { regions: ["WEUR", "EEUR"], jurisdiction: "eu" },
+    Domain: "123456789012.dkr.ecr.us-east-1.amazonaws.com",
+    Kind: "ECR",
+    Auth: {
+      public_credential: process.env.ECR_PULL_ACCESS_KEY_ID!,
+      private_credential: { store_id: process.env.CF_SECRETS_STORE_ID!, secret_name: "orders-ecr-pull-secret" },
+    },
   },
 });
+
+export const privateRunnerApp = new containers.ContainerApplication("private-runner", {
+  config: {
+    Name: "orders-dev-private-runner",
+    HostedNamespaceId: "order-runners",
+    MaxInstances: 4,
+    Configuration: {
+      image: "123456789012.dkr.ecr.us-east-1.amazonaws.com/order-runner@sha256:4f90b33ddca9c4d4f06527070d6e503b16d71016edea036842be2a84e60c91cb",
+      instance_type: "lite",
+    },
+  },
+  dependencies: { script: apiScript },
+});
+
+privateRunnerApp.dependOn(registry);
 ```
 
-- `regions`: any of `ENAM`, `WNAM`, `EEUR`, `WEUR`, `APAC`, `SAM`, `ME`, `OC` and `AFR`. `ME`, `OC` and `AFR` have limited capacity, so plan fails for a list of only those regions.
-- `jurisdiction`: `eu` (`EEUR` and `WEUR`), `us` or `fedramp` (`ENAM` and `WNAM`). When both are set, plan fails for a region that is not in the jurisdiction.
+Provision the referenced Secrets Store secret separately with `"containers"` scope (see [Secrets](./secrets.md)).
 
-A change to `Constraints` updates the application, and starts no rollout. Deploy sends the constraints as Wrangler does, with `tiers: [1, 2]`, also when `Constraints` is not set. Plan reads the regions and the jurisdiction of the application, so deploy sets back a change made to them outside notation. See [Placement](https://developers.cloudflare.com/containers/concepts/placement/) in Cloudflare's docs.
+## Reference
 
-## Credentials
+### `DurableObjectContainerConfig`
 
-Deploy reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. See [Credentials](workers.md#credentials). The token also needs the Containers: Edit permission, because plan and deploy request registry credentials to read each `ContainerImage`.
+Options accepted by `container` on `$durableObject`, exported from `@notation/cloudflare/workers`:
+
+| Option | Description |
+| :--- | :--- |
+| `image` | Required Docker build configuration relative to project root |
+| `maxInstances` | Required integer `>= 1` capping concurrent container instances |
+| `instanceType` | Optional preset size such as `"lite"`, `"basic"`, or `"standard-1"` |
+| `vcpu` | Optional custom vCPU count paired with `memoryMib` |
+| `memoryMib` | Optional custom memory in MiB paired with `vcpu` |
+| `diskMb` | Optional disk size in MB, minimum `512` and Cloudflare default `2000` |
+| `environmentVariables` | Optional plain-text environment variables object or thunk |
+| `network` | Optional network mode and IP assignment settings |
+
+`image` accepts `{ context, dockerfile?, buildArgs?, repository? }`, where `dockerfile` defaults to `Dockerfile` inside `context` and `repository` defaults to `<app>--<stage>--<id>` in lowercase; never put secrets in `buildArgs` or `environmentVariables`. `instanceType` defaults to `"lite"` when omitted and is mutually exclusive with `vcpu`, `memoryMib`, and `diskMb`; `diskMb` is valid only when both `vcpu` and `memoryMib` are set.
+
+`network` accepts `{ mode?: "private" | "public"; assignIpv4?: "none" | "predefined"; assignIpv6?: "none" | "predefined" }`. `mode` is immutable, and setting `"predefined"` on `assignIpv4` or `assignIpv6` implies `mode: "public"`.
+
+### `ContainerImage`
+
+`containers.ContainerImage` (`cloudflare/containers/ContainerImage`) builds and pushes a `linux/amd64` Docker image:
+
+| Parameter | Description |
+| :--- | :--- |
+| `Repository` | Required immutable Cloudflare registry repository name |
+| `Context` | Required build context directory relative to project root |
+| `Dockerfile` | Optional Dockerfile path relative to project root |
+| `BuildArgs` | Optional `Record<string, string>` Docker build arguments |
+
+`Repository` is capped at 255 characters with lowercase `[a-z0-9]` segments separated by `.`, `_`, `__`, `-`, or `/`. `Dockerfile` defaults to `Dockerfile` inside `Context`.
+
+The `Image` output resolves to `registry.cloudflare.com/<namespace>/<Repository>@sha256:...`. Tags hash `Context` files (skipping `.git`; `.dockerignore` is not read), `Dockerfile`, `BuildArgs`, and `linux/amd64`, so remote `FROM` updates do not trigger rebuilds; deleting `ContainerImage` leaves the pushed image in Cloudflare's registry for active or draining rollouts.
+
+### `ContainerApplication`
+
+`containers.ContainerApplication` (`cloudflare/containers/ContainerApplication`) attaches a container application to a `container: true` Durable Object namespace on `dependencies.script`:
+
+| Parameter | Description |
+| :--- | :--- |
+| `Name` | Required immutable application name |
+| `HostedNamespaceId` | Required Durable Object namespace ID on `dependencies.script` |
+| `MaxInstances` | Required integer `>= 1` capping concurrent instances |
+| `Configuration` | Required container image, sizing, disk, environment, and network settings |
+
+`Name` is 1 to 253 bytes and cannot be empty, start with a digit or `-`, end with `-`, or contain `--`. `Configuration` must set either `instance_type` or both `vcpu` and `memory_mib` (never both); `disk: { size_mb }` (`>= 512`) requires `vcpu` and `memory_mib`.
+
+Outputs expose `ApplicationId` and `DurableObjectNamespaceId`. `MaxInstances` updates in place, while `Configuration` changes trigger a rolling rollout replacing 25% of instances at a time (pin images by digest so image changes trigger rollouts). Removing a `Configuration` key resets it to Cloudflare defaults on rollout, external edits to `Configuration` are not detected as drift, changing `network.mode` requires changing `Name` to replace the application, replacing `WorkerScript` deletes `ContainerApplication` first and recreates it, and deploying while a previous rollout is active can fail.
+
+### `ContainerRegistry`
+
+`containers.ContainerRegistry` (`cloudflare/containers/ContainerRegistry`) registers pull credentials for a private container registry:
+
+| Parameter | Description |
+| :--- | :--- |
+| `Domain` | Required immutable lowercase registry hostname |
+| `Kind` | Required immutable registry kind: `"DockerHub"`, `"ECR"`, or `"GAR"` |
+| `Auth` | Required immutable `{ public_credential, private_credential }` credentials |
+
+`Domain` is capped at 253 characters with no scheme or path, and `Auth.private_credential` takes `{ store_id, secret_name }`. Changing any field replaces the registry, creation fails if the account already has credentials for `Domain`, and external edits to `Kind` or `Auth` are not detected as drift.

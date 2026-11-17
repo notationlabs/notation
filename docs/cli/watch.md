@@ -1,45 +1,97 @@
 # notation watch
 
-```sh
-notation watch [--config <path>] [--stage <stage>]
+`notation watch` monitors your project during local development and automatically recompiles and redeploys changes to a target stage whenever source files are saved.
+
+## Usage
+
+Start watch mode for `defaultStage` from your project root:
+
+```sh [Terminal]
+@pm.dlx("notation watch")
 ```
 
-| Option            | Meaning                                                     |
-| ----------------- | ----------------------------------------------------------- |
-| `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
-| `--stage <stage>` | The stage. Default: `defaultStage`.                         |
+You can also add a `watch` script to `package.json` for local development:
 
-Hot Infra Replacement – the development workflow.
-
-```sh
-notation watch --stage dev
+```json [package.json]
+{
+  "scripts": {
+    "watch": "notation watch"
+  }
+}
 ```
 
-## What it does
+Run the script with your package manager:
 
-1. Compiles infra and runtime with Rolldown in watch mode. When an infra rebuild finds a different set of runtime modules, the runtime builds restart for the new set.
-2. Deploys the initial stack.
-3. Watches `dist/` for changes (debounced at 500ms).
-4. On change, redeploys – only changed resources are updated (same reconciler as `deploy`).
-5. Queues deploys if one is already in progress.
+```sh [Terminal]
+@pm.run("watch")
+```
 
-## Bundles
+## Options
 
-A [bundle](../reference/bundle.md) reads files that the infra build doesn't watch, such as a template in a package. After each deploy, `watch` reads `dist/.bundles/*/inputs.json` and watches the files listed in `files`. A change to one of them starts a deploy, after the same debounce. `watch` stops watching a file that no inputs file lists any more.
+`notation watch` supports `--config` and `--stage` to target a project config or stage. If neither `--stage` nor `defaultStage` is set, `watch` exits with an error before compiling.
 
-- **A file in `node_modules` is not watched**, so an edit to an installed package doesn't redeploy. A linked workspace package resolves to its real path outside `node_modules`, so an edit to a library in the same workspace does redeploy.
-- **Writing a bundle doesn't start a deploy.** The output is in `dist/.bundles/`, and `watch` ignores dot directories.
-- **A deleted output is not written again.** `watch` deploys without drift detection, so a deploy after `dist/` is cleaned plans no change for the bundle. Run `notation deploy` to write it again.
-- **Stages that deploy from the same machine share `dist/.bundles/`.** After another stage writes a bundle, `watch` can fail to upload the bundle's file until `notation deploy` runs, which rewrites the file.
+Target a specific stage or config file on the command line:
 
-## Secrets
+```sh [Terminal]
+@pm.dlx("notation watch --stage staging")
+@pm.dlx("notation watch --config orders.config.ts --stage dev")
+```
 
-Each deploy runs in its own process, which shares the terminal with `watch`. A deploy that needs the value of a secret without a source asks for it on the terminal. `watch` doesn't keep the answer, so each later deploy that needs the value asks again. See [Secrets](../manual/secrets.md).
+## Watch workflow
 
-## Changing the config
+`watch` pairs incremental compilation with file watchers to redeploy changes automatically.
 
-`watch` reads the config once, when it starts. If the config file changes, `watch` waits for any running deploy to finish, then exits with code 1. Start `watch` again to use the new config.
+### Initial build
 
-`watch` deploys real AWS resources. Several developers can share one AWS account if each developer uses their own stage, such as `--stage dev-alice`, because [AWS names](../manual/project-config.md#aws-names) contain the stage. To remove the resources of the stage, run `notation destroy --stage dev-alice`.
+When `watch` starts, it compiles your infrastructure `entry` first. If the initial build fails, `watch` logs the error and waits until a valid build succeeds before deploying.
 
-Production deployments use `notation deploy`, not `watch`.
+### Watched files
+
+`watch` monitors your infrastructure entrypoint, `files.runtime` modules, and files imported by resource bundles (including linked workspace packages). `node_modules/` and dot-directories such as `.notation/` are ignored so state writes never trigger rebuild loops.
+
+### Coalesced redeploys
+
+Rapid edits are debounced into a single deploy. Edits saved during an active deploy queue one follow-up deploy instead of interrupting the running deployment.
+
+## Config file changes
+
+`watch` loads configuration once at startup and does not hot-reload config changes. If the config file changes, `watch` prints `<configFile> changed. Restart watch to use the new config.`, finishes any active deploy, and exits with code `1`.
+
+## Watch deploy behavior
+
+Each rebuild runs a fresh deploy with a new execution ID and differs from [`notation deploy`](./deploy.md) in four ways:
+
+| Aspect | Behavior |
+| :--- | :--- |
+| Compilation | Reuses the `dist/` build maintained by `watch` without rebuilding |
+| Drift detection | Skips live `read` checks to keep local redeploys fast |
+| Output formatting | Streams `pretty` events to the terminal with non-interactive `stdin` |
+| Signal handling | Forwards `SIGINT` and `SIGTERM` to an active deploy before exiting |
+
+Run [`notation plan`](./plan.md) when you need to check remote drift.
+
+## Credential handling
+
+`notation watch` never prompts interactively for secrets and does not accept `--credential` or `--replace`. Credentials from [secret sources](../core/secrets.md) and resources with automated `rotate` operations resolve automatically during watch deploys.
+
+When a deploy requires a non-rotatable credential whose value is not in memory, the deploy fails with `UnobtainableCredentialError` while `watch` keeps running for future edits:
+
+```text [stderr]
+UnobtainableCredentialError: `orders-api` is new, and takes `webhook.signingSecret`. Notation does not store the value, and `orders/WebhookEndpoint` has no operation that issues another.
+
+  Issue a new value of `signingSecret` at the provider of `orders/WebhookEndpoint`. Then set the environment variable `WEBHOOK_SIGNING_SECRET` to the value, and pass it:
+    notation deploy --config /path/to/notation.config.ts --stage dev --credential webhook.signingSecret@5d2e8b17=WEBHOOK_APP_SIGNING_SECRET
+
+  Or replace `webhook`. Deploy deletes `webhook` and creates it again with a new value, so whatever exists only in the old `webhook` is lost:
+    notation deploy --config /path/to/notation.config.ts --stage dev --replace webhook@5d2e8b17
+Error: Deploy exited with code 1
+```
+
+Export the environment variable and run the printed `notation deploy` command once in another terminal:
+
+```sh [Terminal]
+export WEBHOOK_SIGNING_SECRET="whsec_..."
+@pm.dlx("notation deploy --stage dev --credential webhook.signingSecret@5d2e8b17=WEBHOOK_SIGNING_SECRET")
+```
+
+Once that manual deploy updates state, automatic redeploys in `watch` continue normally.

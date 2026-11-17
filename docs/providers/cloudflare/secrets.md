@@ -1,165 +1,245 @@
 # Secrets
 
-`@notation/cloudflare/resources` declares the account's [Secrets Store](https://developers.cloudflare.com/secrets-store/), the secrets in it, and account-owned API tokens. A secret takes its value from a [credential](../../manual/secrets.md#credentials): the value of a source, such as an environment variable, or the value of a token. Notation records where a secret is, such as the store ID and the name. It never records the secret's value.
+Manage Cloudflare Secrets Store entries and account API tokens in TypeScript, wiring credentials into [Workers](./workers.md) and [Containers](./containers.md) without storing plaintext in state, plans, or bundles.
 
-| Class                             | Type                                           |
-| --------------------------------- | ---------------------------------------------- |
-| `secretsStore.SecretsStore`       | `cloudflare/secrets-store/SecretsStore`        |
-| `secretsStore.SecretsStoreSecret` | `cloudflare/secrets-store/SecretsStoreSecret`  |
-| `tokens.AccountToken`             | `cloudflare/tokens/AccountToken`               |
+Grant `CLOUDFLARE_API_TOKEN` **Secrets Store: Edit** for `SecretsStore` and `SecretsStoreSecret`, and **Account API Tokens: Edit** for `AccountToken` (see [Cloudflare Overview](./overview.md)).
 
-A Worker can also hold a secret of its own, which it binds as a string. See [Worker secrets](workers.md#worker-secrets).
+## Choosing a secret type
 
-## `secretsStore.SecretsStore`
+Cloudflare provides three ways to supply credentials, all keeping plaintext out of state, plans, and bundles (see [Secrets](../../core/secrets.md)):
 
-Cloudflare allows one Secrets Store for each account, and every app and stage in the account shares it. Declare it once, and pass it to each secret as a dependency:
+- **Worker secrets (`secret_text`)** – Pass a credential directly in Worker `bindings()` (such as `source.credentials.value`). Typed as `string` in `env` for synchronous reads via `env.NAME`; best for single-Worker credentials.
+- **Secrets Store (`secrets_store_secret`)** – Store a credential in `SecretsStore` using `SecretsStoreSecret` and bind the resource to one or more Workers. Typed as `SecretsStoreSecret` in `env` for asynchronous reads via `await env.NAME.get()`; best for shared or independently rotated secrets.
+- **Account tokens (`AccountToken`)** – Provision scoped Cloudflare API tokens with permission policies, IP filters, and expiry timestamps, then pass `token.credentials.Value` into a Worker secret or a `SecretsStoreSecret`.
 
-```ts [infra/secrets.ts]
-import { secretsStore } from "@notation/cloudflare/resources";
-
-export const store = new secretsStore.SecretsStore("store");
-```
-
-- The store takes no config. Its `AccountId` is `CLOUDFLARE_ACCOUNT_ID`.
-- Deploy adopts the account's store, or creates one named `default_secrets_store`, the name that the dashboard uses.
-- Destroy leaves the store, as other apps and stages may use it.
-
-## `secretsStore.SecretsStoreSecret`
-
-A store secret holds the value of one credential. The Stripe key from the environment variable `STRIPE_KEY`:
+Declare a direct Worker secret, a shared `SecretsStoreSecret`, and an `AccountToken`, then read all three inside one Worker:
 
 ::code-group
 
 ```ts [infra/secrets.ts]
-import { secretsStore } from "@notation/cloudflare/resources";
+import { secretsStore, tokens } from "@notation/cloudflare/resources";
 import { sources } from "@notation/std/resources";
 
-export const store = new secretsStore.SecretsStore("store");
+export const store = new secretsStore.SecretsStore("account-store");
 
-const stripeKey = new sources.Env("stripe-key", {
-  config: { key: "STRIPE_KEY" },
+export const stripeKey = new sources.Env("stripe-key", {
+  config: { key: "STRIPE_KEY", track: "hmac" },
 });
 
-export const stripeKeySecret = new secretsStore.SecretsStoreSecret(
-  "stripe-key-secret",
+export const webhookSecret = new secretsStore.SecretsStoreSecret(
+  "webhook-secret",
   {
     config: { Value: stripeKey.credentials.value },
     dependencies: { store },
   },
 );
-```
 
-```ts [runtime/api.ts]
-import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
-import { stripeKeySecret } from "../infra/secrets";
-
-export const worker = $worker({
-  id: "api",
-  compatibilityDate: "2026-10-12",
-  bindings: () => ({ STRIPE_KEY: stripeKeySecret }),
-});
-
-export default {
-  async fetch(request, env) {
-    const key = await env.STRIPE_KEY.get();
-    return new Response(key ? "configured" : "missing");
-  },
-} satisfies WorkerHandler<typeof worker>;
-```
-
-::
-
-| Config  | Description                                                                                           |
-| ------- | ----------------------------------------------------------------------------------------------------- |
-| `Value` | Required. A credential of another resource, such as `stripeKey.credentials.value` or `token.credentials.Value`. |
-
-| Dependency | Description                       |
-| ---------- | --------------------------------- |
-| `store`    | The account's `SecretsStore`.     |
-
-**Deploy generates the secret's name**, `<app>--<stage>--<id>-<instance>`, where the instance is 8 random hex characters, such as `orders--prod--stripe-key-secret-3fa91c02`. A name is cut to 255 characters, the most that Cloudflare accepts. Config cannot set the name, so a secret that exists cannot be adopted, and one secret cannot be shared between stages.
-
-- Create writes the value. A new secret gets the scope Workers. If a secret with the name exists, as after a create whose outcome was unknown, create sets its value.
-- Update writes the value only when the credential has a new version. See [When a value is written](../../manual/secrets.md#when-a-value-is-written). A secret whose source is an `Env` without `track` is written on every deploy.
-- Read finds the secret by its name. A secret deleted outside Notation is seen as drift, and the next deploy creates it again with the value of the credential.
-- Cloudflare never returns a secret's value, so a value changed in the dashboard or with wrangler isn't seen as a change. It stays until the next write.
-- Destroy, and the removal of the secret from code, delete the secret.
-
-### Binding a store secret
-
-A Worker binds a `SecretsStoreSecret` instance directly, as above. In the handler, the binding has the type `SecretsStoreSecret`, and the code reads the value with `await env.STRIPE_KEY.get()`. The Worker depends on the secret, so the secret exists before the code is uploaded. Cloudflare fails an upload that binds a secret that doesn't exist.
-
-Several Workers can bind one store secret. To give one Worker the value as a string instead, bind the credential itself. See [Worker secrets](workers.md#worker-secrets).
-
-## `tokens.AccountToken`
-
-`AccountToken` declares an account-owned API token. Its value is the credential `Value`. Cloudflare returns the value only when it creates the token and when it rolls it. To keep the value, send it to a store secret:
-
-::code-group
-
-```ts [infra/tokens.ts]
-import { secretsStore, tokens } from "@notation/cloudflare/resources";
-import { store } from "./secrets";
-
-const deployToken = new tokens.AccountToken("deploy-token", {
+export const deployToken = new tokens.AccountToken("deploy-token", {
   config: {
     Policies: [
       {
         effect: "allow",
         permissionGroups: ["Workers Scripts Write"],
-        resources: { "com.cloudflare.api.account.<account id>": "*" },
+        resources: {
+          [`com.cloudflare.api.account.${process.env.CLOUDFLARE_ACCOUNT_ID!}`]:
+            "*",
+        },
       },
     ],
   },
 });
+```
 
-export const deployTokenSecret = new secretsStore.SecretsStoreSecret(
-  "deploy-token-secret",
+```ts [runtime/api.ts]
+import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
+import { deployToken, stripeKey, webhookSecret } from "../infra/secrets";
+
+export const api = $worker({
+  id: "api",
+  compatibilityDate: "2026-10-12",
+  bindings: () => ({
+    STRIPE_KEY: stripeKey.credentials.value,
+    WEBHOOK_SECRET: webhookSecret,
+    DEPLOY_TOKEN: deployToken.credentials.Value,
+  }),
+});
+
+export default {
+  async fetch(_request, env) {
+    const sharedSecret = await env.WEBHOOK_SECRET.get();
+    return Response.json({
+      hasStripeKey: Boolean(env.STRIPE_KEY),
+      hasSharedSecret: Boolean(sharedSecret),
+      hasDeployToken: Boolean(env.DEPLOY_TOKEN),
+    });
+  },
+} satisfies WorkerHandler<typeof api>;
+```
+
+::
+
+## Secrets Store
+
+Cloudflare permits **one Secrets Store per account**, shared across every application and stage in that account. Instantiate `secretsStore.SecretsStore` with no configuration – Notation derives `AccountId` from `CLOUDFLARE_ACCOUNT_ID`, adopts your existing store or creates one, and leaves the shared store intact when [`notation destroy`](../../cli/destroy.md) removes a stage's `SecretsStoreSecret` entries.
+
+### Secret updates
+
+`SecretsStoreSecret` records only a version marker in state and updates Cloudflare only when the source credential's version changes. Manual edits to a secret's value in the Cloudflare dashboard are not detected as drift because Cloudflare never returns secret values on read, while externally deleted secrets appear missing in `notation plan` and recreate on deploy.
+
+### Container registries
+
+`containers.ContainerRegistry` binds a `SecretsStore` using `store.outputRef("StoreId")` in `Auth.private_credential.store_id`:
+
+```ts [infra/registry.ts]
+import { containers, secretsStore } from "@notation/cloudflare/resources";
+
+const store = new secretsStore.SecretsStore("account-store");
+
+export const ecrRegistry = new containers.ContainerRegistry("ecr-registry", {
+  config: {
+    Domain: "123456789012.dkr.ecr.us-east-1.amazonaws.com",
+    Kind: "ECR",
+    Auth: {
+      public_credential: process.env.ECR_PULL_ACCESS_KEY_ID!,
+      private_credential: {
+        store_id: store.outputRef("StoreId"),
+        secret_name: "orders-ecr-pull-secret",
+      },
+    },
+  },
+});
+```
+
+`SecretsStoreSecret` creates `"workers"`-scoped secrets, whereas container registries require `"containers"` scope. Provision registry pull secrets externally with `"containers"` scope and pass `secret_name` alongside `store.outputRef("StoreId")` (see [Containers](./containers.md)).
+
+## Account tokens
+
+`tokens.AccountToken` provisions an account-owned Cloudflare API token with permission policies, optional CIDR IP filters, and optional validity timestamps.
+
+Configure `Policies`, `Condition`, `ExpiresOn`, and `NotBefore`, then pass `token.credentials.Value` to a `SecretsStoreSecret` or Worker binding:
+
+```ts [infra/tokens.ts]
+import { secretsStore, tokens } from "@notation/cloudflare/resources";
+
+export const store = new secretsStore.SecretsStore("account-store");
+
+export const ordersDeployToken = new tokens.AccountToken("orders-deploy-token", {
+  config: {
+    Policies: [
+      {
+        effect: "allow",
+        permissionGroups: ["Workers Scripts Write"],
+        resources: {
+          [`com.cloudflare.api.account.${process.env.CLOUDFLARE_ACCOUNT_ID!}`]:
+            "*",
+        },
+      },
+    ],
+    Condition: {
+      requestIp: {
+        in: ["198.51.100.0/24"],
+        notIn: ["198.51.100.99/32"],
+      },
+    },
+    ExpiresOn: "2028-01-01T00:00:00Z",
+    NotBefore: "2026-01-01T00:00:00Z",
+  },
+});
+
+export const ordersDeployTokenSecret = new secretsStore.SecretsStoreSecret(
+  "orders-deploy-token-secret",
   {
-    config: { Value: deployToken.credentials.Value },
+    config: { Value: ordersDeployToken.credentials.Value },
     dependencies: { store },
   },
 );
 ```
 
-```ts [runtime/ci.ts]
-import { $worker } from "@notation/cloudflare/workers";
-import { deployTokenSecret } from "../infra/tokens";
+Keep these operational behaviors in mind when using `AccountToken`:
 
-export const worker = $worker({
-  id: "ci",
-  compatibilityDate: "2026-10-12",
-  bindings: () => ({ DEPLOY_TOKEN: deployTokenSecret }),
-});
+- **In-place policy updates** – Changing `Policies`, `Condition`, `ExpiresOn`, or `NotBefore` updates the existing token in place while preserving its `TokenId` and `Value`; omitting `Condition`, `ExpiresOn`, or `NotBefore` clears those fields.
+- **Fixed timestamps** – Always pass fixed ISO 8601 UTC timestamps rather than `new Date(...)`, which would update the token on every deploy.
+- **Automatic rotation** – Cloudflare returns `Value` only on creation and rotation. When a new deploy process needs the value (for new consumers, recreated secrets, or resumed deploys), Notation rolls the token, invalidating the old value and updating every consumer.
+- **Manual replacement** – `notation deploy --credential` rejects `AccountToken` because `AccountToken` rotates automatically.
+
+To force a brand-new `TokenId` and generated `Name` on an `AccountToken`, preview and apply `--replace`:
+
+```sh [Terminal]
+notation plan --replace orders-deploy-token
+notation deploy --replace orders-deploy-token@<instanceHash>
 ```
 
-::
+## Reference
 
-| Config      | Description                                                                                                                                                                                                     |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Policies`  | Required. What the token can do. Each policy has an `effect`, `allow` or `deny`, the names of its `permissionGroups` as the dashboard shows them, and the `resources` it applies to. A change updates the token in place. |
-| `Condition` | Optional. The client IP ranges, in CIDR notation, as `{ requestIp: { in, notIn } }`. Only clients in `in` may use the token, and clients in `notIn` may not. A change updates the token in place.               |
-| `ExpiresOn` | Optional. The time from which Cloudflare rejects the token, in ISO 8601 in UTC, such as `2027-01-01T00:00:00Z`. Use a fixed time: a time computed at deploy changes on every deploy, so every deploy updates the token. |
-| `NotBefore` | Optional. The time before which Cloudflare rejects the token.                                                                                                                                                  |
+### Credential references
 
-Deploy names the token `<app>--<stage>--<id>-<instance>`, cut to 120 characters. Config cannot set the name.
+Notation separates secret references from plain outputs so secret values never enter state or derived expressions (see [Types](../../core/types.md)):
 
-- The value goes from the token to the secret in memory, and never reaches state. See [Credentials](../../reference/resource.md#credentials).
-- A change to the policies, the condition or the times updates the token, which keeps its value.
-- If the IP ranges or the policies are changed in the dashboard, deploy changes them back to the config.
-- Plan looks up the ID of each permission group by its name, and compares the IDs with the token's. A name can belong to more than one group, one for each scope. Then the scope of the policy's `resources` picks the group: `com.cloudflare.api.account.<account id>` picks the account group, and `com.cloudflare.api.account.zone.<zone id>` picks the zone group. If the resources have more than one scope, plan fails and lists the groups. Give each scope its own policy.
-- Destroy deletes the token.
+- **`CredentialRef<string>` (`kind: "credential"`)** – Returned by `producer.credentials.<key>` and passed whole into secret-accepting fields; `outputRef()`, `text`, `.map()`, and `all()` reject it.
+- **`OutputRef<string>` (`kind: "output"`)** – Returned by `resource.outputRef(key)` for non-secret outputs such as `StoreId` or `TokenId`, compatible with `text`, `.map()`, and `all()`.
 
-**Deploy rolls the token when a resource needs its value and deploy holds none.** The token keeps its ID and gets a new value, and Cloudflare rejects the old one. Deploy then updates every resource that takes the value. This happens when an earlier deploy created the token and failed before it wrote the secret, when a second secret takes the value in a later deploy, and when drift detection finds that the secret is gone. If a write of a secret then fails, that secret holds a value that Cloudflare rejects until a deploy succeeds. Plan shows the roll:
+### `SecretsStore`
 
-```text
-~ rotate cloudflare/tokens/AccountToken deploy-token
-    Value gets a new value, as a resource that takes it needs one
-```
+`secretsStore.SecretsStore` (`cloudflare/secrets-store/SecretsStore`) from `@notation/cloudflare/resources` takes no `config` fields:
 
-## Credentials
+| Property | Description |
+| :--- | :--- |
+| `AccountId` | Derived immutable `string` from `CLOUDFLARE_ACCOUNT_ID` |
+| `StoreId` | Computed `string` adopted or created store ID |
 
-`CLOUDFLARE_API_TOKEN` needs these permissions, besides those in [Workers](workers.md#credentials):
+Reference `StoreId` via `.outputRef("StoreId")`. Creation adopts an existing account store or creates `default_secrets_store`, and deletion is a no-op so shared stages stay unaffected.
 
-- **Secrets Store: Edit**, for the store and its secrets.
-- **Account API Tokens: Edit**, for `AccountToken`.
+### `SecretsStoreSecret`
+
+`secretsStore.SecretsStoreSecret` (`cloudflare/secrets-store/SecretsStoreSecret`) from `@notation/cloudflare/resources` requires `dependencies: { store }`:
+
+| Property | Description |
+| :--- | :--- |
+| `Value` | Required sensitive `CredentialRef<string>` secret value |
+| `Name` | Generated physical name `<app>--<stage>--<id>-<instance>` |
+| `SecretId` | Computed `string` store secret ID assigned by Cloudflare |
+| `StoreId` | Derived `string` store ID from `dependencies.store` |
+| `AccountId` | Derived `string` account ID from `dependencies.store` |
+
+`Value` accepts a credential reference from `@notation/std/resources`, [Infisical](../infisical/sources.md), or `AccountToken`. `Name` is capped at 255 characters (see [Physical Names](../../core/physical-names.md)).
+
+Secrets are created with `scopes: ["workers"]`. Deletion matches by physical `Name` and succeeds quietly if the secret or store is already gone.
+
+### `AccountToken`
+
+`tokens.AccountToken` (`cloudflare/tokens/AccountToken`) from `@notation/cloudflare/resources` manages account-owned API tokens:
+
+| Property | Description |
+| :--- | :--- |
+| `Name` | Generated immutable physical name `<app>--<stage>--<id>-<instance>` |
+| `AccountId` | Derived immutable `string` from `CLOUDFLARE_ACCOUNT_ID` |
+| `TokenId` | Computed `OutputRef<string>` Cloudflare token ID |
+| `credentials.Value` | Sensitive `CredentialRef<string>` token secret passed to consumers |
+
+`Name` is capped at 120 characters (see [Physical Names](../../core/physical-names.md)).
+
+#### Policies
+
+`Policies` is a non-empty array of policy objects:
+
+| Property | Description |
+| :--- | :--- |
+| `effect` | Policy effect, `"allow"` or `"deny"` |
+| `permissionGroups` | Non-empty array of exact Cloudflare permission group names |
+| `resources` | Map of Cloudflare resource scopes to `"*"` or nested scopes |
+
+Use exact permission group names from the Cloudflare dashboard, such as `"Workers Scripts Write"` or `"Account Settings Read"`. Map scopes using `{ [`com.cloudflare.api.account.${accountId}`]: "*" }` for account scope or `{ [`com.cloudflare.api.account.${accountId}`]: { "com.cloudflare.api.account.zone.*": "*" } }` for zone scope.
+
+Notation uses `resources` to disambiguate permission group names that exist at multiple scopes (such as `"Logs Write"`). Split ambiguous multi-scope entries into separate objects in `Policies`.
+
+#### Conditions
+
+`Condition` accepts `{ requestIp?: { in?: string[]; notIn?: string[] } }` containing CIDR strings, `OutputRef<string>`, or `Derived<string>`. Ranges are sorted and normalized so list order never triggers updates.
+
+#### Lifetimes
+
+`ExpiresOn` and `NotBefore` accept ISO 8601 UTC timestamps (`YYYY-MM-DDTHH:MM:SSZ` or `.sssZ`), normalized to whole seconds.
+
+#### Token drift
+
+External dashboard edits to `Policies` or `Condition.requestIp` appear as drift and reconcile on deploy. Removed `ExpiresOn` or `NotBefore` values and disabled token statuses are not checked as drift; deleted tokens recreate and rotate across every consumer. Replacement creates the new token, updates all consumers, and deletes the old token at the end of deploy.

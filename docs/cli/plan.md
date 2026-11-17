@@ -1,151 +1,193 @@
 # notation plan
 
-```sh
-notation plan [--config <path>] [--stage <stage>] [--replace <id>[@<hash>]] [--override-loss-protection <id>] [--credential <id>.<credential>[@<hash>]=<variable>]
+`notation plan` compiles your project and previews every create, update, replace, delete, and credential change without modifying cloud infrastructure or state.
+
+## Usage
+
+Run `notation plan` in your project root to preview `defaultStage`, or pass `--stage` to target another stage:
+
+```sh [Terminal]
+@pm.dlx("notation plan")
+@pm.dlx("notation plan --stage prod")
 ```
 
-| Option                                               | Meaning                                                                                                                           |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `--config <path>`                                    | The config file. Default: the nearest `notation.config.ts`.                                                                       |
-| `--stage <stage>`                                    | The stage. Default: `defaultStage`.                                                                                               |
-| `--replace <id>[@<hash>]`                            | Plan a replace of the resource with this ID. Repeatable. See [Replacing a resource](#replacing-a-resource).                       |
-| `--override-loss-protection <id>`                    | Plan the replace of a resource that `--replace` names, though its class refuses the replace. Repeatable.                          |
-| `--credential <id>.<credential>[@<hash>]=<variable>` | Plan a deploy that takes the credential's value from the variable. Repeatable. See [Passing a credential](#passing-a-credential). |
+During a run, `plan` compiles your project into `dist/`, evaluates the resource graph, and runs provider `read` calls for drift detection and credential sources. Unlike [`notation deploy`](./deploy.md), `plan` always compiles and checks drift.
 
-Compiles the entry file and shows what a deploy to the stage would change:
+## Options
 
-```sh
-notation plan --stage prod
+`notation plan` accepts project, output, and override flags (see [CLI Flags](../reference/cli-flags.md) for syntax and validation rules):
+
+| Flag | Purpose |
+| :--- | :--- |
+| `--config <path>` | Loads a specific config file instead of the nearest `notation.config.ts` |
+| `--stage <stage>` | Targets a specific stage instead of `defaultStage` |
+| `--json` | Emits a single `Plan` JSON object on `stdout` |
+| `--pretty` | Forces readable terminal lines |
+| `--replace <id>[@<hash>]` | Previews replacing a recorded resource with unchanged parameters |
+| `--override-loss-protection <id>` | Bypasses class-level `rejectChange` guards for a replaced resource |
+| `--credential <id>.<credential>[@<hash>]=<var>` | Previews a manual credential update using `<var>` |
+
+Unlike `deploy`, `@<hash>` is optional on `--replace` and `--credential` during `plan`.
+
+## Output formats
+
+By default, `plan` prints human-readable lines on a TTY or in CI and switches to JSON on non-TTY streams outside CI. In `--json` mode, logs and progress events redirect to `stderr`, leaving a single `Plan` JSON object on `stdout`.
+
+Compare the same plan where `orderQueue` is created and `create-order` updates to reference its URL:
+
+::code-group
+
+```text [pretty]
+Compiling infrastructure infra/orders.ts
+Compiling runtime modules
+Planning orders-app:prod
+
+… read create-order aws/lambda/LambdaFunction
+✓ read create-order aws/lambda/LambdaFunction
++ create aws/sqs/Queue orderQueue
+~ update aws/lambda/LambdaFunction create-order
+
+Plan: 1 to create, 1 to update, 0 to replace, 0 to recreate, 0 to delete, 0 unchanged.
 ```
 
-The plan reads remote resources when drift detection applies. It does not perform create,
-update, or delete operations.
-
-Each line names the decision, the resource type and the resource ID. A replace also shows its order:
-
-```
-+/- replace aws/lambda/LambdaIamRole lambda:orders:role (create, then delete)
--/+ replace aws/lambda/LambdaPermission api-permission:orders-api:orders (delete, then create)
-```
-
-A resource whose name deploy generates, such as a function, a role, a queue, a bus, a rule, an API or a Worker, is replaced create-first. Deploy creates the replacement under a new name, updates the dependents to use it, and deletes the old resource at the end of the deploy. Every other resource is replaced delete-first. See [Create-first replacement](../internals/reconciler.md#create-first-replacement).
-
-Until deploy deletes it, the old resource is retired: it is listed in the state record of its replacement. A deploy that stops before its end leaves it there. The plan shows each retired resource as a delete:
-
-```
-- delete-retired aws/lambda/LambdaIamRole lambda:orders:role
-    the instance that a replace retired at 2026-11-13T09:12:44.120Z, deleted at the end of the deploy
-```
-
-When deploy replaces the resource delete-first, it deletes the retired resources with it. The plan then shows them just before the replace, and prints `deleted before the resource is replaced`.
-
-The summary counts it among the deletes.
-
-For resources that depend on each other, the plan prints a line under the resource that deploy creates first, without the contributions that refer to the others:
-
-```
-+ create cloudflare/workers/WorkerScript worker:api
-    created first without the contributions that refer to worker:reports, the other members of its cycle
+```json [--json]
+{
+  "createdAt": "2026-11-16T12:00:00.000Z",
+  "nodes": [
+    {
+      "id": "orderQueue",
+      "type": "aws/sqs/Queue",
+      "decision": "create",
+      "params": { "QueueName": { "$unknown": "after-apply" }, "VisibilityTimeout": 30 },
+      "dependsOn": []
+    },
+    {
+      "id": "create-order",
+      "type": "aws/lambda/LambdaFunction",
+      "decision": "update",
+      "instanceHash": "9e04b7d1",
+      "diff": { "added": { "Environment": { "Variables": { "ORDER_QUEUE_URL": { "$unknown": "after-apply" } } } }, "deleted": {}, "updated": {} },
+      "params": { "FunctionName": "orders-app--prod--create-order-a1b2c3d4" },
+      "dependsOn": ["orderQueue"]
+    }
+  ]
+}
 ```
 
-See [Dependency cycles](../internals/reconciler.md#dependency-cycles).
+::
 
-When deploy replaces a resource delete-first, and the provider can force its delete while others refer to it, the plan names the resources whose references are broken from the delete until deploy updates them:
+Pipe `--json` output directly to tools such as `jq`:
 
-```
--/+ replace <type> <id> (delete, then create)
-    the references from worker:reports are broken until deploy updates them
-```
-
-If the deploy fails between the delete and those updates, the references stay broken until a later deploy succeeds. Of the classes in Notation's provider packages, only the Cloudflare Worker's delete can be forced, and a Worker is replaced create-first, so its plan has no such line. See [Deleting a Worker that other Workers bind](../providers/cloudflare/workers.md#deleting-a-worker-that-other-workers-bind).
-
-When an earlier deploy started the create of a resource and did not finish it, state holds a `creating` record for the resource. The plan prints a line under the create:
-
-```
-+ create aws/lambda/LambdaIamRole lambda:todos:role
-    recovers a create that an earlier deploy did not finish
+```sh [Terminal]
+@pm.dlx("notation plan --stage prod --json") | jq '.nodes[] | {id, decision}'
 ```
 
-If the earlier create made the resource, deploy takes it over: it reads the resource, and then updates, replaces or keeps it. Otherwise deploy creates the resource. See [Recoverable creates](../internals/reconciler.md#recoverable-creates).
+## Reading plan output
 
-Deploy generates the AWS name of a resource, such as a function or a queue, when it first creates the resource. In the JSON output, the `params` of such a resource show the name as `{ "$unknown": "after-apply" }` until the resource exists. The same holds for a resource that deploy replaces, because the replacement gets a new name. The plan of a replace does not list the name among the fields that change. See [Generated names](../manual/project-config.md#generated-names).
+Pretty output prefixes each changed resource line with a decision symbol and omits unchanged `noop` nodes:
 
-## Replacing a resource
+| Symbol | Meaning |
+| :--- | :--- |
+| `+` | Creates a missing resource |
+| `~` | Updates a resource, applies drift updates, or rotates or passes credentials |
+| `+/-` | Replaces a resource create-first |
+| `-/+` | Replaces a resource delete-first |
+| `±` | Recreates a resource deleted outside Notation |
+| `-` | Deletes an orphan or retired instance |
 
-`--replace` plans the replace that [`notation deploy --replace`](./deploy.md#replacing-a-resource) makes. The instance hash is optional, because plan changes nothing. When you give it, plan checks it as deploy does.
+When a kept resource mints or receives credentials without other changes, `plan` prints `~ rotate` or `~ pass`.
 
-```sh
-notation plan --stage prod --replace lambda:orders:role
+## Unknown post-apply values
+
+Values determined only during `notation deploy` – such as generated physical names, outputs of uncreated or replaced dependencies, and rotated credentials – appear in `params` and `diff` as `{ "$unknown": "after-apply" }`.
+
+When a replacement-forcing field is unknown before apply, pretty mode warns that replacement is conditional:
+
+```text [pretty]
+-/+ replace aws/eventBridge/rule orders-rule (delete, then create)
+    EventBusName unknown, may force replacement
 ```
 
-The plan shows the replace, and every change that follows from it:
+## Replacement previews
 
+`plan` shows whether each replacement runs `create-first` (`+/- ... (create, then delete)`) or `delete-first` (`-/+ ... (delete, then create)`), along with any retired instances (`delete-retired`) and cascaded dependent replacements.
+
+This pretty output shows retired instance cleanup, a `delete-first` replacement, and a cascaded dependent replacement:
+
+```text [pretty]
+- delete-retired aws/eventBridge/EventBus orders-bus
+    the instance that a replace retired at 2026-11-13T00:00:00.000Z, deleted before the resource is replaced
+-/+ replace aws/eventBridge/EventBus orders-bus (delete, then create)
+    Name forces replacement
+-/+ replace aws/eventBridge/rule orders-rule (delete, then create)
+    deleted before orders-bus is replaced
 ```
+
+## Dependency cycles
+
+When resources form a dependency cycle, `plan` marks placeholder members created first without cross-cycle contributions:
+
+```text [pretty]
++ create aws/lambda/LambdaFunction create-order
+    created first without the contributions that refer to order-events, the other members of its cycle
+```
+
+If no cycle member can act as a placeholder, `plan` fails with `ResourceCycleError`.
+
+## Forced replacements
+
+Pass `--replace <id>` to preview replacing a recorded resource with unchanged parameters.
+
+Add `--override-loss-protection <id>` if the resource class sets `rejectChange`:
+
+```sh [Terminal]
+@pm.dlx("notation plan --stage prod --replace lambda:orders:role --override-loss-protection lambda:orders:role")
+```
+
+When any override flag is passed, `plan` prints a ready-to-run `notation deploy` command with the resolved `@<instanceHash>` values:
+
+```text [pretty]
 +/- replace aws/lambda/LambdaIamRole lambda:orders:role (create, then delete)
     replaced by --replace
 ~ update aws/lambda/LambdaFunction lambda:orders
 
-Plan: 0 to create, 1 to update, 1 to replace, 0 to recreate, 0 to delete, 9 unchanged.
+Plan: 0 to create, 1 to update, 1 to replace, 0 to recreate, 0 to delete, 0 unchanged.
 
 To deploy this plan:
-  notation deploy --stage prod --replace lambda:orders:role@3c1f9a02
+  notation deploy --stage prod --replace lambda:orders:role@3c1f9a02 --override-loss-protection lambda:orders:role
 ```
 
-The last line is the deploy command, with the instance hash of each resource that `--replace` names. Copy it to deploy the plan. When a changed param also replaces the resource, the plan shows one replace with both reasons.
+`plan` rejects `--replace` when the resource is missing from code or state, has an unfinished create, or is a credential source.
 
-## Sources and credentials
+## Manual credentials
 
-Plan calls the `read` operation of every [source](../manual/secrets.md#sources), such as `sources.Env`, and shows a new revision as an update of the source. Each resource that takes the source's value is updated with it:
+Notation never persists raw secrets in state. When a new, replaced, or updated consumer needs a non-rotatable credential, `plan` fails with `UnobtainableCredentialError` and prints `--credential` and `--replace` commands.
 
-```
-~ update std/sources/Env stripe-key
-~ update cloudflare/secrets-store/SecretsStoreSecret stripe-key-secret
-```
+Pass `--credential <id>.<credential>=<VARIABLE>` to preview downstream diffs before exporting the secret or looking up `@<hash>`:
 
-A source can warn, for example when `track` is set and the variable is not:
-
-```
-! stripe-key std/sources/Env STRIPE_KEY is not set. Its value was not checked for a change.
+```sh [Terminal]
+@pm.dlx("notation plan --stage prod --credential webhook-app.signingSecret=WEBHOOK_APP_SIGNING_SECRET")
 ```
 
-When a resource needs the value of a credential that deploy no longer holds, and the credential's resource can rotate it, plan shows the rotation:
+During `plan`, `@<hash>` is optional and the environment variable need not be set, and `plan` prints the resolved `notation deploy` command with `@<instanceHash>`.
 
-```
-~ rotate cloudflare/tokens/AccountToken deploy-token
-    Value gets a new value, as a resource that takes it needs one
-```
+## Credential source warnings
 
-When the credential's resource cannot rotate it, plan fails. It prints a `--credential` command, which passes a value that you issue at the provider, and a `--replace` command. See [A credential that you rotate by hand](./deploy.md#a-credential-that-you-rotate-by-hand).
+`plan` reads each credential source with known parameters and surfaces any warnings with `!` in pretty mode or on `stderr` in `--json` mode:
 
-## Passing a credential
-
-`--credential` plans the deploy that [`notation deploy --credential`](./deploy.md#a-credential-that-you-rotate-by-hand) makes. The instance hash is optional, because plan changes nothing, and the variable need not be set. When you give the hash, plan checks it as deploy does.
-
-```sh
-notation plan --stage prod --credential app.privateKey=APP_PRIVATE_KEY
+```text [stderr]
+! stripe-key example/EnvSecret STRIPE_KEY is not set.
 ```
 
-The plan shows the passed value, and the update of each resource that takes it:
+## Unfinished creates
 
-```
-~ pass github/App app
-    privateKey gets the value that --credential passes
-~ update cloudflare/secrets-store/SecretsStoreSecret app-key-secret
-```
+If a previous deploy crashed mid-create, `plan` skips drift detection, preserves any generated physical name, and flags the node for recovery:
 
-The last line is the deploy command, with the instance hash of each resource that `--credential` names:
-
-```
-To deploy this plan:
-  notation deploy --stage prod --credential app.privateKey@5d2e8b17=APP_PRIVATE_KEY
+```text [pretty]
++ create aws/sqs/Queue orderQueue
+    recovers a create that an earlier deploy did not finish
 ```
 
-## JSON output
+## Exit codes
 
-`--json` writes the complete plan to stdout. Build output and diagnostics move to stderr.
-
-```sh
-notation plan --stage prod --json > plan.json
-```
-
-Each node has `id`, `type`, `decision`, `params` and `dependsOn`. A node with the decision `replace` or `drift-replace` has `replaceOrder`, `"create-first"` or `"delete-first"`. A retired resource is a node with the decision `delete-retired`. It has the ID of the resource that replaced it, `retiredIndex`, its position in the list of retired instances of that resource, its own `params` and `dependsOn`, and `retiredAt`, the time when the replace started. The ID and `retiredIndex` together name the instance. A node of a resource in code that has a state record has `instanceHash`, the hash that `--replace` and `--credential` take. A replace that `--replace` asked for has `{ "requested": true, "known": true }` in its `replaceFields`.
+`notation plan` exits with `0` whenever planning succeeds, even when changes are pending. It exits with `1` on compilation errors, validation errors, `ResourceCycleError`, `UnobtainableCredentialError`, or unexpected provider `read` errors.

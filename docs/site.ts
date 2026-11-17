@@ -6,44 +6,49 @@ export const deploy = {
   slug: "deploy",
   label: "Deploy",
   root,
-  defaultSlug: "manual/introduction",
+  defaultSlug: "core/introduction",
   version: { packageJson: "packages/core/package.json" },
   categories: [
     {
-      label: "User Manual",
-      slug: "manual",
+      label: "Core",
+      slug: "core",
       sections: [
         {
           heading: "Getting Started",
           icon: "rocket",
           links: [
-            { label: "Introduction", slug: "manual/introduction" },
-            { label: "Installation", slug: "manual/installation" },
-            { label: "Quick Start", slug: "manual/quickstart" },
+            { label: "Introduction", slug: "core/introduction" },
+            { label: "Quickstart", slug: "core/quickstart" },
           ],
         },
         {
-          heading: "Handlers",
+          heading: "Authoring Code",
           icon: "cpu",
           links: [
-            { label: "Lambda Handlers", slug: "manual/functions" },
-            { label: "Lambda Declaration", slug: "manual/function-config" },
+            { label: "Project Config", slug: "core/project-config" },
+            { label: "Modules", slug: "core/modules" },
+            { label: "Declarations", slug: "core/declarations" },
+            { label: "Types", slug: "core/types" },
           ],
         },
         {
-          heading: "Concepts",
+          heading: "Resources",
           icon: "layers",
           links: [
-            { label: "Project Config", slug: "manual/project-config" },
-            { label: "File Conventions", slug: "manual/file-conventions" },
-            { label: "End-to-End Types", slug: "manual/types" },
-            { label: "Secrets", slug: "manual/secrets" },
+            { label: "Resources", slug: "core/resources" },
+            { label: "Physical Names", slug: "core/physical-names" },
+            { label: "Resource Wiring", slug: "core/outputs-and-contributions" },
+            { label: "Secrets", slug: "core/secrets" },
           ],
         },
         {
-          heading: "Embedding",
-          icon: "layers",
-          links: [{ label: "Embedded Reconciler", slug: "manual/reconciler" }],
+          heading: "Reconciler",
+          icon: "database",
+          links: [
+            { label: "Reconciliation", slug: "core/reconciliation" },
+            { label: "Recovery", slug: "core/recovery" },
+            { label: "State", slug: "core/state" },
+          ],
         },
       ],
     },
@@ -52,16 +57,55 @@ export const deploy = {
       slug: "cli",
       sections: [
         {
-          heading: "Commands",
+          heading: "Overview",
           icon: "terminal",
+          links: [{ label: "Overview", slug: "cli/overview" }],
+        },
+        {
+          heading: "Deploy",
+          icon: "cloud",
           links: [
-            { label: "notation compile", slug: "cli/compile" },
-            { label: "notation watch", slug: "cli/watch" },
-            { label: "notation plan", slug: "cli/plan" },
             { label: "notation deploy", slug: "cli/deploy" },
+            { label: "notation plan", slug: "cli/plan" },
             { label: "notation destroy", slug: "cli/destroy" },
+          ],
+        },
+        {
+          heading: "Develop",
+          icon: "cpu",
+          links: [
+            { label: "notation watch", slug: "cli/watch" },
+            { label: "notation compile", slug: "cli/compile" },
+          ],
+        },
+        {
+          heading: "Inspect",
+          icon: "layers",
+          links: [
             { label: "notation dashboard", slug: "cli/dashboard" },
             { label: "notation viz", slug: "cli/viz" },
+          ],
+        },
+      ],
+    },
+    {
+      label: "Authoring",
+      slug: "authoring",
+      sections: [
+        {
+          heading: "Resource SDK",
+          icon: "layers",
+          links: [
+            { label: "Resources", slug: "authoring/resources" },
+            { label: "Credential Sources", slug: "authoring/credential-sources" },
+          ],
+        },
+        {
+          heading: "Build SDK",
+          icon: "cpu",
+          links: [
+            { label: "Bundles", slug: "authoring/bundles" },
+            { label: "Compiler Marks", slug: "authoring/compiler" },
           ],
         },
       ],
@@ -71,11 +115,98 @@ export const deploy = {
       slug: "reference",
       sections: [
         {
-          heading: "Resource SDK",
+          heading: "Core",
           icon: "layers",
           links: [
-            { label: "Resource", slug: "reference/resource" },
-            { label: "Bundle", slug: "reference/bundle" },
+            { label: "Project Config", slug: "reference/project-config" },
+            { label: "Module Boundaries", slug: "reference/module-boundaries" },
+            { label: "References", slug: "reference/references" },
+            { label: "Type System", slug: "reference/type-system" },
+            { label: "Physical Names", slug: "reference/physical-names" },
+          ],
+        },
+        {
+          heading: "CLI",
+          icon: "terminal",
+          links: [
+            { label: "CLI Flags", slug: "reference/cli-flags" },
+            { label: "Plan Schema", slug: "reference/plan-schema" },
+            { label: "Embedded Runtime", slug: "reference/embedded-runtime" },
+          ],
+        },
+        {
+          heading: "Authoring SDK",
+          icon: "cpu",
+          links: [
+            { label: "Resource SDK", slug: "reference/resource-sdk" },
+            { label: "Credential SDK", slug: "reference/credential-sdk" },
+            { label: "Bundles SDK", slug: "reference/bundles-sdk" },
+            { label: "Compiler Marks", slug: "reference/compiler-marks" },
+          ],
+        },
+      ],
+    },
+    {
+      label: "Internals",
+      slug: "internals",
+      sections: [
+        {
+          heading: "Overview",
+          icon: "layers",
+          links: [{ label: "Architecture", slug: "internals/architecture" }],
+        },
+        {
+          heading: "Compiler",
+          icon: "cpu",
+          links: [
+            { label: "Module Analysis", slug: "internals/module-analysis" },
+            { label: "Transforms", slug: "internals/transforms" },
+            { label: "Bundle Cache", slug: "internals/bundle-cache" },
+          ],
+        },
+        {
+          heading: "Resources",
+          icon: "layers",
+          links: [
+            { label: "Resource Graph", slug: "internals/resource-graph" },
+            { label: "References", slug: "internals/references" },
+            { label: "Contributions", slug: "internals/contributions" },
+            { label: "Validation", slug: "internals/validation" },
+            { label: "Physical Names", slug: "internals/physical-names" },
+          ],
+        },
+        {
+          heading: "Reconciler",
+          icon: "cpu",
+          links: [
+            { label: "Planner", slug: "internals/planner" },
+            { label: "Durable Execution", slug: "internals/durable-execution" },
+            { label: "Recovery", slug: "internals/recovery" },
+          ],
+        },
+        {
+          heading: "Storage",
+          icon: "database",
+          links: [
+            { label: "State Store", slug: "internals/state-store" },
+            { label: "Secrets Engine", slug: "internals/secrets-engine" },
+          ],
+        },
+        {
+          heading: "Tooling",
+          icon: "terminal",
+          links: [
+            { label: "Watch Runner", slug: "internals/watch-runner" },
+            { label: "Event Protocol", slug: "internals/protocol" },
+          ],
+        },
+        {
+          heading: "Providers",
+          icon: "cloud",
+          links: [
+            { label: "AWS Internals", slug: "internals/aws-internals" },
+            { label: "Cloudflare Internals", slug: "internals/cloudflare-internals" },
+            { label: "Infisical Internals", slug: "internals/infisical-internals" },
           ],
         },
       ],
@@ -86,13 +217,26 @@ export const deploy = {
       divider: true,
       sections: [
         {
-          heading: "Resources",
+          heading: "Getting Started",
+          icon: "rocket",
+          links: [{ label: "Overview", slug: "providers/aws/overview" }],
+        },
+        {
+          heading: "Compute",
+          icon: "cpu",
+          links: [{ label: "Lambda", slug: "providers/aws/lambda" }],
+        },
+        {
+          heading: "APIs",
           icon: "cloud",
+          links: [{ label: "API Gateway", slug: "providers/aws/api-gateway" }],
+        },
+        {
+          heading: "Messaging",
+          icon: "layers",
           links: [
-            { label: "Lambda", slug: "providers/aws/lambda" },
-            { label: "API Gateway", slug: "providers/aws/api-gateway" },
-            { label: "EventBridge", slug: "providers/aws/event-bridge" },
             { label: "SQS", slug: "providers/aws/sqs" },
+            { label: "EventBridge", slug: "providers/aws/event-bridge" },
           ],
         },
       ],
@@ -102,24 +246,40 @@ export const deploy = {
       slug: "cloudflare",
       sections: [
         {
-          heading: "Resources",
-          icon: "cloud",
+          heading: "Getting Started",
+          icon: "rocket",
+          links: [{ label: "Overview", slug: "providers/cloudflare/overview" }],
+        },
+        {
+          heading: "Compute",
+          icon: "cpu",
           links: [
-            { label: "Overview", slug: "providers/cloudflare/overview" },
             { label: "Workers", slug: "providers/cloudflare/workers" },
-            { label: "KV", slug: "providers/cloudflare/kv" },
-            { label: "Secrets", slug: "providers/cloudflare/secrets" },
+            { label: "Durable Objects", slug: "providers/cloudflare/durable-objects" },
             { label: "Containers", slug: "providers/cloudflare/containers" },
           ],
+        },
+        {
+          heading: "Storage",
+          icon: "database",
+          links: [
+            { label: "KV", slug: "providers/cloudflare/kv" },
+            { label: "R2", slug: "providers/cloudflare/r2" },
+          ],
+        },
+        {
+          heading: "Security",
+          icon: "layers",
+          links: [{ label: "Secrets", slug: "providers/cloudflare/secrets" }],
         },
       ],
     },
     {
-      label: "Infisical",
-      slug: "infisical",
+      label: "Secret Providers",
+      slug: "secret-providers",
       sections: [
         {
-          heading: "Sources",
+          heading: "Secret Providers",
           icon: "database",
           links: [{ label: "Infisical", slug: "providers/infisical/sources" }],
         },

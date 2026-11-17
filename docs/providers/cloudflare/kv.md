@@ -1,230 +1,341 @@
 # KV
 
-`@notation/cloudflare` declares [Workers KV](https://developers.cloudflare.com/kv/) namespaces and the keys in them. A Worker binds a namespace and reads its keys at runtime.
+Provision Cloudflare Workers KV namespaces, manage schema-checked JSON configuration across infrastructure modules, and read typed values in [Workers](./workers.md).
 
-| Declaration      | Package entry                    | What it stores in a key          |
-| ---------------- | -------------------------------- | -------------------------------- |
-| `kv.KVNamespace` | `@notation/cloudflare/resources` | Nothing. It holds the keys       |
-| `kv.KVValue`     | `@notation/cloudflare/resources` | One string, as it is             |
-| `kvJson()`       | `@notation/cloudflare/kv`        | One JSON document, with a schema |
+Deploying KV resources requires `CLOUDFLARE_ACCOUNT_ID` and a `CLOUDFLARE_API_TOKEN` with the **Workers KV Storage: Edit** permission (see [Cloudflare Overview](./overview.md)).
 
-## `kv.KVNamespace`
+## KV namespaces
 
-A namespace has a title, which is unique in the account:
+Declare a namespace with `kv.KVNamespace` from `@notation/cloudflare/resources`, then bind it inside `$worker` or `worker()`.
 
-```ts [infra/config.ts]
-import { kv } from "@notation/cloudflare/resources";
-
-export const config = new kv.KVNamespace("config", {
-  config: { Title: "shop-config" },
-});
-```
-
-- `AccountId` is `CLOUDFLARE_ACCOUNT_ID`.
-- `Jurisdiction`, `"eu"`, `"fedramp"` or `"us"`, is set only when the namespace is created.
-- Deploy refuses a change that would replace the namespace, because a replace deletes its keys.
-
-A Worker binds the namespace as a `KVNamespace`. See [Bindings](workers.md#bindings).
-
-## `kv.KVValue`
-
-A `KVValue` writes one string to one key:
-
-```ts [infra/config.ts]
-export const banner = new kv.KVValue("banner", {
-  config: { Key: "banner", Value: "Free delivery this week" },
-  dependencies: { namespace: config },
-});
-```
-
-- Create fails when the key already exists, so deploy never overwrites a key that it did not write.
-- A change to `Key` writes the new key first, and deletes the old key at the end of the deploy.
-- KV is eventually consistent. After a write, deploy reads the key until it returns the written value, for up to about 60 seconds.
-- Plan reads the key, and plans an update when the stored value differs from `Value`.
-
-## `kvJson()`
-
-`kvJson()` declares a JSON document in a key. The document is built from parts that different infra modules contribute, and a schema checks the merged document at plan and deploy.
-
-The example below is a set of feature flags. The billing and uploads modules each own some of the flags.
-
-### The schema
-
-The schema goes in a shared module, so that the infra and the Worker import the same schema:
-
-```ts [shared/flags.ts]
-import * as v from "valibot";
-
-export const FLAGS_KEY = "flags";
-
-export const Flags = v.object({
-  features: v.record(v.string(), v.boolean()),
-  limits: v.optional(v.record(v.string(), v.number())),
-});
-```
-
-Any [Standard Schema](https://standardschema.dev) works, such as a valibot or Zod schema. Its input type must be JSON. `unknown` is allowed at any depth, such as the extra keys of `v.looseObject()`, as is a recursive JSON schema built with `v.lazy()`; the schema check at plan and deploy still checks what deploy writes. A field typed as a `Date` or a function is a type error that names the key, such as `meta.at`. Its output type can be any type: a schema can turn a string into a `Date`, as described in [Reading the document in a Worker](#reading-the-document-in-a-worker).
-
-### Declaring the document
-
-```ts [infra/config.ts]
-import { kvJson } from "@notation/cloudflare/kv";
-import { kv } from "@notation/cloudflare/resources";
-import { Flags, FLAGS_KEY } from "../shared/flags";
-
-export const config = new kv.KVNamespace("config", {
-  config: { Title: "shop-config" },
-});
-
-export const flags = kvJson({
-  id: "flags",
-  namespace: config,
-  key: FLAGS_KEY,
-  schema: Flags,
-  value: { features: {} },
-});
-```
-
-| Option      | Notes                                                                                                                                                                       |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`        | Keys the document in state. The resource ID is `kv-json:<id>`. Use 1 to 64 letters, digits, hyphens or underscores. An ID such as `${id}-config` is checked when infra runs |
-| `namespace` | The `KVNamespace` that holds the key                                                                                                                                        |
-| `key`       | The KV key                                                                                                                                                                  |
-| `schema`    | Checks the merged document at plan and deploy                                                                                                                               |
-| `value`     | Optional. The first part of the document, before the contributions                                                                                                          |
-
-`kvJson()` returns a `KVJsonGroup`. `flags.schema` is the schema, and `flags.value` is the `kv.KVJsonValue` resource that writes the key.
-
-### Contributing to the document
-
-Each module adds its own keys with `flags.contribute`:
+Binding a `KVNamespace` automatically adds a deployment dependency and types the binding as `KVNamespace` on `env`:
 
 ::code-group
 
-```ts [infra/billing.ts]
-import { flags } from "./config";
-
-flags.contribute({ features: { invoices: true } });
-```
-
-```ts [infra/uploads.ts]
-import { flags } from "./config";
-
-flags.contribute({ features: { uploads: true }, limits: { uploadMb: 50 } });
-```
-
-::
-
-Deploy merges `value` and both contributions, and writes this text to the key `flags`:
-
-```text
-{"features":{"invoices":true,"uploads":true},"limits":{"uploadMb":50}}
-```
-
-Deploy sorts the object keys, so the same document always gives the same text. The merge follows these rules:
-
-- **Object keys merge at every depth.** The billing module sets `features.invoices` and the uploads module sets `features.uploads`, so both apply.
-- **Two parts that set one key to different values conflict.** Plan fails and names the line of each `contribute` call. When `value` is one side, the error names it as `the config of kv-json:flags`.
-- **An array or a scalar is set whole.** Two contributions that set the same array to different arrays conflict. For a list that several modules add to, use an object keyed by a name that each module chooses.
-- **Removing a contribution removes its keys.** The next deploy writes the document without them.
-
-The type of each contribution is a `JsonPartial` of the schema's input: every object key is optional, at every depth. So `flags.contribute({ features: { invoices: "yes" } })` is a type error.
-
-A contribution, and `value`, can also hold an output ref or a [derived value](../../reference/resource.md#derived-values) at any depth. While its ref is unknown, plan shows the key that holds it as unknown, and the other keys stay known:
-
 ```ts [infra/config.ts]
-import { text } from "@notation/resource";
+import { kv } from "@notation/cloudflare/resources";
 
-// The schema has `namespace: v.string()`
-flags.contribute({
-  namespace: text`kv:${config.outputRef("NamespaceId")}`,
+export const ordersKv = new kv.KVNamespace("orders-kv", {
+  config: {
+    Title: "orders-config",
+  },
 });
 ```
 
-A contribution can also be a function of the outputs of its deps, but function contributions are deprecated; see [Function contributions](../../reference/resource.md#function-contributions). When the function reads an output that does not exist yet, such as on the first deploy of a dep, plan can't tell which keys it sets, and checks the document only at deploy.
-
-### The schema check
-
-Plan checks the merged document against the schema before deploy writes anything. A contribution of `{ features: { invoices: "yes" } }` fails at plan:
-
-```text
-✗ Invalid Value for kv-json:flags (cloudflare/kv/KVJsonValue) at plan, declared at infra/config.ts:9: features.invoices: Invalid type: Expected boolean but received "yes"
-```
-
-The error names the `kvJson()` call, not the contribution. The path, `features.invoices`, tells you which contribution set the field.
-
-Notation checks the document at three points:
-
-| Point       | What is checked                                                                                                                        |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Declaration | Nothing. A later contribution can still supply a field that the schema requires                                                        |
-| Plan        | The merged document. Fields that hold an output ref that is not known yet are left out                                                 |
-| Deploy      | The known fields before deploy changes anything, and the whole document, with every output ref filled in, before deploy writes the key |
-
-**The schema only checks the document.** Deploy writes the merged document as it is, not the schema's output. A default in the schema applies in the Worker, but deploy does not write it.
-
-Deploy also refuses a value that `JSON.stringify` would change, such as `NaN`, a `Date`, a sparse array, a key set to `undefined`, or a key named `__proto__`. The stored text is at most 25 MiB.
-
-### Drift
-
-Plan reads the key and compares the parsed document with the merged document. When the key holds text that is not JSON, or JSON that deploy would refuse, such as `[1e999]`, plan reads it as a JSON string. Text too long to hold as a JSON string within 25 MiB reads as a short string that gives its length. That string differs from the document, so plan shows an update and deploy writes the key again.
-
-## Reading the document in a Worker
-
-A Worker binds the namespace, and reads the key with `readKVJson(namespace, key, schema)` from `@notation/cloudflare/workers`:
-
-```ts [runtime/api.ts]
-import {
-  $worker,
-  readKVJson,
-  type WorkerHandler,
-} from "@notation/cloudflare/workers";
-import { Flags, FLAGS_KEY } from "../shared/flags";
-import { config } from "../infra/config";
+```ts [runtime/orders-api.ts]
+import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
+import { ordersKv } from "../infra/config";
 
 export const worker = $worker({
-  id: "api",
+  id: "orders-api",
   compatibilityDate: "2026-10-12",
-  bindings: () => ({ CONFIG: config }),
+  bindings: () => ({ ORDERS_KV: ordersKv }),
 });
 
 export default {
   async fetch(request, env) {
-    const flags = await readKVJson(env.CONFIG, FLAGS_KEY, Flags);
-    if (!flags?.features.uploads)
-      return new Response("Not found", { status: 404 });
-    // ...
+    const orderId = new URL(request.url).searchParams.get("orderId");
+    if (!orderId) return new Response("missing orderId", { status: 400 });
+
+    const cached = await env.ORDERS_KV.get(`order:${orderId}`);
+    if (!cached) return new Response("not found", { status: 404 });
+
+    return new Response(cached, {
+      headers: { "content-type": "application/json" },
+    });
   },
 } satisfies WorkerHandler<typeof worker>;
 ```
 
-`readKVJson()` does three things:
+::
 
-1. It reads the key as text. For a missing key it returns `undefined`.
-2. It parses the text. Text that is not JSON throws a `KVJsonError` with the key.
-3. It validates the value with the schema, and returns the schema's output. A value that fails throws a `KVJsonError` with the key and the schema's issues in `issues`.
+Include an app or stage qualifier in `Title` when sharing an account across stages, because Notation refuses to adopt an existing namespace with the same title. You can also attach a namespace externally with `addBindings(worker, { ORDERS_KV: ordersKv })`, though externally added bindings are not reflected in `WorkerEnv<typeof worker>`.
 
-A fourth argument passes options to `get`, such as `{ cacheTtl: 300 }`.
+## Shared JSON documents
 
-**The Worker must handle `undefined`.** The Worker binds the namespace, not the document, so deploy can put the Worker live before it writes the key. After a write, other locations can also return no key for about 60 seconds.
+Use `kvJson()` from `@notation/cloudflare/kv` to manage a single JSON document in one KV key. Multiple infrastructure modules can contribute keys to the document, validated together at deploy time against a shared [Standard Schema V1](https://standardschema.dev) validator.
 
-The Worker imports the schema and the key from `shared/flags.ts`, not from `flags`. The runtime build keeps only the keys of a Worker's bindings, so the handler can't read values from `infra/config.ts`. Nothing checks that the Worker passes the same schema as the document.
+Define the schema in `shared/`, declare the document in `infra/config.ts`, contribute settings from `infra/webhooks.ts`, import both in `infra/main.ts`, and read the decoded config in `runtime/orders-api.ts`:
 
-## Changing a schema
+::code-group
 
-The Worker and the document go live at different times. For about a minute, the new Worker can read the old document, and the old Worker can read the new one. A new schema must therefore accept the document that the previous schema accepted:
+```ts [shared/orders.ts]
+import * as v from "valibot";
 
-| Change                | Safe way to make it                                                              |
-| --------------------- | -------------------------------------------------------------------------------- |
-| Add a field           | Make it optional, or give it a default                                           |
-| Remove a field        | Remove every contribution that sets it, deploy, then remove it from the schema   |
-| Change a field's type | Add a field with the new type, move the contributions, then remove the old field |
+export const ORDERS_CONFIG_KEY = "orders-config";
 
-A change to the schema changes no param, so it plans no update by itself. The next plan checks the current document against the new schema.
+export const OrdersConfig = v.object({
+  features: v.record(v.string(), v.boolean()),
+  webhooks: v.object({
+    enabled: v.boolean(),
+    endpointPath: v.string(),
+  }),
+  namespaceId: v.optional(v.string()),
+  namespaceTag: v.optional(v.string()),
+});
+```
 
-## Limits
+```ts [infra/config.ts]
+import { text } from "@notation/resource";
+import { kvJson } from "@notation/cloudflare/kv";
+import { kv } from "@notation/cloudflare/resources";
+import { ORDERS_CONFIG_KEY, OrdersConfig } from "../shared/orders";
 
-- **Moving a key from `KVValue` to `kvJson()` fails.** Deploy creates the document before it deletes the `KVValue`, and create refuses a key that exists. Remove the `KVValue` in one deploy and declare the document in the next, or give the document another key.
-- **A change to `id` with the same `key` fails** for the same reason: a new `id` is a new resource. Change the `key` with the `id`, or remove the document in one deploy and declare it again in the next.
-- **State holds the document twice**, in the params and in the outputs. Keep large documents in R2.
-- **A check of an unknown field waits for deploy.** A field that holds a ref to an output that the same deploy creates is checked only before deploy writes the key. When a function contribution reads such an output, the whole document is checked then. Deploy can then fail after it has changed other resources.
+export const ordersKv = new kv.KVNamespace("orders-kv", {
+  config: { Title: "orders-config" },
+});
+
+export const ordersConfig = kvJson({
+  id: "orders-config",
+  namespace: ordersKv,
+  key: ORDERS_CONFIG_KEY,
+  schema: OrdersConfig,
+  value: {
+    features: { checkout: true },
+    namespaceTag: text`kv:${ordersKv.outputRef("NamespaceId").map((id) => id.slice(0, 8))}`,
+  },
+});
+
+ordersConfig.contribute({
+  namespaceId: ordersKv.outputRef("NamespaceId"),
+});
+```
+
+```ts [infra/webhooks.ts]
+import { ordersConfig } from "./config";
+
+ordersConfig.contribute({
+  features: { webhookRetries: true },
+  webhooks: {
+    enabled: true,
+    endpointPath: "/webhooks/orders",
+  },
+});
+```
+
+```ts [infra/main.ts]
+import "./config";
+import "./webhooks";
+```
+
+```ts [runtime/orders-api.ts]
+import {
+  $worker,
+  KVJsonError,
+  readKVJson,
+  type WorkerHandler,
+} from "@notation/cloudflare/workers";
+import { ordersKv } from "../infra/config";
+import { ORDERS_CONFIG_KEY, OrdersConfig } from "../shared/orders";
+
+export const worker = $worker({
+  id: "orders-api",
+  compatibilityDate: "2026-10-12",
+  bindings: () => ({ ORDERS_KV: ordersKv }),
+});
+
+export default {
+  async fetch(_request, env) {
+    try {
+      const config = await readKVJson(
+        env.ORDERS_KV,
+        ORDERS_CONFIG_KEY,
+        OrdersConfig,
+        { cacheTtl: 300 },
+      );
+      if (!config) return new Response("config not ready", { status: 404 });
+      return Response.json(config);
+    } catch (error) {
+      if (error instanceof KVJsonError) {
+        return Response.json(
+          { key: error.key, issues: error.issues },
+          { status: 500 },
+        );
+      }
+      throw error;
+    }
+  },
+} satisfies WorkerHandler<typeof worker>;
+```
+
+::
+
+### Partial contributions
+
+Both `value` and `.contribute()` make object properties optional recursively while keeping arrays and scalars whole, so each module only specifies its own slice of the document. You can pass resource outputs and derived values (`text`, `.map()`, `all()`) at any depth.
+
+During `plan` and `deploy`, Notation merges `value` and all contributions by object key and validates the combined document against `schema`. Two contributions setting the same scalar or array path to different values throw `ContributionConflictError` (see [Outputs and Contributions](../../core/outputs-and-contributions.md)).
+
+### JSON validation
+
+`kvJson()` checks at compile time that the schema's input type is JSON-compatible, rejecting functions and built-ins such as `Date`, `RegExp`, `Map`, `Set`, or `Promise`. Schema outputs remain unconstrained, so a validator can transform stored JSON strings into runtime types like `Date` when read with `readKVJson()`.
+
+This schema accepts an ISO date string at deploy time and decodes it into a `Date` inside a Worker:
+
+```ts [infra/schedule-flags.ts]
+import * as v from "valibot";
+import { kvJson } from "@notation/cloudflare/kv";
+import { ordersKv } from "./config";
+
+const ScheduleFlags = v.object({
+  enabled: v.boolean(),
+  startsAt: v.pipe(v.string(), v.transform((iso) => new Date(iso))),
+});
+
+export const scheduleFlags = kvJson({
+  id: "schedule-flags",
+  namespace: ordersKv,
+  key: "schedule-flags",
+  schema: ScheduleFlags,
+  value: { enabled: true, startsAt: "2026-10-12T00:00:00Z" },
+});
+```
+
+At deploy time, `plan` and `deploy` also reject values that `JSON.stringify` drops or alters – including `NaN`, `Infinity`, `undefined`, non-plain objects, sparse arrays, functions, `__proto__` keys, and payloads larger than 25 MiB.
+
+## Reading JSON in Workers
+
+Call `readKVJson(namespace, key, schema, options?)` from `@notation/cloudflare/workers` to read a key as text, parse the JSON, and validate it against `schema`:
+
+- **Missing key** – Returns `undefined` when the key does not exist (including briefly up to ~60 seconds after an initial deploy due to KV propagation).
+- **Invalid JSON** – Throws `KVJsonError` with `key` set, `issues` empty (`[]`), and `cause` set to the `JSON.parse` error.
+- **Schema mismatch** – Throws `KVJsonError` with `key` set and `issues` populated from the Standard Schema validator.
+
+Pass Cloudflare KV `get` options such as `{ cacheTtl: 300 }` in `options` while keeping `type` locked to `"text"`. Import the schema from a `shared/` module so infra and Workers evaluate the same validator (see [Types](../../core/types.md)).
+
+## Raw key resources
+
+Use `kv.KVValue` or `kv.KVJsonValue` directly from `@notation/cloudflare/resources` when you need to seed plain UTF-8 text or build a custom resource group without `kvJson()`.
+
+Seed a plain-text routing manifest in `ordersKv` using `kv.KVValue`:
+
+```ts [infra/routes.ts]
+import { kv } from "@notation/cloudflare/resources";
+import { ordersKv } from "./config";
+
+export const orderRoutes = new kv.KVValue("orders:routes", {
+  config: {
+    Key: "routes/v1",
+    Value: "/orders\n/webhooks/orders\n",
+  },
+  dependencies: { namespace: ordersKv },
+});
+```
+
+## Eventual consistency
+
+Cloudflare Workers KV propagates writes asynchronously across edge locations:
+
+- **Deploy-time confirmation** – `create` and `update` poll Cloudflare until reads return the written value, retrying new-namespace propagation and timing out after ~60 seconds on concurrent external writes.
+- **Runtime windows** – Worker reads can miss new keys or see stale values for up to ~60 seconds after writes, and recently deleted external keys can briefly appear present.
+
+Cloudflare also caps KV values at 25 MiB. Because Notation stores KV values in state, use [R2](./r2.md) for large blobs or multi-megabyte payloads.
+
+## Reference
+
+### `kvJson`
+
+`kvJson(config)` from `@notation/cloudflare/kv` returns a `KVJsonGroup` wrapping a `KVJsonValue` resource (`kv-json:<id>`).
+
+`KVJsonConfig<S>` accepts five parameters:
+
+| Parameter | Description |
+| :--- | :--- |
+| `id` | Required unique `string` state identifier, never sent to Cloudflare |
+| `namespace` | Required `KVNamespaceInstance` target namespace resource |
+| `key` | Required `string` KV key name inside the namespace |
+| `schema` | Required `StandardSchemaV1` validator with a JSON-compatible input type |
+| `value` | Optional `DeepInput<JsonPartial<SchemaInput<S>>>` initial document subset |
+
+`id` accepts `1` to `64` ASCII letters, digits, hyphens, or underscores. `schema` allows `unknown` and `any` at any depth, and `value` accepts `OutputRef` and `Derived` values at any depth.
+
+`KVJsonGroup` exposes three properties:
+
+| Property | Description |
+| :--- | :--- |
+| `schema` | `S` validator passed to `kvJson()` |
+| `value` | `KVJsonValueInstance` underlying `kv.KVJsonValue` resource |
+| `contribute` | Method merging partial object contributions into `value` |
+
+`contribute(value)` accepts `DeepInput<JsonPartial<SchemaInput<S>>>`.
+
+### `readKVJson`
+
+`readKVJson(namespace, key, schema, options?)` from `@notation/cloudflare/workers` reads, parses, and validates a KV JSON document:
+
+| Parameter | Description |
+| :--- | :--- |
+| `namespace` | `Pick<KVNamespace, "get">` Cloudflare KV binding from Worker `env` |
+| `key` | `string` KV key name |
+| `schema` | `StandardSchemaV1` shared Standard Schema V1 validator |
+| `options` | Optional `Omit<KVNamespaceGetOptions<"text">, "type">` KV `get` options |
+
+Returns `Promise<StandardSchemaV1.InferOutput<S> | undefined>`. Pass Cloudflare KV `get` options such as `cacheTtl` in `options`.
+
+### `KVJsonError`
+
+`KVJsonError` from `@notation/cloudflare/workers` extends `Error` with four properties:
+
+| Property | Description |
+| :--- | :--- |
+| `name` | Literal `"KVJsonError"` error name |
+| `key` | `readonly string` KV key that failed parsing or validation |
+| `issues` | `readonly StandardSchemaV1.Issue[]` validation issues |
+| `cause` | Optional `unknown` underlying `JSON.parse` error |
+
+`issues` is `[]` when `JSON.parse` fails, and `cause` is set only when the stored text is not valid JSON.
+
+### `KVNamespace`
+
+`kv.KVNamespace` (`cloudflare/kv/KVNamespace`) from `@notation/cloudflare/resources` manages a Workers KV namespace:
+
+| Property | Description |
+| :--- | :--- |
+| `Title` | Required mutable `Input<string>` namespace name |
+| `Jurisdiction` | Optional immutable `Input<string>` residency jurisdiction |
+| `AccountId` | Derived immutable `string` from `CLOUDFLARE_ACCOUNT_ID` |
+| `NamespaceId` | Computed `string` Cloudflare namespace ID |
+
+`Title` must be `1` to `512` characters and unique within the Cloudflare account; updates rename in place. `Jurisdiction` accepts `"eu"`, `"fedramp"`, or `"us"`. Reference `NamespaceId` via `.outputRef("NamespaceId")`.
+
+Creation checks whether a namespace with `Title` already exists and fails rather than adopting unmanaged namespaces. Changing `AccountId` or `Jurisdiction` is blocked to avoid deleting stored keys; forced `--replace` requires `--override-loss-protection <id>` (see [`notation destroy`](../../cli/destroy.md)).
+
+### `KVValue`
+
+`kv.KVValue` (`cloudflare/kv/KVValue`) from `@notation/cloudflare/resources` stores a raw UTF-8 string in a KV key (`dependencies: { namespace }`):
+
+| Property | Description |
+| :--- | :--- |
+| `Key` | Required immutable `Input<string>` key name |
+| `Value` | Required mutable `Input<string>` raw UTF-8 text up to 25 MiB |
+| `AccountId` | Derived `string` account ID from `dependencies.namespace` |
+| `NamespaceId` | Derived `string` namespace ID from `dependencies.namespace` |
+
+`Key` must be `1` to `512` UTF-8 bytes and cannot be `"."` or `".."`. `Value` preserves `\n` vs `\r\n` line endings and leading BOMs.
+
+Create fails if the key already exists. Changing `Key` or `NamespaceId` creates the new key before deleting the old key, failing safely if the target key already exists.
+
+### `KVJsonValue`
+
+`kv.KVJsonValue` (`cloudflare/kv/KVJsonValue`) from `@notation/cloudflare/resources` stores normalized, contributable JSON (`dependencies: { namespace }`):
+
+| Property | Description |
+| :--- | :--- |
+| `Key` | Required immutable `Input<string>` key name |
+| `Value` | Required mutable contributable `Input<Json>` strict JSON up to 25 MiB |
+| `AccountId` | Derived `string` account ID from `dependencies.namespace` |
+| `NamespaceId` | Derived `string` namespace ID from `dependencies.namespace` |
+
+`Key` must be `1` to `512` UTF-8 bytes and cannot be `"."` or `".."`. `Value` is encoded with sorted keys.
+
+`KVJsonValue` shares the same non-overwrite and create-first rename rules as `KVValue`. If external writes leave non-JSON text in the key, `notation plan --drift` detects drift and `notation deploy` restores the declared document.
+
+### Package exports
+
+KV APIs span three `@notation/cloudflare` entrypoints:
+
+| Subpath | Exports |
+| :--- | :--- |
+| `@notation/cloudflare/kv` | `kvJson`, `KVJsonGroup`, `Json`, `JsonPartial`, `KVJsonConfig` |
+| `@notation/cloudflare/workers` | `readKVJson`, `KVJsonError` |
+| `@notation/cloudflare/resources` | `kv.KVNamespace`, `kv.KVValue`, `kv.KVJsonValue` |

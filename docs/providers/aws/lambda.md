@@ -1,213 +1,420 @@
-# Lambda
+# AWS Lambda
 
-`@notation/aws/lambda` declares Lambda functions. Most functions are declared with `$lambda` in a runtime module, next to their code, and Notation builds the code. To deploy code that Notation doesn't build, call `lambda()` in infra.
+Deploy AWS Lambda functions with colocated event triggers, environment bindings, resource limits, and IAM policies. Notation bundles each runtime module into Node ESM and derives typed handlers and payload decoders from its trigger.
 
-## `$lambda(config)`
+For package setup and AWS credential configuration, see [AWS Overview](./overview.md).
 
-A [runtime module](../../manual/file-conventions.md#runtime-modules) calls `$lambda` to declare the function that it deploys as, and exports `handler`. Infra imports the declaration and wires it:
+Pair a shared schema with a `$lambda` runtime module that accepts HTTP orders and pushes them onto an SQS queue, then wire the route in `infra/`:
 
 ::code-group
 
-```ts [runtime/todos.ts]
-import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
+```ts [shared/schema.ts]
+import * as v from "valibot";
 
-export const lambda = $lambda({
-  id: "todos",
-  timeout: 5,
-  event: () => apiGateway.schema(null),
+export const NewOrder = v.object({
+  orderId: v.string(),
+  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
+});
+```
+
+```ts [runtime/create-order.ts]
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
+import { $lambda, apiGateway, DecodeError, type LambdaHandler } from "@notation/aws/lambda";
+import { orderQueue } from "../infra/orders";
+import { NewOrder } from "../shared/schema";
+
+const sqsClient = new SQSClient();
+
+export const createOrder = $lambda({
+  id: "create-order",
+  memory: 256,
+  timeout: 10,
+  event: () => apiGateway.schema(NewOrder),
+  env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
+  policy: () => [orderQueue.grant(["SendMessage"])],
 });
 
-export const handler: LambdaHandler<typeof lambda> = async (event) => {
-  if (event.routeKey === "POST /todos") return { id: 2 };
-  return [];
+export const handler: LambdaHandler<typeof createOrder> = async (event) => {
+  try {
+    const { body: order } = await createOrder.decode(event);
+    const { ORDER_QUEUE_URL } = createOrder.env();
+    await sqsClient.send(
+      new SendMessageCommand({ QueueUrl: ORDER_QUEUE_URL, MessageBody: JSON.stringify(order) }),
+    );
+    return { statusCode: 202, body: JSON.stringify({ accepted: true }) };
+  } catch (error) {
+    if (!(error instanceof DecodeError)) throw error;
+    return { statusCode: 400, body: JSON.stringify({ issues: error.issues }) };
+  }
 };
 ```
 
-```ts [infra/api.ts]
+```ts [infra/orders.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { lambda as todos } from "runtime/todos";
+import { queue } from "@notation/aws/sqs";
+import { createOrder } from "../runtime/create-order";
+import { NewOrder } from "../shared/schema";
 
-const todoRouter = router(api({ id: "todo-api" }));
-todoRouter.get("/todos", () => todos);
-todoRouter.post("/todos", () => todos);
+export const orderQueue = queue({ id: "orders", schema: NewOrder });
+
+const ordersApi = api({ id: "orders-api" });
+router(ordersApi).post("/orders", () => createOrder);
 ```
 
 ::
 
-When infra has finished loading, the declaration adds a Lambda group with:
+Every module calling `$lambda` must export a function named `handler` and use a unique `id`. Notation evaluates `$lambda` at deploy time to provision the function and role, while bundling `handler` with typed `decode()` and `env()` helpers (see [Declarations](../../core/declarations.md)).
 
-- the **Lambda function** `todos`, which runs the bundle `dist/runtime/todos/index.mjs` and calls `index.handler`,
-- the **IAM execution role** `todos-role`,
-- the **CloudWatch log group** `todos-log-group`, with 30-day retention,
-- the **zip package** `todos-zip` of the bundle,
-- the **reserved concurrency** of the function, only when `concurrency` is set.
+## JWT protection
 
-The declaration adds the function even when nothing wires it. The options are listed in [Lambda Declaration](../../manual/function-config.md).
+Chain `.authSchema(claims?)` onto `apiGateway.schema(body)` for routes guarded by `jwtAuthorizer()` (or pass `auth` to `apiGateway.bind(api).defineRoute()`):
 
-### Wiring a declaration
+::code-group
 
-Infra APIs take the declaration as a function that returns it, such as `() => todos`. They call the function when infra has finished loading, so the runtime module and the infra module can import each other.
+```ts [shared/jwt.ts]
+import * as v from "valibot";
 
-| Infra API                                                   | Accepts                                                                        |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| [`eventSourceMapping`](sqs.md#eventsourcemappingconfig)     | A declaration with `sqs.schema()` or no `event`                                |
-| [`router.get`](api-gateway.md#routerapi), `.post`, ...      | A declaration with `apiGateway.schema(body)` or no `event`                     |
-| [`withAuthorizer`](api-gateway.md#jwt-authorization) routes | A declaration with `apiGateway.schema(body).authSchema(claims?)` or no `event` |
-| [`rule`](event-bridge.md#ruleconfig)                        | A declaration with `eventBridge.schema(detail)` or no `event`                  |
-| [`schedule`](event-bridge.md#scheduleconfig)                | A declaration with `eventBridge.schema(null)` or no `event`                    |
-
-Each API also takes a Lambda group from [`lambda()`](#lambdaconfig), as it is, with no function around it.
-
-A declaration whose event doesn't match is a type error. If TypeScript doesn't catch it, the infra API throws when infra runs, for example `route() sends apiGateway events, but the Lambda "orders" is declared with event: () => sqs.schema(schema).`
-
-A declaration can also make its own resources, with `sqs.bind(queue)`, `apiGateway.bind(api).defineRoute(options)`, `eventBridge.bind(bus).defineRule(options)` or `eventBridge.defineSchedule(options)`. The infra APIs throw for such a declaration, so that a queue, route, rule or schedule is wired in one place.
-
-### One handler for each function
-
-The function has one entry point, `handler`, and Notation doesn't route events to it. In the example, both routes call the `todos` function, and the handler reads `event.routeKey` to tell them apart. A function that two queues feed reads `record.eventSourceARN` in the same way.
-
-## IDs
-
-Every Lambda function has an ID. It keys the function and the resources that support it in state, as `lambda:<id>`, `lambda:<id>:role`, `lambda:<id>:zip`, `lambda:<id>:policy-attachment`, `lambda:<id>:role-policy`, `lambda:<id>:log-group` and, when `concurrency` is set, `lambda:<id>:concurrency`. Changing an ID replaces the function.
-
-In a runtime module, the ID is the declaration's `id`. The ID doesn't come from the module's path, so you can move or rename the module and keep its function.
-
-Deploy generates the AWS names of the function and of its role when it first creates them, and keeps the names in state. The function is named `<app>--<stage>--<id>-<instance>` and its role `<app>--<stage>--<id>-role-<instance>`, where the instance is 8 random hex characters. For example, `$lambda({ id: "orders" })` is named `my-app--prod--orders-1a2b3c4d`. Each name has at most 64 characters, and a longer one is cut before the instance. See [Generated names](../../manual/project-config.md#generated-names).
-
-IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names. TypeScript checks an ID as far as its type allows:
-
-- A string literal, such as `"orders"`, must follow the whole rule.
-- A template literal, such as `` `${id}-worker` ``, must use only these characters outside its `${}` parts. The parts inside `${}` and the length are checked when infra runs. `` `${id}.worker` `` is a type error.
-- A value of type `string` is only checked when infra runs.
-
-This lets code that builds an ID from its caller's ID pass it on. `$lambda`, `lambda()` and the other functions that take an ID throw at runtime for an ID that breaks the rule. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, are two IDs.
-
-## `lambda(config)`
-
-Call `lambda()` to deploy code that Notation doesn't build, such as a prebuilt bundle or a Python file:
-
-```ts [infra/lambda.ts]
-import { lambda } from "@notation/aws/lambda";
-
-export const external = lambda({
-  id: "external-js",
-  code: { type: "file", path: "external/lambda.mjs" },
+export const JWTClaims = v.object({
+  sub: v.string(),
+  iss: v.string(),
 });
 ```
 
-```ts [@notation/aws/lambda]
-type LambdaConfig = {
-  id: string;
-  handler?: string; // default "handler"
-  code: { type: "file" | "zip"; path: string } | BundleLike; // from bundle() with platform: "node"
-  runtime?: string; // default "nodejs22.x"
-  timeout?: number;
-  memory?: number;
-  concurrency?: number; // reserved concurrency
+```ts [runtime/profile.ts]
+import { $lambda, apiGateway, DecodeError, type LambdaHandler } from "@notation/aws/lambda";
+import { JWTClaims } from "../shared/jwt";
+
+export const profile = $lambda({
+  id: "profile",
+  event: () => apiGateway.schema(null).authSchema(JWTClaims),
+});
+
+export const handler: LambdaHandler<typeof profile> = async (event) => {
+  try {
+    const { claims } = await profile.decode(event);
+    return { sub: claims.sub, iss: claims.iss };
+  } catch (error) {
+    if (!(error instanceof DecodeError)) throw error;
+    return { statusCode: error.part === "claims" ? 403 : 400, body: error.message };
+  }
 };
 ```
 
-Lambda calls `<file name>.<handler>`, so for `external/lambda.mjs` with the default `handler`, Lambda calls `lambda.handler`.
-
-`lambda()` returns a Lambda group. Infra APIs take the group as it is:
-
 ```ts [infra/api.ts]
-helloRouter.get("/hello", external);
+import { api, jwtAuthorizer, router } from "@notation/aws/api-gateway";
+import { profile } from "../runtime/profile";
+import { JWTClaims } from "../shared/jwt";
+
+const ordersApi = api({ id: "orders-api" });
+const auth = jwtAuthorizer({
+  id: "orders-auth",
+  api: ordersApi,
+  issuer: "https://auth.example.com/",
+  audience: ["orders-api"],
+  claims: JWTClaims,
+});
+
+router(ordersApi).withAuthorizer(auth).get("/profile", () => profile);
 ```
 
-A group has no event, so every infra API accepts it, and nothing checks that the code handles the events it receives.
+::
 
-### A bundle as the code
+Pass `null` for bodyless endpoints such as `GET` or `DELETE`, and import any shared claims schema from `shared/` so runtime and infra reference the exact same validator instance. Calling `.authSchema()` with no arguments accepts any `jwtAuthorizer()` and returns raw claims without schema validation (see [API Gateway](./api-gateway.md)).
 
-`code` can be a [bundle](../../reference/bundle.md) with `platform: "node"`, which deploy builds. A library uses it to deploy code that it generates from its config:
+## SQS consumers
 
-```ts [infra/greeter.ts]
-import { bundle } from "@notation/build/resources";
+Bind a queue directly inside `$lambda` with `sqs.bind()`, or declare `sqs.schema()` and wire `eventSourceMapping()` from `infra/`:
+
+::code-group
+
+```ts [runtime/orders.ts]
+import { $lambda, DecodeError, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { orderQueue } from "../infra/orders";
+
+export const orders = $lambda({
+  id: "orders",
+  event: () => sqs.bind(orderQueue, { batchSize: 5, reportBatchItemFailures: true }),
+});
+
+export const handler: LambdaHandler<typeof orders> = async (event) => {
+  const batchItemFailures: { itemIdentifier: string }[] = [];
+  for (const record of event.Records) {
+    try {
+      const { body: order } = await orders.decode(record);
+      console.log("processing order", order.orderId);
+    } catch (error) {
+      if (!(error instanceof DecodeError)) throw error;
+      batchItemFailures.push({ itemIdentifier: record.messageId });
+    }
+  }
+  return { batchItemFailures };
+};
+```
+
+```ts [runtime/refunds.ts]
+import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { Refund } from "../shared/schema";
+
+export const refunds = $lambda({
+  id: "refunds",
+  event: () => sqs.schema(Refund),
+});
+
+export const handler: LambdaHandler<typeof refunds> = async (event) => {
+  for (const record of event.Records) {
+    const { body: refund } = await refunds.decode(record);
+    console.log("refund", refund.orderId, refund.reason);
+  }
+};
+```
+
+```ts [infra/orders.ts]
+import { eventSourceMapping } from "@notation/aws/lambda";
+import { queue } from "@notation/aws/sqs";
+import { refunds } from "../runtime/refunds";
+import { NewOrder, Refund } from "../shared/schema";
+
+export const orderQueue = queue({ id: "orders", schema: NewOrder });
+export const refundQueue = queue({ id: "refunds", schema: Refund });
+
+eventSourceMapping({
+  source: refundQueue,
+  target: () => refunds,
+  batchSize: 10,
+});
+```
+
+::
+
+Both forms automatically grant `sqs:ReceiveMessage`, `sqs:DeleteMessage`, and `sqs:GetQueueAttributes` on the queue ARN. Self-bound `$lambda` functions cannot also be passed to `eventSourceMapping()` (see [AWS SQS](./sqs.md)).
+
+## EventBridge triggers
+
+Bind EventBridge pattern rules or schedules inside `$lambda` with `eventBridge.bind(bus).defineRule()` or `eventBridge.defineSchedule()`, or wire `eventBridge.schema()` from `infra/` (see [Amazon EventBridge](./event-bridge.md)):
+
+::code-group
+
+```ts [runtime/fulfil-order.ts]
+import { $lambda, eventBridge, type LambdaHandler } from "@notation/aws/lambda";
+import { ordersBus } from "../infra/orders";
+import { NewOrder } from "../shared/schema";
+
+export const fulfilOrder = $lambda({
+  id: "fulfil-order",
+  event: () =>
+    eventBridge.bind(ordersBus).defineRule({
+      id: "order-placed",
+      pattern: { source: ["shop"], "detail-type": ["OrderPlaced"] },
+      schema: NewOrder,
+    }),
+});
+
+export const handler: LambdaHandler<typeof fulfilOrder> = async (event) => {
+  const { detail: order } = await fulfilOrder.decode(event);
+  console.log("fulfil", order.orderId);
+};
+```
+
+```ts [runtime/nightly-digest.ts]
+import { $lambda, eventBridge, type LambdaHandler } from "@notation/aws/lambda";
+import { rate } from "@notation/aws/event-bridge";
+
+export const nightlyDigest = $lambda({
+  id: "nightly-digest",
+  event: () =>
+    eventBridge.defineSchedule({
+      id: "nightly-digest",
+      schedule: rate(1, "day"),
+    }),
+});
+
+export const handler: LambdaHandler<typeof nightlyDigest> = async (event) => {
+  console.log("digest at", event.time);
+};
+```
+
+::
+
+On scheduled functions (`schema: null`) or functions without an `event`, `decode()` is disabled at compile time and throws at runtime.
+
+## Environment variables
+
+Return an object literal with static keys (no spreads or computed keys) from `env: () => ({ ... })`, then call `fn.env()` inside your handler to read cached strings from `process.env`. `fn.env()` throws if any bound variable is missing or if called outside the runtime build.
+
+When unit testing handlers that call `fn.env()`, pass `--conditions=notation-runtime` to your test runner. Notation also rejects deployments whose serialized environment variables exceed AWS Lambda's `4,096`-byte limit.
+
+## IAM policies
+
+Every Lambda receives an execution role with the `lambda.amazonaws.com` assume-role trust policy and `AWSLambdaBasicExecutionRole` for CloudWatch Logs access. Add least-privilege permissions in `policy: () => [...]` using `.grant()` helpers or explicit policy statements with `text` for dynamic ARNs:
+
+```ts [runtime/publish-order.ts]
+import { $lambda, apiGateway } from "@notation/aws/lambda";
+import { text } from "@notation/resource";
+import { ordersBus } from "../infra/orders";
+import { NewOrder } from "../shared/schema";
+
+export const publishOrder = $lambda({
+  id: "publish-order",
+  event: () => apiGateway.schema(NewOrder),
+  env: () => ({ ORDERS_BUS_NAME: ordersBus.name }),
+  policy: () => [
+    ordersBus.grant(["PutEvents"]),
+    {
+      Effect: "Allow",
+      Action: ["ssm:GetParameter"],
+      Resource: text`arn:aws:ssm:*:*:parameter/${ordersBus.name}/*`,
+    },
+  ],
+});
+```
+
+Notation creates the inline role policy resource only when at least one statement is present because IAM rejects empty policy documents.
+
+## External code
+
+Use `lambda()` in `infra/` for external files, `.zip` archives, non-Node runtimes, or custom [bundles](../../authoring/bundles.md), then configure environment variables and permissions via [contributions](../../core/outputs-and-contributions.md):
+
+```ts [infra/external.ts]
 import { lambda } from "@notation/aws/lambda";
+import { bundle } from "@notation/build/resources";
+import { orderQueue } from "./orders";
 
-const code = bundle({
-  id: "greeter",
+export const pythonWorker = lambda({
+  id: "python-worker",
+  runtime: "python3.12",
+  code: { type: "file", path: "external/worker.py" },
+});
+
+const webhookBundle = bundle({
+  id: "webhook-bundle",
   platform: "node",
-  entry: "lib/handler.ts",
-  modules: { "virtual:greeting": `export default "hello";` },
+  entry: "external/webhook.ts",
 });
 
-export const greeter = lambda({ id: "greeter", code });
+export const webhook = lambda({ id: "webhook", code: webhookBundle, memory: 256, timeout: 15 });
+
+webhook.fn.contribute({ Environment: { Variables: { ORDER_QUEUE_URL: orderQueue.url } } });
+webhook.policy.contribute({ PolicyDocument: { Statement: [orderQueue.grant(["SendMessage"])] } });
 ```
 
-- **The function calls `index.<handler>`.** The bundle's zip holds `index.mjs`.
-- **The group adds no zip.** The function depends on the bundle, which is declared outside the group.
-- **`lambda()` checks the handler.** It fails when the bundle's entry doesn't export `handler`, or the name in `handler`. An entry with `export *` is not checked, as the name may come from it. A CommonJS entry, which has no `export` statements, is not checked either.
-- **`lambda()` fails for a bundle built for `workerd`.**
+For external TypeScript handlers bundled with `bundle()`, `@notation/aws/lambda` exports standalone handler types backed by `@types/aws-lambda`:
 
-## Inline policy
+```ts [external/webhook.ts]
+import type { ApiGatewayHandler } from "@notation/aws/lambda";
 
-A Lambda function's role has an inline policy, named `<id>-role-policy`. The policy's statements are collected: each contribution adds statements, and the statements from every contribution are joined into one policy document.
-
-A declaration adds statements with its `policy` option. For example, to let the `orders` function send to an [SQS queue](sqs.md):
-
-```ts [runtime/orders.ts]
-export const lambda = $lambda({
-  id: "orders",
-  event: () => sqs.bind(orderQueue),
-  policy: () => [refundQueue.grant(["SendMessage"])],
-});
+export const handler: ApiGatewayHandler = async (event) => {
+  return {
+    statusCode: 200,
+    body: JSON.stringify({ path: event.rawPath }),
+  };
+};
 ```
 
-A Lambda group from `lambda()` adds statements with `contribute`:
+Pass `LambdaGroup` values returned by `lambda()` directly to trigger builders (`router()`, `eventSourceMapping()`, `rule()`, `schedule()`) without wrapping them in a thunk.
 
-```ts [infra/lambda.ts]
-external.policy.contribute({
-  PolicyDocument: {
-    Statement: [
-      { Effect: "Allow", Action: "sqs:SendMessage", Resource: orderQueue.arn },
-    ],
-  },
-});
-```
+## Reference
 
-A queue that is mapped to the function, with [`sqs.bind(queue)`](sqs.md#sqsbindqueue-options) or [`eventSourceMapping()`](sqs.md#eventsourcemappingconfig), adds its read permission to the same policy.
+### Runtime declaration options
 
-The group creates the policy resource only when code first contributes to it. This matters because IAM rejects a policy with no statements, so a function that nothing contributes to must have no inline policy. A role's inline policies share a limit of 10,240 characters.
+`$lambda(config)` accepts `LambdaDeclarationConfig`:
 
-## Environment
+| Option | Description |
+| :--- | :--- |
+| `id` | Required `NameSafe<Id>` string identifying the function |
+| `event` | Optional `() => LambdaEvent` thunk returning an `apiGateway`, `sqs`, or `eventBridge` trigger |
+| `env` | Optional `() => EnvVars` thunk returning an object literal with static keys read via `fn.env()` |
+| `policy` | Optional `() => PolicyStatement[]` thunk returning IAM statements for the execution role |
+| `runtime` | Optional `Runtime` identifier; defaults to `"nodejs22.x"` |
+| `timeout` | Optional `number` for maximum execution duration in seconds; defaults to `3` |
+| `memory` | Optional `number` for memory allocation in MB; defaults to `128` |
+| `concurrency` | Optional `number` for reserved concurrent executions |
 
-A function's `Environment.Variables` is collected: any code can contribute to it, and the contributions are merged key by key. Two contributions that set one key to different values fail the plan, and the error names both contributors.
+`id` must be `1` to `64` characters matching `[A-Za-z0-9_-]`, and changing it replaces the function. `concurrency` accepts `0` or greater, where `0` stops all invocations.
 
-A declaration contributes the values that it binds in `env`. The function reads them with `lambda.env()`; see [Lambda Handlers](../../manual/functions.md#reading-bound-values-with-env).
+### External function options
 
-```ts [runtime/orders.ts]
-export const lambda = $lambda({
-  id: "orders",
-  event: () => sqs.bind(orderQueue),
-  env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
-});
-```
+`lambda(config)` accepts `LambdaConfig`:
 
-A Lambda group from `lambda()` contributes with `fn.contribute`:
+| Option | Description |
+| :--- | :--- |
+| `id` | Required `NameSafe<Id>` string identifying the function |
+| `code` | Required `{ type: "file" \| "zip"; path: string }` object or `BundleLike` from `bundle()` |
+| `handler` | Optional `string` naming the exported handler; defaults to `"handler"` |
+| `runtime` | Optional `Runtime` identifier; defaults to `"nodejs22.x"` |
+| `timeout` | Optional `number` for maximum execution duration in seconds; defaults to `3` |
+| `memory` | Optional `number` for memory allocation in MB; defaults to `128` |
+| `concurrency` | Optional `number` for reserved concurrent executions |
 
-```ts [infra/lambda.ts]
-external.fn.contribute({
-  Environment: { Variables: { QUEUE_URL: orderQueue.url } },
-});
-```
+`code` accepts a source file to zip, a prebuilt `.zip` archive, or a `bundle()` built with `platform: "node"`. `id` must be `1` to `64` characters matching `[A-Za-z0-9_-]`, and changing it replaces the function.
 
-A variable that waits on an undeployed output shows as unknown at its own key in a plan, and the other variables stay visible:
+### Resource group properties
 
-```
-Environment.Variables.ORDER_QUEUE_URL = (known after apply)
-```
+`lambda()` returns a `LambdaGroup` (detectable with `isLambdaGroup(value)`):
 
-When the last contribution to `Environment` goes, the next deploy removes the function's variables.
+| Property | Description |
+| :--- | :--- |
+| `fn` | Underlying `LambdaFunction` resource accepting `.contribute()` |
+| `role` | Underlying `LambdaIamRole` execution role resource |
+| `policy` | Lazy `LambdaRolePolicy` created when accessed to contribute statements |
 
-Lambda limits a function's environment variables to 4 KB in total. If the variables are over the limit, the deploy fails with an error that names the function.
+Each `LambdaGroup` also provisions a `LambdaRolePolicyAttachment` (`AWSLambdaBasicExecutionRole`) and a `LambdaLogGroup` (`/aws/lambda/<FunctionName>`, `retentionInDays: 30`).
 
-## Runtime defaults
+### Trigger builders
 
-| Setting       | Default           |
-| ------------- | ----------------- |
-| Runtime       | Node.js 22.x      |
-| Memory        | 128 MB            |
-| Timeout       | 3 seconds         |
-| Concurrency   | None (unreserved) |
-| Log retention | 30 days           |
+`@notation/aws/lambda` exports three trigger builders and an infra mapping helper:
+
+| Helper | Description |
+| :--- | :--- |
+| `apiGateway.schema(body)` | Decoupled HTTP trigger with `.authSchema(claims?)` for JWT routes |
+| `apiGateway.bind(api).defineRoute(options)` | Self-bound HTTP route on an `api()` group |
+| `sqs.schema(schema)` | Decoupled SQS trigger wired via `eventSourceMapping()` |
+| `sqs.bind(queue, options?)` | Self-bound SQS subscription with `SqsOptions` |
+| `eventBridge.schema(detail)` | Decoupled EventBridge trigger for `rule()` or `schedule()` |
+| `eventBridge.bind(bus).defineRule(options)` | Self-bound EventBridge pattern rule |
+| `eventBridge.defineSchedule(options)` | Self-bound EventBridge schedule on the `"default"` bus |
+
+Pass `null` to `apiGateway.schema(null)` to reject request bodies, and pass a `StandardSchemaV1` validator to `eventBridge.schema(detail)` for `rule()` or `null` for `schedule()`.
+
+### Payload decoding
+
+Calling `await fn.decode(item)` validates incoming payloads against the declared schema and returns a shallow copy with parsed fields:
+
+| Source | Behavior |
+| :--- | :--- |
+| API Gateway | Decodes optional base64 JSON `body` and validates JWT `claims` when configured |
+| SQS | Parses `record.body` as JSON on one `SQSRecord` and returns `{ ...record, body }` |
+| EventBridge | Validates `event.detail` directly without JSON parsing and returns `{ ...event, detail }` |
+
+If JSON parsing, JWT claim extraction, or schema validation fails, `decode()` throws `DecodeError` with `part` (`"body" | "claims" | "detail"`) and `issues` (`ReadonlyArray<StandardSchemaV1.Issue>`, empty when JSON parsing fails).
+
+### Derived types
+
+`@notation/aws/lambda` exports these types for `$lambda` declarations and policies:
+
+| Type | Description |
+| :--- | :--- |
+| `Lambda<E, Env>` | Return handle exposing `id`, `env()`, and `decode()` |
+| `LambdaHandler<typeof fn>` | Derives the Lambda `event` and return type from a `$lambda` declaration |
+| `LambdaEnv<typeof fn>` | Extracts `Readonly<Env>` with refs and derived values resolved to `string` |
+| `EnvVars` | `Record<string, Input<string> \| CredentialRef<string>>` |
+| `PolicyStatement<R>` | IAM statement supporting `Input<string>` values in `Resource` and `NotResource` |
+
+`LambdaHandler<typeof fn>` maps each trigger to its AWS event and return type (`APIGatewayProxyEventV2` or `APIGatewayJWTProxyEventV2<JwtClaims>` returning `ApiGatewayResult`, `SQSEvent` returning `void` or `SQSBatchResponse`, `EventBridgeEvent` returning `void | Promise<void>`, or `unknown`). `PolicyStatement<R = Input<string>>` resolves `R` to `string` in `ResolvedPolicyStatement`.
+
+### Standalone handler types
+
+`@notation/aws/lambda` exports standalone handler types for `lambda()` and custom bundles:
+
+| Type | Description |
+| :--- | :--- |
+| `ApiGatewayHandler` | HTTP v2 handler returning `ApiGatewayResult \| Promise<ApiGatewayResult>` |
+| `ApiGatewayResult` | `APIGatewayProxyResultV2<object \| number \| boolean \| null>` |
+| `JWTAuthorizedApiGatewayHandler<ClaimsType>` | Handler typed with `APIGatewayJWTProxyEventV2<ClaimsType>` |
+| `APIGatewayJWTProxyEventV2<T>` | HTTP v2 event with `requestContext.authorizer.jwt.claims` typed as `T` |
+| `JwtClaims` | Raw API Gateway JWT claims map |
+| `SqsHandler` | Standard SQS handler returning `void \| Promise<void>` |
+| `SqsBatchHandler` | Batch-failure SQS handler taking `SQSBatchResponse` |
+| `EventBridgeHandler<TypeDescription, DetailType>` | EventBridge rule handler returning `void \| Promise<void>` |
+| `EventBridgeScheduleHandler` | Alias for `EventBridgeHandler<"Scheduled Event", any>` |
+| `DynamoDbStreamHandler` | DynamoDB stream handler returning `void \| Promise<void>` |
+| `DynamoDbBatchHandler` | Batch-failure DynamoDB stream handler taking `DynamoDBBatchResponse` |
