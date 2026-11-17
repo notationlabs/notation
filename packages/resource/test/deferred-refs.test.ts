@@ -169,4 +169,24 @@ describe("deferredOutputRef", () => {
     });
     expect(url.resource).toBe(queue);
   });
+
+  it.each([
+    ["no resource", () => undefined],
+    [
+      "resource other",
+      () => new Queue("other", { config: { QueueName: "other" } }),
+    ],
+  ])(
+    "throws, naming both, when resolve returns %s instead of the resource with its id",
+    (found, make) => {
+      const url = deferredOutputRef<string>({
+        resourceId: "orders",
+        path: ["QueueUrl"],
+        resolve: make as () => BaseResource,
+      });
+      expect(() => url.resource).toThrow(
+        `Output orders.QueueUrl resolved to ${found}, not to resource orders.`,
+      );
+    },
+  );
 });

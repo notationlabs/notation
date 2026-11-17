@@ -750,10 +750,11 @@ const url = deferredOutputRef<string>({
 });
 ```
 
-It is an `OutputRef<T>`, and it goes wherever such a ref goes. It differs from a ref from `outputRef(key)` in two ways:
+It is an `OutputRef<T>`, and it goes wherever such a ref goes. It differs from a ref from `outputRef(key)` in three ways:
 
 - **Its resource is found on the first read of `ref.resource`.** `resolve` is called once, and the ref keeps the resource. A read while the modules load throws, and names the ref. A read in an `onEvaluationEnd` callback calls `resolve`, which must then create the resource if it doesn't exist yet.
 - **Its resource's id is given up front.** `ref.resourceId` holds it, for this ref and every other. An `OutputRefStringError` thrown while the modules load names the ref, and contributions sort by the [canonical form](#derived-values) without finding the resource.
+- **`resolve` must return the resource with that id.** When it returns another resource, or none, the read of `ref.resource` throws and names both ids.
 
 The engine reads `ref.resource` only at plan and deploy: to find dependencies, to look up outputs, and to show values. Validation at declaration skips refs, and `text`, `map` and `all` hold the ref, so code that runs while the modules load can use a deferred ref as it uses any other. A deferred ref adds a dependency, as an output ref does.
 

@@ -194,8 +194,14 @@ class OutputRefClass extends Unstringable {
         `Output ${describeOutputRef(this)} was read while the infra modules load, before ${this.resourceId} exists. Place the ref whole in config, in a contribution or in a binding, or compute with it in text\`…\`, map() or all(). Deploy reads it once the modules have loaded.`,
       );
     }
-    this.#resource = this.#resolve!();
-    return this.#resource;
+    const resource: BaseResource | undefined = this.#resolve!();
+    if (resource?.id !== this.resourceId) {
+      throw new Error(
+        `Output ${describeOutputRef(this)} resolved to ${resource ? `resource ${resource.id}` : "no resource"}, not to resource ${this.resourceId}. Return the resource whose id is resourceId from resolve.`,
+      );
+    }
+    this.#resource = resource;
+    return resource;
   }
 
   map(fn: (value: unknown) => unknown): Derived {
