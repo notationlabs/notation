@@ -492,7 +492,14 @@ const LambdaIntegration = defineResource<{ ... }>({ type: "aws/apiGateway/Lambda
 
 `requireDependencies` declares typed dependency slots. `deriveParams` receives `{ id, config, deps }` and returns properties computed from dependency outputs. At deploy it runs after its dependencies have been provisioned, with their real outputs. At plan, a dependency that has no output yet throws `PendingOutput` when `deriveParams` reads its `output`; see [Unknown values](../internals/reconciler.md#unknown-values).
 
-`config`, and the `config` of each dependency, have their [output refs and derived values](#output-refs) filled in. So `deriveParams` reads config as plain values, which its type says:
+`config`, and the `config` of each dependency, have their [output refs and derived values](#output-refs) filled in.
+
+`deriveParams` receives stand-ins for its config and its dependencies, called views. ([When a dependency is a view](#dependencies-are-views) depends on the phase.) A view reads like the object it stands for, with some values replaced:
+
+- **A view of config** is a copy of the config in which each ref and derived value is replaced by its value. Where a value can't be read yet, the copy has a getter that throws.
+- **A view of a dependency** is an object made with `Object.create(dep)`. Its prototype is the dependency, so it has the dependency's properties and methods. It replaces `config` with a view of the dependency's config. At plan it also replaces `output`, so that reading an output that isn't known yet throws `PendingOutput`.
+
+So `deriveParams` reads config as plain values, as its type says:
 
 - **At deploy**, every ref in config is known, and `deriveParams` receives the values.
 - **At plan**, `deriveParams` receives a view of config. Reading a value that plan knows gives the value. Reading a ref or a derived value that plan doesn't know throws `PendingOutput`, as a read of a pending output in `deps` does. So does reading a credential that plan expects deploy to rotate. Plan then marks every param that config doesn't set as unknown.
@@ -513,7 +520,9 @@ const scriptName = (script: ResolvedDependency<WorkerScriptInstance>) =>
   script.output.ScriptName;
 ```
 
-An entry of `deps` can be a view of the dependency, an object whose prototype is the dependency, with its config filled in or its pending outputs guarded. So:
+#### Dependencies are views
+
+At plan, every entry of `deps` is a view. At deploy, an entry is a view when the dependency's config holds a ref or a derived value, and the instance otherwise. When an entry is a view:
 
 - `deps.queue === queue` can be false.
 - A `WeakMap` or a `Set` that holds the dependency doesn't find the view.
