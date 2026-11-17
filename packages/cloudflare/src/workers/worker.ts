@@ -310,7 +310,7 @@ const declaredWorkers = perCollection(
  * Declares a Cloudflare Worker. The module's default export is the handler.
  * `bindings` is called after all infra modules have loaded, so it can refer
  * to a Worker whose module imports this one.
- * @declaration shared: id, bindings; runtime: entrypoint; entryOption: entrypoint; keys: bindings; entry: default; platform: workerd
+ * @declaration shared: id, bindings; runtime: entrypoint; entryOption: entrypoint; keys: bindings; entry: default; platform: workerd; outputs: url
  */
 export function $worker<
   const Id extends string,

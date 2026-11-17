@@ -6,6 +6,7 @@ import type {
 } from "./declaration";
 import type { ResolvedValues } from "@notation/resource";
 import type { DurableObjectDeclarationConfig } from "./durable-object";
+import { workerOutputs } from "./outputs";
 import type { WorkerDeclarationConfig } from "./worker";
 
 // The runtime build resolves `@notation/cloudflare/workers` to this module,
@@ -16,13 +17,30 @@ export { entrypointType } from "./entrypoint";
 export { json } from "./json";
 export { KVJsonError, readKVJson } from "./kv-json";
 
-/** Declares nothing at runtime. The Worker reads its bindings from `env`. */
+/**
+ * Declares nothing at runtime. The Worker reads its bindings from `env`.
+ * Each output, such as `url`, is a getter that throws, for a read that the
+ * build can't see, such as one in a helper that the Worker passes it to.
+ */
 export function $worker<
   const Id extends string,
   B extends Bindings = {},
   E = undefined,
->(config: WorkerDeclarationConfig<Id, B, E>): Worker<ResolvedValues<B>, E> {
-  return { id: config.id } as unknown as Worker<ResolvedValues<B>, E>;
+>(
+  config: WorkerDeclarationConfig<Id, B, E>,
+): Worker<ResolvedValues<B>, E> {
+  const declaration = { id: config.id };
+  for (const output of workerOutputs) {
+    Object.defineProperty(declaration, output, {
+      enumerable: false,
+      get() {
+        throw new Error(
+          `Worker code read ${output}, an output of $worker({ id: ${JSON.stringify(config.id)} }). An output is known only at deploy, so Worker code can't read it. Bind it to the Worker that needs it, and read it from env.`,
+        );
+      },
+    });
+  }
+  return declaration as unknown as Worker<ResolvedValues<B>, E>;
 }
 
 /** Declares nothing at runtime. */
