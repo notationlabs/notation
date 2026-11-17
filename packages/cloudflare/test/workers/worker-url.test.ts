@@ -245,10 +245,29 @@ describe("url", () => {
     });
   });
 
-  it("throws for a Worker that is declared while no resource graph is being collected", () => {
-    const api = $worker({ id: "api", compatibilityDate });
+  it("throws for a read while no resource graph is being collected", async () => {
+    let api!: ReturnType<typeof $worker>;
+    await collect(() => {
+      api = inWorker(
+        $worker({ id: "api", compatibilityDate }),
+        "runtime/api.ts",
+      );
+    });
     expect(() => api.url).toThrow(
-      'url was read on $worker({ id: "api" }), which was declared while no resource graph is being collected. Declare the Worker in an infra module, while the infra modules load.',
+      'url was read on $worker({ id: "api" }) in runtime/api.ts while no resource graph is being collected. Read it in an infra module or in a bindings function.',
+    );
+  });
+
+  it("throws for a Worker from another resource graph", async () => {
+    let api!: ReturnType<typeof $worker>;
+    await collect(() => {
+      api = inWorker(
+        $worker({ id: "api", compatibilityDate }),
+        "runtime/api.ts",
+      );
+    });
+    await expect(collect(() => api.url)).rejects.toThrow(
+      'url was read on $worker({ id: "api" }) in runtime/api.ts, which was declared in another resource graph. Read the url of a Worker that is declared in the resource graph being collected.',
     );
   });
 

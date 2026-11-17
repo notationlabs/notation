@@ -600,9 +600,16 @@ function registerWorker(
           `url was read on ${entry.describe()}, which sets url: false, so it has no workers.dev URL. Remove url: false, or bind the Worker as a service.`,
         );
       }
-      if (!workers) {
+      // Checked at the read, as addBindings() checks at its call.
+      const current = declaredWorkers();
+      if (!current) {
         throw new Error(
-          `url was read on ${entry.describe()}, which was declared while no resource graph is being collected. Declare the Worker in an infra module, while the infra modules load.`,
+          `url was read on ${entry.describe()} while no resource graph is being collected. Read it in an infra module or in a bindings function.`,
+        );
+      }
+      if (!current.includes(entry)) {
+        throw new Error(
+          `url was read on ${entry.describe()}, which was declared in another resource graph. Read the url of a Worker that is declared in the resource graph being collected.`,
         );
       }
       return (url ??= deferredOutputRef({
