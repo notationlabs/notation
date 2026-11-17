@@ -593,7 +593,7 @@ A derived value goes where a ref goes: in config, in a contribution, in a Lambda
 The function of `map`:
 
 - **is called with real values**, at plan when they are known, and at deploy. Plan and deploy can each call it more than once, so it must depend only on its argument.
-- **returns a value that state can record.** A promise fails, and so does a value that holds a ref or a derived value at any depth.
+- **returns a value that state can record.** A promise fails, and so does a value that holds, at any depth, a ref, a derived value, a function, or an object that is not a plain object or an array, such as a `URL`, a `Date` or a `Map`.
 - **fails plan or deploy when it throws.** The error names the call site of `map`. In `ref.map(f).map(g)`, each `map` has its own call site.
 - **is not async.**
 

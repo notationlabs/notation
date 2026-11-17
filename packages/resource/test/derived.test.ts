@@ -313,6 +313,31 @@ describe("map", () => {
     );
   });
 
+  it("fails when the function returns a value that state can't record, at any depth", async () => {
+    class Endpoint {}
+    const cases: [() => unknown, string][] = [
+      [() => new URL("https://x"), "returned a URL, which"],
+      [() => () => "x", "returned a function, which"],
+      [() => ({ time: new Date(0) }), "returned a Date at time, which"],
+      [() => [new Map()], "returned a Map at 0, which"],
+      [
+        () => ({ list: [new Endpoint()] }),
+        "returned an Endpoint at list.0, which",
+      ],
+    ];
+    for (const [result, message] of cases) {
+      const fn = new Fn("fn", { config: { Url: "https://x" } });
+      fn.contribute({
+        Environment: deployedQueue("orders")
+          .outputRef("QueueUrl")
+          .map(result) as any,
+      });
+      await expect(fn.getParams()).rejects.toThrow(
+        `${message} state can't record.`,
+      );
+    }
+  });
+
   it("fails when the function returns a ref at any depth", async () => {
     const queue = deployedQueue("orders");
     const other = deployedQueue("other");

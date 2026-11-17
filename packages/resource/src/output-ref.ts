@@ -888,8 +888,9 @@ function assertDerivable(value: unknown, where: () => string): void {
   }
 }
 
-// State records the result as a param. A promise can't be recorded, and a
-// ref in the result was not seen when the dependencies were found.
+// State records the result as a param. A promise, a function, or an object
+// that is not a plain object or an array can't be recorded, and a ref in the
+// result was not seen when the dependencies were found.
 function assertRecordable(value: unknown, where: () => string): void {
   if (
     (typeof value === "object" || typeof value === "function") &&
@@ -905,6 +906,34 @@ function assertRecordable(value: unknown, where: () => string): void {
       `${where()} returned a value that holds an output ref or a derived value. Read each ref as an argument, with all() for several.`,
     );
   }
+  const found = findUnrecordable(value, []);
+  if (found) {
+    const at = found.path.length > 0 ? ` at ${found.path.join(".")}` : "";
+    throw new Error(
+      `${where()} returned ${describeUnrecordable(found.value)}${at}, which state can't record.`,
+    );
+  }
+}
+
+function findUnrecordable(
+  value: unknown,
+  path: string[],
+): { value: unknown; path: string[] } | undefined {
+  if (typeof value === "function") return { value, path };
+  if (typeof value !== "object" || value === null) return undefined;
+  if (!Array.isArray(value) && !isPlainObject(value)) return { value, path };
+  for (const [key, entry] of Object.entries(value)) {
+    const found = findUnrecordable(entry, [...path, key]);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function describeUnrecordable(value: unknown): string {
+  if (typeof value === "function") return "a function";
+  const name = (value as object).constructor?.name;
+  if (!name) return "an object of a class";
+  return `${/^[AEIO]/i.test(name) ? "an" : "a"} ${name}`;
 }
 
 function describeInput(input: unknown): string {
