@@ -504,12 +504,14 @@ So `deriveParams` reads config as plain values, as its type says:
 - **At deploy**, every ref in config is known, and `deriveParams` receives the values.
 - **At plan**, `deriveParams` receives a view of config. Reading a value that plan knows gives the value. Reading a ref or a derived value that plan doesn't know throws `PendingOutput`, as a read of a pending output in `deps` does. So does reading a credential that plan expects deploy to rotate. Plan then marks every param that config doesn't set as unknown.
 
-Two values in config, or in the config of a dependency, can't be read, at plan or at deploy, and reading one throws with the path of the param:
+Two values in config can't be read, at plan or at deploy, and reading one throws with the path of the param:
 
 - a ref to the resource's own [physical name](#physical-names), because deploy decides the name after the params.
 - a [credential](#credentials), because deploy puts its value in the params only for the call to an operation.
 
 `deriveParams` can leave either in config without reading it, and deploy fills it in.
+
+In the config of a dependency, only a credential throws. A ref to the dependency's own physical name reads as the name that the dependency was deployed with. At plan, it reads as the name in the dependency's state, and throws `PendingOutput` when the dependency has no state yet.
 
 A `deriveParams` that annotates `deps` types it as `ResolvedDependencies<Deps>`, which types the `config` of each dependency as plain params.
 
