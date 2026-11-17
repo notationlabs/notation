@@ -107,6 +107,7 @@ describe("ContainerApplication", () => {
           durable_objects: { namespace_id: "ns1" },
           configuration: params.Configuration,
           max_instances: 5,
+          constraints: { tiers: [1, 2] },
         },
       },
       { method: "GET", url: `${API}/applications/app1`, body: undefined },

@@ -205,10 +205,7 @@ export const ContainerApplication = containerApplicationSchema
             durable_objects: { namespace_id: namespaceId },
             configuration: params.Configuration,
             max_instances: params.MaxInstances,
-            // Without `Constraints`, Cloudflare's defaults apply.
-            ...(params.Constraints && {
-              constraints: applicationConstraints(params.Constraints),
-            }),
+            constraints: applicationConstraints(params.Constraints),
           });
           return { ApplicationId: application.id };
         } catch (error) {
