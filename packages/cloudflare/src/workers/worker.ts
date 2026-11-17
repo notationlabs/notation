@@ -43,6 +43,7 @@ import {
 } from "./durable-object";
 import type { Jurisdiction } from "src/api/r2";
 import { isJsonBinding } from "./json";
+import { isWorkerLoaderBinding } from "./worker-loader";
 
 // Always set: the build imports Node's built-in modules as `node:` modules,
 // which workerd only provides under this flag.
@@ -850,8 +851,12 @@ function resolveBindings(
       resolved.bindings.push({ type: "json", name, json: value["~json"] });
       continue;
     }
+    if (isWorkerLoaderBinding(value)) {
+      resolved.bindings.push({ type: "worker_loader", name });
+      continue;
+    }
     throw new Error(
-      `${self.describe()} binds ${name} to a value that a Worker can't bind. Bind a Durable Object namespace from $durableObject, a Worker from $worker or worker(), a credential such as \`source.credentials.value\`, a SecretsStoreSecret, an R2Bucket, a KVNamespace, a value with json(), or a string, which can be an output ref or a derived value.`,
+      `${self.describe()} binds ${name} to a value that a Worker can't bind. Bind a Durable Object namespace from $durableObject, a Worker from $worker or worker(), a credential such as \`source.credentials.value\`, a SecretsStoreSecret, an R2Bucket, a KVNamespace, a value with json(), a Worker Loader with workerLoader(), or a string, which can be an output ref or a derived value.`,
     );
   }
   return resolved;

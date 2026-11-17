@@ -64,6 +64,10 @@ export const bindingSchema = v.variant("type", [
     name: v.string(),
     json: v.any(),
   }),
+  v.object({
+    type: v.literal("worker_loader"),
+    name: v.string(),
+  }),
 ]);
 
 /**

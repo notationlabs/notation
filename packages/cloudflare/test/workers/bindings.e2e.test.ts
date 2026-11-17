@@ -19,13 +19,14 @@ describeE2e("$worker bindings", () => {
   let workerName: string;
 
   // "/check" writes and reads through the R2 and KV bindings, and returns
-  // the JSON binding. "/secret" returns the API_KEY secret, and "/admin" the
-  // ADMIN secret, or "unset".
+  // the JSON binding. "/loader" runs a module through the Worker Loader.
+  // "/secret" returns the API_KEY secret, and "/admin" the ADMIN secret, or
+  // "unset".
   const writeWorker = ({ bindAdmin }: { bindAdmin: boolean }) =>
     project.write(
       "runtime/api.ts",
       `
-      import { $worker, json, type WorkerHandler } from "@notation/cloudflare/workers";
+      import { $worker, json, workerLoader, type WorkerHandler } from "@notation/cloudflare/workers";
       import { admin, apiKey, cache, uploads } from "../infra/main";
 
       export const worker = $worker({
@@ -35,6 +36,7 @@ describeE2e("$worker bindings", () => {
           UPLOADS: uploads,
           CACHE: cache,
           CONFIG: json({ retries: 3, regions: ["weur"] }),
+          LOADER: workerLoader(),
           API_KEY: apiKey,
           ${bindAdmin ? "ADMIN: admin," : ""}
         }),
@@ -44,6 +46,19 @@ describeE2e("$worker bindings", () => {
         async fetch(request, env) {
           const url = new URL(request.url);
           if (url.pathname === "/secret") return new Response(env.API_KEY);
+          if (url.pathname === "/loader") {
+            const loaded = env.LOADER.get("e2e-loader", () => ({
+              compatibilityDate: "2026-10-12",
+              mainModule: "entry.js",
+              modules: {
+                "entry.js": 'import lib from "./lib.js"; export default { fetch() { return new Response("loaded " + lib); } };',
+                "lib.js": 'export default "lib";',
+              },
+              globalOutbound: null,
+              env: {},
+            }));
+            return loaded.getEntrypoint().fetch(request);
+          }
           if (url.pathname === "/admin") {
             return new Response((env as { ADMIN?: string }).ADMIN ?? "unset");
           }
@@ -114,7 +129,7 @@ describeE2e("$worker bindings", () => {
       done: (fetched) => fetched.body === expected,
     });
 
-  it("deploys a Worker that binds an R2 bucket, a KV namespace, a JSON value and a credential", async () => {
+  it("deploys a Worker that binds an R2 bucket, a KV namespace, a JSON value, a Worker Loader and a credential", async () => {
     process.env[SECRET_KEY] = secrets[0];
     await project.notation("deploy");
     const names = await project.workerNames();
@@ -128,6 +143,10 @@ describeE2e("$worker bindings", () => {
       r2: "from r2",
       kv: "from kv",
       config: { retries: 3, regions: ["weur"] },
+    });
+    expect(await poll(`${project.url(workerName)}/loader`)).toMatchObject({
+      ok: true,
+      body: "loaded lib",
     });
     expect(await poll(`${project.url(workerName)}/secret`)).toMatchObject({
       ok: true,

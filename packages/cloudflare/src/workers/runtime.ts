@@ -14,6 +14,7 @@ import type { WorkerDeclarationConfig } from "./worker";
 export type * from "./declaration";
 export { entrypointType } from "./entrypoint";
 export { json } from "./json";
+export { workerLoader } from "./worker-loader";
 export { KVJsonError, readKVJson } from "./kv-json";
 
 /**

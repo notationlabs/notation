@@ -29,6 +29,11 @@ export interface JsonBinding<T = Json> {
   readonly "~json": T;
 }
 
+/** A Worker Loader binding, from `workerLoader()`. */
+export interface WorkerLoaderBinding {
+  readonly "~workerLoader": true;
+}
+
 /**
  * `T` if it is a JSON value, and `never` where it is not. An interface has no
  * index signature, so it is not assignable to `Json`, but it passes this
@@ -46,7 +51,7 @@ export type JsonValue<T> = T extends string | number | boolean | null
  * A value that a Worker can bind: a Durable Object namespace, another Worker
  * (a service binding), a credential of a resource (a Worker secret), a
  * `SecretsStoreSecret`, an R2 bucket, a KV namespace, a value from `json()`,
- * or a string (plain text). A plain text binding can be an output ref or a
+ * a Worker Loader from `workerLoader()`, or a string (plain text). A plain text binding can be an output ref or a
  * derived value, such as `` text`${api.url}/callback` ``, which deploy fills
  * in.
  */
@@ -58,6 +63,7 @@ export type BindingValue =
   | R2BucketInstance
   | KVNamespaceInstance
   | JsonBinding<any>
+  | WorkerLoaderBinding
   | { readonly "~worker": { bindings: Bindings } };
 
 export type Bindings = Record<string, BindingValue>;
@@ -113,13 +119,15 @@ type BindingType<V> =
       ? ServiceOf<E>
       : V extends JsonBinding<infer T>
         ? T
-        : V extends R2BucketInstance
-          ? cf.R2Bucket
-          : V extends KVNamespaceInstance
-            ? cf.KVNamespace
-            : V extends SecretsStoreSecretInstance
-              ? cf.SecretsStoreSecret
-              : string;
+        : V extends WorkerLoaderBinding
+          ? cf.WorkerLoader
+          : V extends R2BucketInstance
+            ? cf.R2Bucket
+            : V extends KVNamespaceInstance
+              ? cf.KVNamespace
+              : V extends SecretsStoreSecretInstance
+                ? cf.SecretsStoreSecret
+                : string;
 
 /**
  * The `env` type of a Worker's handlers: `WorkerEnv<typeof worker>`. A
