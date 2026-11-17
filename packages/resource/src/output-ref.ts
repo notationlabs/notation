@@ -5,6 +5,10 @@ import { UNKNOWN_AFTER_APPLY, isUnknownAfterApply } from "./diff-params";
 import { captureCallSiteLazily } from "./contributions";
 import { isOwnPhysicalName } from "./physical-name";
 import { isCredentialMarker } from "./credential";
+import {
+  getActiveResourceCollection,
+  type ResourceCollection,
+} from "./resource-collection";
 
 export class OutputRefStringError extends Error {
   /**
@@ -36,7 +40,14 @@ interface RefMembers<T, K extends RefKind> {
   readonly [outputRefBrand]: true;
   readonly kind: K;
   readonly "~value"?: () => T;
+  /**
+   * The resource whose output the ref stands for. For a ref from
+   * `deferredOutputRef`, the first read finds the resource, and a read while
+   * the infra modules load throws.
+   */
   readonly resource: BaseResource;
+  /** The id of `resource`, which is known when the ref is made. */
+  readonly resourceId: string;
   readonly path: readonly string[];
 }
 
@@ -146,15 +157,52 @@ abstract class Unstringable {
   }
 }
 
+class DeferredResource {
+  constructor(
+    readonly resourceId: string,
+    readonly resolve: () => BaseResource,
+    // The collection that was active when the ref was made, if any.
+    readonly collection: ResourceCollection | undefined,
+  ) {}
+}
+
 class OutputRefClass extends Unstringable {
   readonly [outputRefBrand] = true as const;
+  readonly resourceId: string;
+  #resource: BaseResource | undefined;
+  #deferred: DeferredResource | undefined;
 
   constructor(
-    readonly resource: BaseResource,
+    resource: BaseResource | DeferredResource,
     readonly path: readonly string[],
     readonly kind: RefKind = "output",
   ) {
     super();
+    if (resource instanceof DeferredResource) {
+      this.#deferred = resource;
+      this.resourceId = resource.resourceId;
+    } else {
+      this.#resource = resource;
+      this.resourceId = resource.id;
+    }
+  }
+
+  get resource(): BaseResource {
+    if (this.#resource) return this.#resource;
+    const deferred = this.#deferred!;
+    if (deferred.collection && !deferred.collection.evaluationEnded) {
+      throw new Error(
+        `Output ${describeOutputRef(this)} was read while the infra modules load, before ${deferred.resourceId} exists. Place the ref whole in config, in a contribution or in a binding, or compute with it in text\`…\`, map() or all(). Deploy reads it once the modules have loaded.`,
+      );
+    }
+    const resource = deferred.resolve();
+    if (resource.id !== deferred.resourceId) {
+      throw new Error(
+        `Output ${describeOutputRef(this)} resolved to ${resource.id}, not ${deferred.resourceId}.`,
+      );
+    }
+    this.#resource = resource;
+    return resource;
   }
 
   map(fn: (value: unknown) => unknown): Derived {
@@ -192,6 +240,49 @@ export const OutputRef = OutputRefClass as {
   ): StateRef<T>;
   readonly prototype: AnyOutputRef;
 };
+
+export type DeferredOutputRefOptions = {
+  /** The id of the resource that `resolve` returns. */
+  resourceId: string;
+  path: readonly string[];
+  /** Makes a `CredentialRef`. Defaults to `false`. */
+  credential?: boolean;
+  /**
+   * Returns the resource. It is called on the first read of `ref.resource`,
+   * once the infra modules have loaded.
+   */
+  resolve: () => BaseResource;
+};
+
+/**
+ * Makes a ref to an output of a resource that doesn't exist yet, such as a
+ * resource that a group creates once the infra modules have loaded. Its
+ * resource's id is given up front, so that the ref can be described, and
+ * contributions sorted, without the resource. The holder of the ref depends
+ * on the resource, as for any output ref.
+ */
+export function deferredOutputRef<T = unknown>(
+  options: DeferredOutputRefOptions & { credential: true },
+): CredentialRef<T>;
+export function deferredOutputRef<T = unknown>(
+  options: DeferredOutputRefOptions & { credential?: false },
+): OutputRef<T>;
+export function deferredOutputRef<T = unknown>(
+  options: DeferredOutputRefOptions,
+): OutputRef<T> | CredentialRef<T>;
+export function deferredOutputRef(
+  options: DeferredOutputRefOptions,
+): OutputRef | CredentialRef {
+  return new OutputRefClass(
+    new DeferredResource(
+      options.resourceId,
+      options.resolve,
+      getActiveResourceCollection(),
+    ),
+    [...options.path],
+    options.credential ? "credential" : "output",
+  ) as unknown as OutputRef | CredentialRef;
+}
 
 /**
  * The outputs of the targets of `~state` refs, from their state records at
@@ -240,7 +331,7 @@ export function recordedLookup(
   recorded: RecordedOutputs | undefined,
 ): OutputLookup {
   return (token) => {
-    const { id } = token.resource;
+    const id = token.resourceId;
     if (!recorded || !(id in recorded)) {
       throw new Error(
         `Output ${describeOutputRef(token)} is read from state, but the outputs in state were not read for ${id}. Make each ~state ref while infra is evaluated.`,
@@ -506,10 +597,10 @@ export function toCanonicalOutputRefs(value: unknown): unknown {
 }
 
 function describeOutputRef(token: {
-  resource: BaseResource;
+  resourceId: string;
   path: readonly string[];
 }): string {
-  return [token.resource.id, ...token.path].join(".");
+  return [token.resourceId, ...token.path].join(".");
 }
 
 /**

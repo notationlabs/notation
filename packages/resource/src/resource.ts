@@ -669,7 +669,7 @@ export abstract class Resource<
       // which a `~state` ref's target may not have yet.
       if (isStateRef(token)) {
         throw new Error(
-          `The config of ${this.id} holds a ~state ref to ${token.resource.id}. A ~state ref can only be placed in a contribution.`,
+          `The config of ${this.id} holds a ~state ref to ${token.resourceId}. A ~state ref can only be placed in a contribution.`,
         );
       }
       if (isDependencyRef(this, token)) found.add(token.resource);
