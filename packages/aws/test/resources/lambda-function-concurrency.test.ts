@@ -16,6 +16,7 @@ import { LambdaIamRole } from "src/resources/lambda/lambda-role";
 const fn = {
   output: { FunctionName: "app--prod--orders" },
   schema: {},
+  outputRef() {},
 } as any;
 const key = { FunctionName: "app--prod--orders" };
 

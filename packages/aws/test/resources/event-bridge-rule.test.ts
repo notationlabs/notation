@@ -16,7 +16,7 @@ const rule = new EventBridgeRule("rule", {
     EventBusName: "default",
     Targets: [{ Id: "fn", Arn: "arn:fn" }],
   },
-  dependencies: { lambda: {} as any },
+  dependencies: { lambda: { outputRef() {} } as any },
 });
 
 const key = { Name: "daily", EventBusName: "default" };
@@ -301,7 +301,7 @@ test("a pattern in config is sent in compact form", async () => {
       EventPattern: '{\n  "source": ["shop"]\n}',
       Targets: [{ Id: "fn", Arn: "arn:fn" }],
     },
-    dependencies: { lambda: {} as any },
+    dependencies: { lambda: { outputRef() {} } as any },
   });
 
   expect((await pretty.getParams()).EventPattern).toBe('{"source":["shop"]}');

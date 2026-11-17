@@ -20,6 +20,7 @@ vi.mock("src/resources/context", () => ({
 const fn = {
   output: { FunctionName: "app--prod--orders" },
   schema: {},
+  outputRef() {},
 } as any;
 const key = { FunctionName: "app--prod--orders", StatementId: "events-daily" };
 
