@@ -1,5 +1,15 @@
 # @notation/infisical
 
+## 0.26.0
+
+### Patch Changes
+
+- Updated dependencies [5436b53]
+- Updated dependencies [c8f08a2]
+  - @notation/resource@0.26.0
+  - @notation/std@0.26.0
+  - @notation/utils@0.26.0
+
 ## 0.25.0
 
 ### Patch Changes

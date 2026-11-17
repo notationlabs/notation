@@ -1,5 +1,11 @@
 # @notation/dashboard
 
+## 0.26.0
+
+### Patch Changes
+
+- @notation/state@0.26.0
+
 ## 0.25.0
 
 ### Patch Changes
