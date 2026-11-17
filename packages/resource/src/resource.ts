@@ -841,8 +841,8 @@ export abstract class Resource<
 
   /**
    * Runs function contributions. Each one receives views of its deps, as
-   * `deriveParams` does. When one reads an output that does not exist yet, plan cannot tell which params it would set, so
-   * `unknown` is set and `#collect` marks every collected param unknown.
+   * `deriveParams` does. When one reads an output that does not exist yet,
+   * plan cannot tell which params it would set, so `unknown` is set and `#collect` marks every collected param unknown.
    */
   async #evaluateContributions(
     plan: boolean,

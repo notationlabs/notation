@@ -919,7 +919,13 @@ function findUnrecordable(
   value: unknown,
   path: string[],
 ): { value: unknown; path: string[] } | undefined {
-  if (typeof value === "function") return { value, path };
+  if (
+    typeof value === "function" ||
+    typeof value === "bigint" ||
+    typeof value === "symbol"
+  ) {
+    return { value, path };
+  }
   if (typeof value !== "object" || value === null) return undefined;
   if (!Array.isArray(value) && !isPlainObject(value)) return { value, path };
   for (const [key, entry] of Object.entries(value)) {
@@ -931,6 +937,8 @@ function findUnrecordable(
 
 function describeUnrecordable(value: unknown): string {
   if (typeof value === "function") return "a function";
+  if (typeof value === "bigint") return "a bigint";
+  if (typeof value === "symbol") return "a symbol";
   const name = (value as object).constructor?.name;
   if (!name) return "an object of a class";
   return `${/^[AEIO]/i.test(name) ? "an" : "a"} ${name}`;

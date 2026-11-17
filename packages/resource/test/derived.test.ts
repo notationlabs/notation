@@ -320,6 +320,8 @@ describe("map", () => {
       [() => () => "x", "returned a function, which"],
       [() => ({ time: new Date(0) }), "returned a Date at time, which"],
       [() => [new Map()], "returned a Map at 0, which"],
+      [() => ({ n: BigInt(1) }), "returned a bigint at n, which"],
+      [() => Symbol("x"), "returned a symbol, which"],
       [
         () => ({ list: [new Endpoint()] }),
         "returned an Endpoint at list.0, which",
