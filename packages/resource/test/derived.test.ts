@@ -316,7 +316,7 @@ describe("map", () => {
   it("fails when the function returns a value that state can't record, at any depth", async () => {
     class Endpoint {}
     const cases: [() => unknown, string][] = [
-      [() => new URL("https://x"), "returned a URL, which"],
+      [() => new (globalThis as any).URL("https://x"), "returned a URL, which"],
       [() => () => "x", "returned a function, which"],
       [() => ({ time: new Date(0) }), "returned a Date at time, which"],
       [() => [new Map()], "returned a Map at 0, which"],
@@ -639,7 +639,9 @@ describe("function contributions", () => {
     fn.contribute(
       ({ deps }) => ({
         Environment: {
-          Variables: { HOST: hostOf(deps.target.config.Url) },
+          // The type of a function contribution's deps leaves config as
+          // inputs, but deploy and plan give its refs filled in.
+          Variables: { HOST: hostOf(deps.target.config.Url as string) },
         },
       }),
       { deps: { target } },
@@ -740,7 +742,7 @@ describe("deriveParams with a marker in config", () => {
     const Probe = Passer.requireDependencies<{}>().deriveParams(
       ({ config }) => {
         try {
-          return { Label: config.Secret };
+          return { Label: (config as NamedConfig).Secret };
         } catch (error) {
           read = error;
           throw error;
@@ -767,7 +769,9 @@ describe("deriveParams with a marker in config", () => {
     source.setOutput({ Name: "s" });
     const Watcher = Passer.requireDependencies<{
       source: InstanceType<typeof Passer>;
-    }>().deriveParams(({ deps }) => ({ Label: deps.source.config.Secret }));
+    }>().deriveParams(({ deps }) => ({
+      Label: (deps.source.config as NamedConfig).Secret,
+    }));
     const watcher = new Watcher("watcher", {
       config: { Name: "w" },
       dependencies: { source },
@@ -788,7 +792,7 @@ describe("deriveParams with a marker in config", () => {
     const Watcher = Passer.requireDependencies<{
       source: InstanceType<typeof Passer>;
     }>().deriveParams(({ deps }) => ({
-      Label: `secret: ${deps.source.config.Secret}`,
+      Label: `secret: ${(deps.source.config as NamedConfig).Secret}`,
     }));
     const watcher = new Watcher("watcher", {
       config: { Name: "w" },
