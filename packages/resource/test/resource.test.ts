@@ -166,7 +166,7 @@ describe("resource dependencies", () => {
       dep1: InstanceType<typeof TestResource>;
     }>().deriveParams(({ deps }) => {
       seen.push(deps.dep1.config);
-      deps.dep1.config.requiredParam = "changed";
+      Object.assign(deps.dep1.config, { requiredParam: "changed" });
       return {};
     });
     const dep1 = new TestResource("dep-1", {
