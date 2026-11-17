@@ -40,6 +40,7 @@ import {
   entrypointType,
   isWorkerGroup,
   json,
+  workerLoader,
   worker,
   type Worker,
   type WorkerEnv,
@@ -257,6 +258,7 @@ describe("$worker", () => {
             EU_UPLOADS: euUploads,
             CACHE: cache,
             CONFIG: json({ retries: 3 }),
+            LOADER: workerLoader(),
           }),
         }),
         "runtime/api.ts",
@@ -280,6 +282,7 @@ describe("$worker", () => {
       },
       { type: "kv_namespace", name: "CACHE", namespace_id: "ns1" },
       { type: "json", name: "CONFIG", json: { retries: 3 } },
+      { type: "worker_loader", name: "LOADER" },
     ]);
   });
 
@@ -1691,7 +1694,7 @@ describe("WorkerEnv", () => {
     type _ = Env["MISSING"];
   });
 
-  it("types R2, KV, JSON, Secrets Store secret and credential bindings", () => {
+  it("types R2, KV, JSON, Worker Loader, Secrets Store secret and credential bindings", () => {
     const apiKey = {} as InstanceType<typeof TestSource>;
     const worker = runtime.$worker({
       id: "api",
@@ -1700,6 +1703,7 @@ describe("WorkerEnv", () => {
         UPLOADS: {} as InstanceType<typeof r2.R2Bucket>,
         CACHE: {} as InstanceType<typeof kv.KVNamespace>,
         CONFIG: runtime.json({ retries: 3, regions: ["weur"] }),
+        LOADER: runtime.workerLoader(),
         STORED: {} as InstanceType<typeof secretsStore.SecretsStoreSecret>,
         API_KEY: apiKey.credentials.value,
       }),
@@ -1712,6 +1716,7 @@ describe("WorkerEnv", () => {
       retries: number;
       regions: string[];
     }>();
+    expectTypeOf<Env["LOADER"]>().toEqualTypeOf<cf.WorkerLoader>();
     expectTypeOf<Env["STORED"]>().toEqualTypeOf<cf.SecretsStoreSecret>();
     expectTypeOf<Env["API_KEY"]>().toEqualTypeOf<string>();
   });

@@ -89,6 +89,7 @@ Deploy generates a Worker's name when it creates the Worker: `<app>--<stage>--<i
 | An `R2Bucket` resource                                              | R2 bucket                | `R2Bucket`                                                                            |
 | A [`KVNamespace`](kv.md) resource                                   | KV namespace             | `KVNamespace`                                                                         |
 | A value from `json(value)`                                          | JSON                     | the type of `value`                                                                   |
+| `workerLoader()`                                                    | Worker Loader            | `WorkerLoader`                                                                        |
 | A string, or an output ref or a derived value of one                | Plain text               | `string`                                                                              |
 
 `WorkerEnv<typeof worker>` is the type of `env`, and `WorkerHandler<typeof worker>` is the type of the default export. A Worker is uploaded after each Worker, R2 bucket, KV namespace and store secret that it binds, and after each resource whose credential or output ref it binds. See [Output refs](../../reference/resource.md#output-refs) for refs and derived values such as `` text`${api.url}/callback` ``.
@@ -152,6 +153,7 @@ export default {
 
 - A binding to a bucket in a jurisdiction other than `default` names the jurisdiction.
 - `json(value)` takes a JSON value. Deploy stores the value in state, and plan shows it. Bind a secret as a [credential](#worker-secrets) instead.
+- `workerLoader()` binds a [Worker Loader](https://developers.cloudflare.com/dynamic-workers/). The Worker calls `env.LOADER.get(id, callback)` to run code that it receives at runtime in a new isolate. The binding has no resource, so deploy creates and deletes nothing for it. Cloudflare offers Worker Loaders on paid Workers plans.
 
 #### URL bindings
 
