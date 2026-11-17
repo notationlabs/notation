@@ -39,7 +39,6 @@ export {
   type ContributionFunction,
 } from "./contributions";
 export {
-  Derived,
   OutputRef,
   OutputRefStringError,
   PendingOutput,
@@ -58,6 +57,7 @@ export {
   type AnyOutputRef,
   type CredentialRef,
   type DeepInput,
+  type Derived,
   type Input,
   type OutputLookup,
   type RecordedOutputs,
