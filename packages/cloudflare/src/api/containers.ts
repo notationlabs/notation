@@ -90,6 +90,82 @@ export const configurationSchema = v.pipe(
 
 export type ContainerConfiguration = v.InferOutput<typeof configurationSchema>;
 
+const REGIONS = [
+  "ENAM",
+  "WNAM",
+  "EEUR",
+  "WEUR",
+  "APAC",
+  "SAM",
+  "ME",
+  "OC",
+  "AFR",
+] as const;
+
+type Region = (typeof REGIONS)[number];
+
+// Cloudflare refuses a list of only these regions.
+const LIMITED_CAPACITY_REGIONS: readonly Region[] = ["ME", "OC", "AFR"];
+
+const JURISDICTION_REGIONS = {
+  eu: ["EEUR", "WEUR"],
+  us: ["ENAM", "WNAM"],
+  fedramp: ["ENAM", "WNAM"],
+} as const satisfies Record<string, readonly Region[]>;
+
+export const constraintsSchema = v.pipe(
+  v.strictObject({
+    /** The regions where the containers can run, such as `["WEUR", "EEUR"]`. */
+    regions: v.optional(
+      v.pipe(
+        v.array(v.picklist(REGIONS)),
+        v.nonEmpty("Set at least one region, or leave regions out"),
+      ),
+    ),
+    /**
+     * Keeps the containers in a compliance boundary: `eu` runs them in
+     * `EEUR` and `WEUR`, and `us` and `fedramp` run them in `ENAM` and `WNAM`.
+     */
+    jurisdiction: v.optional(v.picklist(["eu", "us", "fedramp"])),
+  }),
+  v.check(
+    (constraints) =>
+      constraints.regions === undefined ||
+      constraints.regions.some(
+        (region) => !LIMITED_CAPACITY_REGIONS.includes(region),
+      ),
+    "The regions ME, OC and AFR have limited capacity, and Cloudflare refuses them on their own. Add another region",
+  ),
+  v.check(
+    (constraints) =>
+      constraints.regions === undefined ||
+      constraints.jurisdiction === undefined ||
+      constraints.regions.every((region) =>
+        (
+          JURISDICTION_REGIONS[constraints.jurisdiction!] as readonly Region[]
+        ).includes(region),
+      ),
+    "Each region must be in the jurisdiction: eu has EEUR and WEUR, and us and fedramp have ENAM and WNAM",
+  ),
+);
+
+export type ContainerConstraints = v.InferOutput<typeof constraintsSchema>;
+
+type ApplicationConstraints = ContainerConstraints & { tiers: number[] };
+
+/**
+ * Returns the `constraints` of a request, as Wrangler builds them: with
+ * `tiers: [1, 2]` when its config sets no tiers. Wrangler sends the whole
+ * object in each update, so an update without `regions` or `jurisdiction`
+ * removes them. `undefined` gives the constraints that Wrangler sends for a
+ * config with none.
+ */
+export function applicationConstraints(
+  constraints: ContainerConstraints | undefined,
+): ApplicationConstraints {
+  return { tiers: [1, 2], ...constraints };
+}
+
 // The values that Cloudflare gives an application whose configuration leaves
 // the key out. They are those of the `lite` instance type, and the disk size
 // is also that of custom sizes without `disk`.
@@ -200,6 +276,7 @@ export type CreateApplication = {
    */
   instances: 0;
   configuration: ContainerConfiguration;
+  constraints?: ApplicationConstraints;
   durable_objects: { namespace_id: string };
 };
 
@@ -254,7 +331,7 @@ export async function getApplication(
 export async function updateApplication(
   account: string,
   applicationId: string,
-  settings: { max_instances: number },
+  settings: { max_instances?: number; constraints?: ApplicationConstraints },
 ): Promise<void> {
   await cloudflare("PATCH", applicationPath(account, applicationId), settings);
 }

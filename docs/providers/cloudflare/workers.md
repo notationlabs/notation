@@ -658,6 +658,7 @@ For a namespace with `container`, deploy:
 | `diskMb`               | The disk size in MB, with `vcpu` and `memoryMib` only.                                                                                                                                                                                                                                       |
 | `environmentVariables` | Variables for the container, by name, or a function that returns them. Each value is a string, an output ref or a derived value. Don't put secrets here: the values are stored as plain text in state and shown in plan output. See [Variables from a function](#variables-from-a-function). |
 | `network`              | `mode` (`private` or `public`), `assignIpv4` and `assignIpv6` (`none` or `predefined`). Cloudflare can't change the mode of an application, so plan fails for a change to it.                                                                                                                |
+| `constraints`          | Where the containers run: `regions` and `jurisdiction`. See [Placement](containers.md#placement).                                                                                                                                                                                            |
 
 #### Variables from a function
 

@@ -49,6 +49,7 @@ const workerModule = `
 const infraModule = (settings: {
   maxInstances: number;
   configuration: Record<string, unknown>;
+  constraints?: Record<string, unknown>;
 }) => `
   import { containers, workers } from "@notation/cloudflare/resources";
   import { fs } from "@notation/std/resources";
@@ -77,6 +78,7 @@ const infraModule = (settings: {
       HostedNamespaceId: "sandboxes",
       MaxInstances: ${settings.maxInstances},
       Configuration: ${JSON.stringify(settings.configuration)},
+      Constraints: ${JSON.stringify(settings.constraints)},
     },
     dependencies: { script },
   });
@@ -126,6 +128,7 @@ describeE2e("ContainerApplication", () => {
       infraModule({
         maxInstances: 1,
         configuration: { image: IMAGE_V1, instance_type: "lite" },
+        constraints: { regions: ["WEUR", "EEUR"], jurisdiction: "eu" },
       }),
     );
     await project.notation("deploy");
@@ -146,6 +149,7 @@ describeE2e("ContainerApplication", () => {
       max_instances: 1,
       // Cloudflare stores the resources of the instance type, not its name.
       configuration: { image: IMAGE_V1, vcpu: 0.0625, memory_mib: 256 },
+      constraints: { regions: ["WEUR", "EEUR"], jurisdiction: "eu" },
       durable_objects: {
         namespace_id: await namespaceIdOf(scriptName, "Sandbox"),
       },
@@ -163,7 +167,7 @@ describeE2e("ContainerApplication", () => {
     });
   }, 600_000);
 
-  it("updates the instance limit and rolls out a new image, instance type and variables on a second deploy", async () => {
+  it("updates the instance limit and the constraints, and rolls out a new image, instance type and variables on a second deploy", async () => {
     expect(applicationId, "the first deploy made no application").toBeDefined();
     project.write(
       "infra/main.ts",
@@ -174,6 +178,7 @@ describeE2e("ContainerApplication", () => {
           instance_type: "basic",
           environment_variables: [{ name: "GREETING", value: "hello" }],
         },
+        constraints: { regions: ["ENAM"] },
       }),
     );
     await project.notation("deploy");
@@ -183,7 +188,9 @@ describeE2e("ContainerApplication", () => {
     expect(applications[0]).toMatchObject({
       id: applicationId,
       max_instances: 2,
+      constraints: { regions: ["ENAM"] },
     });
+    expect(applications[0]!.constraints?.jurisdiction).toBeUndefined();
     const rollouts = await api<{ target_configuration?: { image: string } }[]>(
       "GET",
       `/containers/applications/${applicationId}/rollouts`,
@@ -202,7 +209,7 @@ describeE2e("ContainerApplication", () => {
     });
   }, 600_000);
 
-  it("removes the instance type and the variables that a third deploy leaves out", async () => {
+  it("removes the instance type, the variables and the constraints that a third deploy leaves out", async () => {
     expect(applicationId, "the first deploy made no application").toBeDefined();
     project.write(
       "infra/main.ts",
@@ -219,6 +226,8 @@ describeE2e("ContainerApplication", () => {
       disk: { size_mb: 2000 },
     });
     expect(application.configuration.environment_variables ?? []).toEqual([]);
+    expect(application.constraints?.regions ?? []).toEqual([]);
+    expect(application.constraints?.jurisdiction).toBeUndefined();
   }, 600_000);
 
   // Cloudflare refuses custom sizes below 1 vCPU and 3 GiB per vCPU.

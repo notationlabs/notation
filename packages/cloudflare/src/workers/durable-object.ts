@@ -85,6 +85,24 @@ export type DurableObjectContainerConfig = {
     assignIpv4?: "none" | "predefined";
     assignIpv6?: "none" | "predefined";
   };
+  /**
+   * Where the containers can run. Without it, Cloudflare starts a container
+   * in the location nearest to the request that has the image.
+   */
+  constraints?: {
+    /**
+     * Such as `["WEUR", "EEUR"]`. `ME`, `OC` and `AFR` have limited
+     * capacity, and need another region next to them.
+     */
+    regions?: (
+      "ENAM" | "WNAM" | "EEUR" | "WEUR" | "APAC" | "SAM" | "ME" | "OC" | "AFR"
+    )[];
+    /**
+     * `eu` runs the containers in `EEUR` and `WEUR`, and `us` and `fedramp`
+     * run them in `ENAM` and `WNAM`. Each of `regions` must be in it.
+     */
+    jurisdiction?: "eu" | "us" | "fedramp";
+  };
 };
 
 export type Registered = {

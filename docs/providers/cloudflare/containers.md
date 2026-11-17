@@ -107,6 +107,24 @@ A change to `Configuration` starts a rollout that replaces the instances, 25% of
 
 An application that pulls its image from a private registry should `dependOn` the `ContainerRegistry` for that registry.
 
+### Placement
+
+By default, Cloudflare starts a container in the location nearest to the request that has the image. `Constraints` limits where the containers run. For a `$durableObject`, set `container.constraints`.
+
+```ts
+new containers.ContainerApplication("sandbox", {
+  config: {
+    // …
+    Constraints: { regions: ["WEUR", "EEUR"], jurisdiction: "eu" },
+  },
+});
+```
+
+- `regions`: any of `ENAM`, `WNAM`, `EEUR`, `WEUR`, `APAC`, `SAM`, `ME`, `OC` and `AFR`. `ME`, `OC` and `AFR` have limited capacity, so plan fails for a list of only those regions.
+- `jurisdiction`: `eu` (`EEUR` and `WEUR`), `us` or `fedramp` (`ENAM` and `WNAM`). When both are set, plan fails for a region that is not in the jurisdiction.
+
+A change to `Constraints` updates the application, and starts no rollout. Deploy sends the constraints as Wrangler does, with `tiers: [1, 2]`. See [Placement](https://developers.cloudflare.com/containers/concepts/placement/) in Cloudflare's docs.
+
 ## Credentials
 
 Deploy reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. See [Credentials](workers.md#credentials). The token also needs the Containers: Edit permission, because plan and deploy request registry credentials to read each `ContainerImage`.

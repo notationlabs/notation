@@ -753,7 +753,7 @@ describe("$worker", () => {
     expect(application.dependencies).toEqual({ script: api.script });
   });
 
-  it("maps the container's sizes and network to the application's configuration, and takes the image's repository and Dockerfile", async () => {
+  it("maps the container's sizes and network to the application's configuration, its constraints to the application's constraints, and takes the image's repository and Dockerfile", async () => {
     const graph = await collect(() => {
       const rooms = inModule(
         $durableObject({
@@ -770,6 +770,7 @@ describe("$worker", () => {
             memoryMib: 1024,
             diskMb: 4000,
             network: { mode: "public", assignIpv4: "predefined" },
+            constraints: { regions: ["WEUR"], jurisdiction: "eu" },
           },
         }),
         "runtime/room.ts",
@@ -799,6 +800,10 @@ describe("$worker", () => {
       memory_mib: 1024,
       disk: { size_mb: 4000 },
       network: { mode: "public", assign_ipv4: "predefined" },
+    });
+    expect(application.config.Constraints).toEqual({
+      regions: ["WEUR"],
+      jurisdiction: "eu",
     });
   });
 

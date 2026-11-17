@@ -12,8 +12,10 @@ import {
   cloudflareCreate,
 } from "src/api/client";
 import {
+  applicationConstraints,
   applicationNameSchema,
   configurationSchema,
+  constraintsSchema,
   createApplication,
   deleteApplication,
   getApplication,
@@ -26,6 +28,7 @@ import {
   rolloutTarget,
   updateApplication,
   type ContainerConfiguration,
+  type ContainerConstraints,
 } from "src/api/containers";
 import { findScriptNamespace } from "src/api/durable-objects";
 import {
@@ -38,6 +41,12 @@ type Settings = {
   MaxInstances: number;
   /** The image and the resources of each instance. */
   Configuration: ContainerConfiguration;
+  /**
+   * The regions and the jurisdiction where the containers can run. Without
+   * it, Cloudflare starts a container in the location nearest to the request
+   * that has the image.
+   */
+  Constraints?: ContainerConstraints;
 };
 
 export type ContainerApplicationSchema = {
@@ -130,6 +139,11 @@ const containerApplicationSchema = containerApplication.defineSchema({
     presence: "required",
     value: configurationSchema,
   },
+  Constraints: {
+    propertyType: "param",
+    presence: "optional",
+    value: constraintsSchema,
+  },
 } as const);
 
 type Params = ContainerApplicationSchema["CreateParams"];
@@ -150,9 +164,9 @@ type Params = ContainerApplicationSchema["CreateParams"];
  * A change to `Configuration` starts a rollout that replaces the instances,
  * 25% of them at a time. Pin the image by its digest: a new image pushed under
  * the same tag doesn't change `Configuration`, so it starts no rollout. See
- * `ContainerImage`. The read doesn't return `Configuration`, because
- * Cloudflare fills in defaults for keys that were not set, so a change made
- * outside notation to the configuration is not seen.
+ * `ContainerImage`. The read doesn't return `Configuration` or
+ * `Constraints`, because Cloudflare fills in defaults for keys that were not
+ * set, so a change made outside notation to them is not seen.
  *
  * Cloudflare merges a rollout's target configuration with the current
  * configuration. So for each key that is removed from `Configuration`, the
@@ -191,6 +205,10 @@ export const ContainerApplication = containerApplicationSchema
             durable_objects: { namespace_id: namespaceId },
             configuration: params.Configuration,
             max_instances: params.MaxInstances,
+            // Without `Constraints`, Cloudflare's defaults apply.
+            ...(params.Constraints && {
+              constraints: applicationConstraints(params.Constraints),
+            }),
           });
           return { ApplicationId: application.id };
         } catch (error) {
@@ -239,13 +257,18 @@ export const ContainerApplication = containerApplicationSchema
       };
     },
 
-    // `PATCH` changes `MaxInstances`, and a rollout changes the configuration.
-    // The rollout target clears the keys that are in state but not in the
-    // new configuration.
-    update: async (key, patch, _params, state) => {
-      if (patch.MaxInstances !== undefined) {
+    // `PATCH` changes `MaxInstances` and `Constraints`, and a rollout
+    // changes the configuration. The rollout target clears the keys that are
+    // in state but not in the new configuration. A removed `Constraints` is
+    // in the patch with no value.
+    update: async (key, patch, params, state) => {
+      const constraintsChanged = "Constraints" in patch;
+      if (patch.MaxInstances !== undefined || constraintsChanged) {
         await updateApplication(key.AccountId, key.ApplicationId, {
           max_instances: patch.MaxInstances,
+          ...(constraintsChanged && {
+            constraints: applicationConstraints(params.Constraints),
+          }),
         });
       }
       if (patch.Configuration) {
