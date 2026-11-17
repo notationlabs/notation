@@ -72,7 +72,20 @@ lambda.env().ORDER_QUEUE_URL; // string
 lambda.env().ORDERS_URL; // type error: the declaration doesn't bind ORDERS_URL
 ```
 
-`LambdaEnv<typeof lambda>` is the type of the values, for code that receives them as a parameter.
+`orderQueue.url` is an `OutputRef<string>` in infra code, and `lambda.env()` gives its value, a `string`. A credential in `env` is a `string` too. The type of a declaration names `ResolvedValues` and the ref types of `@notation/resource`. `@notation/aws/lambda` and `@notation/cloudflare/workers` export these types, so a project that doesn't depend on `@notation/resource` can export a declaration. `LambdaEnv<typeof lambda>` is the type of the values, for code that receives them as a parameter. `WorkerEnv<typeof worker>` does the same for a Worker: a binding to an output ref, a derived value or a credential is a `string`.
+
+## Output refs are typed as refs
+
+In infra code, an output ref is typed `OutputRef<T>`, not `T`. So TypeScript reports code that uses a ref as the value it stands for:
+
+```ts [infra/orders.ts]
+new URL(orderQueue.url); // type error: OutputRef<string> is not a string
+orderQueue.url.startsWith("https://"); // type error: no such method
+```
+
+To compute with a ref, make a derived value with `text`, `map` or `all` from `@notation/resource`. See [Output refs](../reference/resource.md#output-refs).
+
+A template literal and `+` accept any type, so `` `${orderQueue.url}/x` `` passes the type check and throws when infra runs. typescript-eslint's `restrict-template-expressions` and `restrict-plus-operands` rules report both.
 
 ## Bodies are typed by the schema
 

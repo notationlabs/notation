@@ -1,6 +1,6 @@
 import * as aws from "src/resources";
 import { AwsResourceGroup } from "src/resource-group";
-import { perCollection } from "@notation/resource";
+import { perCollection, type OutputRef } from "@notation/resource";
 import type { EventBusSource, RuleOptions } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import { assertId, resourceId, type NameSafe } from "src/id";
@@ -27,12 +27,12 @@ export abstract class EventBus<C extends Record<string, any> = {}>
     aws.eventBridge.EventBusInstance | aws.eventBridge.DefaultEventBusInstance;
 
   /** The bus's ARN. It is an output ref, which deploy replaces with the real value. */
-  get arn(): string {
+  get arn(): OutputRef<string> {
     return this.bus.outputRef("Arn");
   }
 
   /** The bus's name. It is an output ref, which deploy replaces with the real value. */
-  get name(): string {
+  get name(): OutputRef<string> {
     return this.bus.outputRef("Name");
   }
 

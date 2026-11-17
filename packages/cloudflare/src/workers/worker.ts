@@ -2,14 +2,21 @@ import fs from "node:fs";
 import { readEntryExports } from "@notation/build";
 import { filePaths, fromProjectRoot, toProjectRoot } from "@notation/core";
 import {
+  all,
   captureCallSiteLazily,
   evaluationEnded,
   getDeclaredIn,
+  isCredentialRef,
+  isDerived,
   isOutputRef,
+  isStateRef,
   onEvaluationEnd,
   perCollection,
   ResourceGroup,
+  type CredentialRef,
+  type DeepInput,
   type OutputRef,
+  type ResolvedValues,
 } from "@notation/resource";
 import * as std from "@notation/std/resources";
 import { isBundle, type BundleLike } from "@notation/build/resources";
@@ -33,6 +40,7 @@ import {
   type DurableObjectContainerConfig,
   type Registered,
 } from "./durable-object";
+import type { Jurisdiction } from "src/api/r2";
 import { isJsonBinding } from "./json";
 
 // Always set: the build imports Node's built-in modules as `node:` modules,
@@ -54,8 +62,9 @@ export type WorkerDeclarationConfig<
    * The values that the Worker reads from `env`: a `$durableObject`
    * namespace, another Worker, a credential such as
    * `source.credentials.value` (a Worker secret), a `SecretsStoreSecret`, an
-   * `R2Bucket`, a `KVNamespace`, a value from `json()` or a string. Return
-   * an object literal with no spread or computed keys.
+   * `R2Bucket`, a `KVNamespace`, a value from `json()`, or a string. A
+   * string can be an output ref, or a derived value from `text` or `map`.
+   * Return an object literal with no spread or computed keys.
    */
   bindings?: () => B;
   /** Such as `"2026-10-12"`. */
@@ -111,17 +120,17 @@ export type WorkerGroupConfig = WorkerGroupCode & {
   id: string;
   compatibilityDate: string;
   compatibilityFlags: string[];
-  bindings: cloudflare.workers.WorkerBinding[];
+  bindings: DeepInput<cloudflare.workers.WorkerBinding>[];
   /**
    * The `secret_text` bindings by name, each a credential of a resource,
    * which the upload of the code sends.
    */
-  secrets: Record<string, string>;
+  secrets: Record<string, CredentialRef<string>>;
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotectedNamespaces?: string[];
   /** The namespaces that the Worker binds on other Workers. */
-  boundNamespaces: cloudflare.workers.BoundNamespace[];
+  boundNamespaces: DeepInput<cloudflare.workers.BoundNamespace>[];
   /** The containers of the hosted namespaces. */
   containers?: WorkerGroupContainer[];
   url: boolean;
@@ -136,9 +145,11 @@ export type WorkerGroupContainer = {
     cloudflare.containers.ContainerApplicationInstance["config"],
     "HostedNamespaceId" | "Configuration"
   > & {
-    Configuration: Omit<
-      cloudflare.containers.ContainerApplicationInstance["config"]["Configuration"],
-      "image"
+    Configuration: DeepInput<
+      Omit<
+        cloudflare.containers.ContainerApplicationSchema["CreateParams"]["Configuration"],
+        "image"
+      >
     >;
   };
 };
@@ -305,10 +316,13 @@ export function $worker<
   const Id extends string,
   B extends Bindings = {},
   E = undefined,
->(config: WorkerDeclarationConfig<Id, B, E>): Worker<B, E> {
+>(config: WorkerDeclarationConfig<Id, B, E>): Worker<ResolvedValues<B>, E> {
   assertWorkerId("$worker", config.id);
   assertCompatibilityDate(`$worker({ id: "${config.id}" })`, config);
-  const declaration = { id: config.id } as unknown as Worker<B, E>;
+  const declaration = { id: config.id } as unknown as Worker<
+    ResolvedValues<B>,
+    E
+  >;
   registerWorker(config, {
     declaration,
     describe: () => {
@@ -350,12 +364,15 @@ export function worker<
   const Id extends string,
   B extends Bindings = {},
   E = undefined,
->(config: WorkerConfig<Id, B, E>): Worker<B, E> {
+>(config: WorkerConfig<Id, B, E>): Worker<ResolvedValues<B>, E> {
   assertWorkerId("worker()", config.id);
   const label = `worker({ id: "${config.id}" })`;
   assertCompatibilityDate(label, config);
   const { code } = config;
-  const declaration = { id: config.id } as unknown as Worker<B, E>;
+  const declaration = { id: config.id } as unknown as Worker<
+    ResolvedValues<B>,
+    E
+  >;
   if (!isBundle(code)) {
     if (code?.type !== "file" || typeof code.path !== "string" || !code.path) {
       throw new Error(
@@ -558,11 +575,10 @@ function registerWorker(
  * as the infra build only keeps the declaration of such a module.
  * @resource
  */
-export function addBindings(
-  worker: Worker<any>,
-  bindings: Bindings,
-): void {
-  const caller = captureCallSiteLazily(addBindings, { skipLibraryFrames: true });
+export function addBindings(worker: Worker<any>, bindings: Bindings): void {
+  const caller = captureCallSiteLazily(addBindings, {
+    skipLibraryFrames: true,
+  });
   const at = () => caller() ?? "an unknown location";
   const entry = registeredWorker(worker);
   if (!entry) {
@@ -619,12 +635,12 @@ function bindingCycleError(cycle: Entry[]): Error {
 }
 
 type ResolvedBindings = {
-  bindings: cloudflare.workers.WorkerBinding[];
-  secrets: Record<string, string>;
+  bindings: DeepInput<cloudflare.workers.WorkerBinding>[];
+  secrets: Record<string, CredentialRef<string>>;
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotected: Set<string>;
-  bound: cloudflare.workers.BoundNamespace[];
+  bound: { id: string; className: string; scriptName: OutputRef<string> }[];
   /** For each hosted namespace, the other Workers that bind it. */
   transferSources: { id: string; binders: Entry[] }[];
   /** The Workers that the Worker binds as services, itself included. */
@@ -652,7 +668,16 @@ function resolveBindings(
     containers: [],
   };
   for (const [name, value] of Object.entries(self.bindings())) {
-    if (typeof value === "string") {
+    if (isCredentialRef(value)) {
+      resolved.secrets[name] = value as CredentialRef<string>;
+      continue;
+    }
+    if (isStateRef(value)) {
+      throw new Error(
+        `${self.describe()} binds ${name} to a ~state ref. A binding needs a value at deploy, so use outputRef().`,
+      );
+    }
+    if (typeof value === "string" || isOutputRef(value) || isDerived(value)) {
       resolved.bindings.push({ type: "plain_text", name, text: value });
       continue;
     }
@@ -691,15 +716,6 @@ function resolveBindings(
       }
       continue;
     }
-    if (isOutputRef(value)) {
-      if (!isCredentialRef(value)) {
-        throw new Error(
-          `${self.describe()} binds ${name} to the output ${value.path.join(".")} of ${value.resource.id}, which is not a credential. A Worker binds an output of a resource only as a secret, and only a credential, such as \`token.credentials.Value\`, can be a secret.`,
-        );
-      }
-      resolved.secrets[name] = value as unknown as string;
-      continue;
-    }
     const worker = registeredWorker(value);
     if (worker) {
       resolved.services.push({ name, worker });
@@ -708,13 +724,23 @@ function resolveBindings(
     if (hasResourceType(value, "cloudflare/r2/R2Bucket")) {
       const bucket = value as cloudflare.r2.R2BucketInstance;
       // The name is an output ref, so that the Worker depends on the bucket.
+      // The jurisdiction decides whether the binding has the key. When it is
+      // a ref or a derived value, the whole binding is a derived value, so
+      // plan shows the binding as unknown until the jurisdiction is known.
+      const bucketName = bucket.outputRef("BucketName");
       const jurisdiction = bucket.config.Jurisdiction;
-      resolved.bindings.push({
-        type: "r2_bucket",
-        name,
-        bucket_name: bucket.outputRef("BucketName"),
-        ...(jurisdiction !== "default" ? { jurisdiction } : {}),
-      });
+      if (isCredentialRef(jurisdiction)) {
+        throw new Error(
+          `${self.describe()} binds ${name} to the R2 bucket ${bucket.id}, whose Jurisdiction is a credential. A binding records its jurisdiction as a plain param, so set it as a value or an output ref.`,
+        );
+      }
+      resolved.bindings.push(
+        typeof jurisdiction === "string"
+          ? r2Binding(name, bucketName, jurisdiction)
+          : all([jurisdiction, bucketName]).map(([jurisdiction, bucketName]) =>
+              r2Binding(name, bucketName, jurisdiction),
+            ),
+      );
       continue;
     }
     if (hasResourceType(value, "cloudflare/kv/KVNamespace")) {
@@ -745,15 +771,26 @@ function resolveBindings(
       continue;
     }
     throw new Error(
-      `${self.describe()} binds ${name} to a value that a Worker can't bind. Bind a Durable Object namespace from $durableObject, a Worker from $worker or worker(), a credential such as \`source.credentials.value\`, a SecretsStoreSecret, an R2Bucket, a KVNamespace, a value with json(), or a string.`,
+      `${self.describe()} binds ${name} to a value that a Worker can't bind. Bind a Durable Object namespace from $durableObject, a Worker from $worker or worker(), a credential such as \`source.credentials.value\`, a SecretsStoreSecret, an R2Bucket, a KVNamespace, a value with json(), or a string, which can be an output ref or a derived value.`,
     );
   }
   return resolved;
 }
 
-const isCredentialRef = (ref: OutputRef): boolean =>
-  ref.path.length === 1 &&
-  ref.resource.schema[ref.path[0]!]?.propertyType === "credential";
+// Cloudflare takes no jurisdiction key for a bucket in the default
+// jurisdiction.
+function r2Binding<T extends string | OutputRef<string>>(
+  name: string,
+  bucketName: T,
+  jurisdiction: Jurisdiction,
+) {
+  return {
+    type: "r2_bucket" as const,
+    name,
+    bucket_name: bucketName,
+    ...(jurisdiction !== "default" ? { jurisdiction } : {}),
+  };
+}
 
 // Compared by type, not instanceof, so that a resource from another loaded
 // copy of the package is still recognised.

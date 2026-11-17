@@ -144,7 +144,9 @@ describe("schema item types", () => {
       .defineOperations(operations);
 
     const role = new Narrow("role", { config: { RoleName: "orders" } });
-    expectTypeOf(role.config.RoleName).toEqualTypeOf<"orders" | "billing">();
+    expectTypeOf<Extract<typeof role.config.RoleName, string>>().toEqualTypeOf<
+      "orders" | "billing"
+    >();
     expect(
       () =>
         // @ts-expect-error not one of the validator's outputs

@@ -1,4 +1,8 @@
-import type { StandardSchemaV1 } from "@notation/resource";
+import type {
+  CredentialRef,
+  Input,
+  StandardSchemaV1,
+} from "@notation/resource";
 import type {
   APIGatewayEventRequestContextJWTAuthorizer,
   APIGatewayProxyEventV2,
@@ -475,7 +479,9 @@ type DecodeFor<E> =
 
 /**
  * A Lambda function, as `$lambda` declares it. Infra wires it, and the
- * function's code uses its types and its runtime API.
+ * function's code uses its types and its runtime API. In `Env`, `$lambda`
+ * replaces each output ref and derived value with the type of its value, so
+ * that the type of an exported Lambda names no type of `@notation/resource`.
  */
 export interface Lambda<
   E extends LambdaEvent | undefined = LambdaEvent | undefined,
@@ -489,7 +495,8 @@ export interface Lambda<
   readonly "~lambda"?: { kind: KindOf<E>; event: E; env: Env };
   /**
    * The variables that the declaration binds, read from the function's
-   * environment. Throws when one of them is not set.
+   * environment. Throws when one of them is not set, and when it is called
+   * in infra code.
    */
   env(): Readonly<Env>;
   /**
@@ -508,7 +515,11 @@ export interface Lambda<
   decode: DecodeFor<E>;
 }
 
-export type EnvVars = Record<string, string>;
+/**
+ * The variables that a declaration binds: each a string, or an output ref, a
+ * derived value or a credential that deploy fills in.
+ */
+export type EnvVars = Record<string, Input<string> | CredentialRef<string>>;
 
 type HttpHandler<Event> = (
   event: Event,
@@ -697,11 +708,13 @@ async function decodeClaims(
  * `env` option and removes the values, so the names are read from the
  * option, and the values from `process.env`.
  */
-export function createRuntimeEnv(options: RuntimeOptions): () => EnvVars {
-  let values: EnvVars | undefined;
+export function createRuntimeEnv(
+  options: RuntimeOptions,
+): () => Record<string, string> {
+  let values: Record<string, string> | undefined;
   return () => {
     if (values) return values;
-    const read: EnvVars = {};
+    const read: Record<string, string> = {};
     for (const name of Object.keys(options.env?.() ?? {})) {
       const value = process.env[name];
       if (value === undefined) {

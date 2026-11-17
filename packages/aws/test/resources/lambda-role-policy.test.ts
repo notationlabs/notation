@@ -130,7 +130,7 @@ describe("LambdaRolePolicy drift detection", () => {
           id: "app-role-policy",
           type: LambdaRolePolicy.type,
           provider: "test",
-          config: policy.config,
+          config: { RoleName: "app-role", PolicyName: "app-role-policy" },
           params,
           output: params,
           lastOperation: "create",

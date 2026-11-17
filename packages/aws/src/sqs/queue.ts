@@ -2,7 +2,7 @@ import * as aws from "src/resources";
 import { AwsResourceGroup } from "src/resource-group";
 import type { LambdaGroup } from "src/lambda/lambda";
 import type { SqsOptions } from "src/lambda/declaration";
-import type { StandardSchemaV1 } from "@notation/resource";
+import type { Input, OutputRef, StandardSchemaV1 } from "@notation/resource";
 import { assertId, resourceId, type IdOption } from "src/id";
 
 export type QueueConfig<S extends StandardSchemaV1 = StandardSchemaV1> = {
@@ -65,8 +65,9 @@ export type DeadLetterQueueConfig = {
   /**
    * The dead-letter queue: a queue from `queue()`, or the ARN of a queue that
    * Notation doesn't manage, such as `arn:aws:sqs:eu-west-2:123456789012:dlq`.
+   * The ARN can be an output ref or a derived value.
    */
-  queue: QueueGroup<any> | string;
+  queue: QueueGroup<any> | Input<string>;
   /** The number of receives after which SQS moves a message, from 1 to 1,000. */
   maxReceiveCount: number;
 };
@@ -86,9 +87,9 @@ export class QueueGroup<
   readonly queue: aws.sqs.QueueInstance;
   readonly schema: S;
   /** The queue's ARN. It is an output ref, which deploy replaces with the real value. */
-  readonly arn: string;
+  readonly arn: OutputRef<string>;
   /** The queue's URL. It is an output ref, which deploy replaces with the real value. */
-  readonly url: string;
+  readonly url: OutputRef<string>;
 
   constructor({ schema, ...config }: QueueConfig<S>) {
     assertId("queue()", config.id);
@@ -228,9 +229,9 @@ function assertBatchOptions(
 }
 
 // The type of a queue from queue() is in its config. A FIFO queue's name ends
-// in .fifo, so the ARN of another queue tells its type. The ARN of a queue
-// from queue() is an output ref, which is not known until deploy, so it is
-// not checked.
+// in .fifo, so the ARN of another queue tells its type. An ARN that is an
+// output ref or a derived value is not known until deploy, so it is not
+// checked.
 function assertDeadLetterQueueType(
   id: string,
   fifo: boolean,

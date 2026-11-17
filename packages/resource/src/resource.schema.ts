@@ -1,5 +1,6 @@
 import type {
   DeepPartial,
+  DeepPartialValue,
   OmitOptional,
   PickOptional,
   Simplify,
@@ -55,8 +56,18 @@ export type SchemaItem<T = any> = {
        * contribution, sorted by content so that their order never depends
        * on the order code ran in. `collect` is not called when there are no
        * items.
+       *
+       * `contribute` takes the type of the items that the rule declares. A
+       * rule that joins lists declares whole items, such as
+       * `(items: Binding[][]) => items.flat()`, so that each contribution
+       * gives every required field.
        */
-      collect?: (items: DeepPartial<T>[], context: CollectContext) => T;
+      // A method, so that a rule can declare items narrower than
+      // `CollectItem<T>`. A method's parameter is bivariant, so this also
+      // lets through any item type that `CollectItem<T>` is assignable to,
+      // such as a wider type or one with other optional fields, and
+      // `contribute` then takes it.
+      collect?(items: CollectItem<T>[], context: CollectContext): T;
       /**
        * Marks the param as the resource's physical name. Deploy fills it
        * with a name generated from the resource ID that fits the rule. The
@@ -165,6 +176,18 @@ export type CreateResult<S extends ResolvedSchema> =
         ([ComputedPrimaryKey<S>] extends [void] ? {} : ComputedPrimaryKey<S>) &
           Credentials<S>
       >;
+
+/**
+ * An item that `collect` receives for a param of type `T`. The fields of an
+ * object are optional, as each item supplies some of them. The items of an
+ * array are required, as an `undefined` item stays in a merged list.
+ */
+// An object param gives `DeepPartial<T>`, a mapped type, from which a call
+// of `mergeContributions` infers its `T`.
+type CollectItem<T> =
+  NonNullable<T> extends readonly unknown[]
+    ? DeepPartialValue<T>
+    : DeepPartial<T>;
 
 /**
  * The values `contribute` accepts: one per collected param, typed as the

@@ -6,10 +6,11 @@ import { AwsSchema } from "src/resources/utils/types";
 import type {
   PolicyDocument,
   PolicyStatement,
+  ResolvedPolicyStatement,
 } from "src/resources/templates/iam.policy";
 import type { LambdaIamRoleInstance } from "./lambda-role";
 
-export type { PolicyDocument, PolicyStatement };
+export type { PolicyDocument, PolicyStatement, ResolvedPolicyStatement };
 
 /**
  * An inline policy of a Lambda's role. The params hold the policy document
@@ -99,12 +100,11 @@ const lambdaRolePolicySchema = lambdaRolePolicy.defineSchema({
     presence: "required",
     value: policyDocumentValue,
     // Statements are concatenated in the order the engine sorts them into,
-    // so the document does not depend on the order code ran in.
-    collect: (items) => ({
+    // so the document does not depend on the order code ran in. Each
+    // statement is whole, so a contribution gives its required fields.
+    collect: (items: Partial<PolicyDocument>[]) => ({
       Version: "2012-10-17",
-      Statement: items.flatMap(
-        (item) => (item.Statement ?? []) as PolicyStatement[],
-      ),
+      Statement: items.flatMap((item) => item.Statement ?? []),
     }),
   },
 } as const);

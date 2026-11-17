@@ -13,7 +13,10 @@ import type { DeclarationMark, Mark, Marks, ModuleTable } from "./marks";
 /** A reference whose binding resolves to a marked function. */
 export type MarkedReference = Reference & {
   mark: Mark;
-  /** The call or `new` expression that calls the function, if any. */
+  /**
+   * The call, `new` or tagged template expression that calls the function,
+   * if any.
+   */
   call?: Node;
   /** The name of the function, as written, such as `ns.$lambda`. */
   name: string;
@@ -212,8 +215,9 @@ function markOf(
   const holder = callee === node ? parent : ancestors[calleeIndex - 1];
   const call =
     holder &&
-    (holder.type === "CallExpression" || holder.type === "NewExpression") &&
-    holder.callee === callee
+    (((holder.type === "CallExpression" || holder.type === "NewExpression") &&
+      holder.callee === callee) ||
+      (holder.type === "TaggedTemplateExpression" && holder.tag === callee))
       ? holder
       : undefined;
   return { mark, call, name: written };

@@ -1,4 +1,5 @@
 import type * as cf from "@cloudflare/workers-types";
+import type { CredentialRef, Input } from "@notation/resource";
 import type { Json } from "src/json";
 import type { KVNamespaceInstance } from "src/resources/kv/kv-namespace";
 import type { R2BucketInstance } from "src/resources/r2/r2-bucket";
@@ -44,12 +45,14 @@ export type JsonValue<T> = T extends string | number | boolean | null
 /**
  * A value that a Worker can bind: a Durable Object namespace, another Worker
  * (a service binding), a credential of a resource (a Worker secret), a
- * `SecretsStoreSecret`, an R2 bucket, a KV namespace, a value from `json()`
- * or a string (plain text). A credential is typed `string`, so the type
- * does not tell it from plain text.
+ * `SecretsStoreSecret`, an R2 bucket, a KV namespace, a value from `json()`,
+ * or a string (plain text). A plain text binding can be an output ref or a
+ * derived value, such as `` text`${api.url}/callback` ``, which deploy fills
+ * in.
  */
 export type BindingValue =
-  | string
+  | Input<string>
+  | CredentialRef<string>
   | DurableObjectDeclaration<any>
   | SecretsStoreSecretInstance
   | R2BucketInstance
@@ -62,7 +65,9 @@ export type Bindings = Record<string, BindingValue>;
 /**
  * A Cloudflare Worker declared with `$worker` or `worker()`. `E` is the type
  * of the class that the Worker's module exports as its default, from the
- * `entrypoint` option.
+ * `entrypoint` option. In `B`, `$worker` and `worker()` replace each output
+ * ref, credential and derived value with the type of its value, so that the
+ * type of an exported Worker names no type of `@notation/resource`.
  *
  * `E` has no constraint. The class's `env` type depends on the Worker's
  * type, and with a constraint TypeScript resolves the class's base type
@@ -116,7 +121,11 @@ type BindingType<V> =
               ? cf.SecretsStoreSecret
               : string;
 
-/** The `env` type of a Worker's handlers: `WorkerEnv<typeof worker>`. */
+/**
+ * The `env` type of a Worker's handlers: `WorkerEnv<typeof worker>`. A
+ * binding to a string, an output ref, a derived value or a credential is a
+ * `string`.
+ */
 export type WorkerEnv<
   W extends { readonly "~worker": { bindings: Bindings } },
 > = {

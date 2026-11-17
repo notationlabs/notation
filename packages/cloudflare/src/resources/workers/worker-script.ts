@@ -271,7 +271,7 @@ const workerScriptSchema = workerScript.defineSchema({
     propertyType: "param",
     presence: "optional",
     value: v.array(bindingSchema),
-    collect: (items: unknown[]) => items.flat() as WorkerBinding[],
+    collect: (items: WorkerBinding[][]) => items.flat(),
   },
   Secrets: {
     propertyType: "param",
@@ -300,7 +300,7 @@ const workerScriptSchema = workerScript.defineSchema({
     presence: "optional",
     hidden: true,
     value: v.array(transferSourceSchema),
-    collect: (items: unknown[]) => items.flat() as TransferSource[],
+    collect: (items: TransferSource[][]) => items.flat(),
   },
 } as const);
 

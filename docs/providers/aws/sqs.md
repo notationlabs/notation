@@ -145,7 +145,7 @@ To read the dead-letter queue, map it to a function as you would any other queue
 
 `orderQueue.arn` and `orderQueue.url` are output refs: they don't exist until AWS creates the queue, but you can place them in another resource's config now. Notation makes that resource depend on the queue and fills in the real value at deploy. See [Output refs](../../reference/resource.md#output-refs).
 
-An output ref can only be placed whole. Turning it into a string, for example in a template string, throws. To build a value from the queue's ARN, contribute a function that receives `orderQueue.queue` as a dep; see [Function contributions](../../reference/resource.md#function-contributions).
+Each is typed `OutputRef<string>`, so a parameter typed `string` doesn't take it. Turning one into a string, for example in a template literal, throws. To build a value from the queue's ARN, make a derived value with `text` or `map`, such as `` text`${orderQueue.arn}-*` ``; see [Derived values](../../reference/resource.md#derived-values).
 
 ## `sqs.bind(queue, options)`
 

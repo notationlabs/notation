@@ -130,7 +130,18 @@ Deploy sorts the object keys, so the same document always gives the same text. T
 
 The type of each contribution is a `JsonPartial` of the schema's input: every object key is optional, at every depth. So `flags.contribute({ features: { invoices: "yes" } })` is a type error.
 
-A contribution can also hold an output ref, or be a function of the outputs of its deps, as `Resource.contribute` takes. See [Function contributions](../../reference/resource.md#function-contributions). When the function reads an output that does not exist yet, such as on the first deploy of a dep, plan can't tell which keys it sets, and checks the document only at deploy.
+A contribution, and `value`, can also hold an output ref or a [derived value](../../reference/resource.md#derived-values) at any depth. While its ref is unknown, plan shows the key that holds it as unknown, and the other keys stay known:
+
+```ts [infra/config.ts]
+import { text } from "@notation/resource";
+
+// The schema has `namespace: v.string()`
+flags.contribute({
+  namespace: text`kv:${config.outputRef("NamespaceId")}`,
+});
+```
+
+A contribution can also be a function of the outputs of its deps, but function contributions are deprecated; see [Function contributions](../../reference/resource.md#function-contributions). When the function reads an output that does not exist yet, such as on the first deploy of a dep, plan can't tell which keys it sets, and checks the document only at deploy.
 
 ### The schema check
 

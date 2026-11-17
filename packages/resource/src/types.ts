@@ -19,11 +19,26 @@ export type NoInfer<T> = [T][T extends any ? 0 : never];
 export type Simplify<T> = { [K in keyof T]: T[K] } & {};
 
 /**
- * Deeply makes all properties optional.
+ * Deeply makes all properties optional. The items of an array in a property
+ * stay required, as an `undefined` item stays in a merged list.
  */
 export type DeepPartial<T> = {
-  [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
+  [P in keyof T]?: DeepPartialValue<T[P]>;
 };
+
+/**
+ * `DeepPartial` of an object, and an array of `DeepPartialValue` of its
+ * items.
+ */
+// An array is written as an array type, which the type checker expands only
+// when it is read, so a recursive type such as a JSON value ends.
+export type DeepPartialValue<T> = T extends readonly (infer E)[]
+  ? T extends unknown[]
+    ? DeepPartialValue<E>[]
+    : readonly DeepPartialValue<E>[]
+  : T extends object
+    ? DeepPartial<T>
+    : T;
 
 type OptionalKeys<T> = {
   [K in keyof T]: undefined extends T[K] ? never : K;

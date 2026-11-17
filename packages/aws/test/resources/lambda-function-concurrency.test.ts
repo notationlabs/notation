@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-lambda";
-import { ResourceNotFoundError } from "@notation/resource";
+import { ResourceNotFoundError, type DurableObject } from "@notation/resource";
 import { createPlan } from "@notation/reconciler";
 import { MemoryStateBackend, type StateNode } from "@notation/state";
 import { fs } from "@notation/std/resources";
@@ -16,6 +16,7 @@ import { LambdaIamRole } from "src/resources/lambda/lambda-role";
 const fn = {
   output: { FunctionName: "app--prod--orders" },
   schema: {},
+  outputRef() {},
 } as any;
 const key = { FunctionName: "app--prod--orders" };
 
@@ -106,7 +107,7 @@ describe("LambdaFunctionConcurrency", () => {
           id: resource.id,
           type: LambdaFunctionConcurrency.type,
           provider: "test",
-          config: resource.config,
+          config: resource.config as DurableObject,
           params,
           output: params,
           lastOperation: "create",

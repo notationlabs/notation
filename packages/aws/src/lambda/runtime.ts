@@ -5,6 +5,7 @@ import {
   type Lambda,
   type LambdaEvent,
 } from "./declaration";
+import type { ResolvedValues } from "@notation/resource";
 import type { LambdaDeclarationConfig } from "./lambda-declaration";
 
 // The runtime build resolves `@notation/aws/lambda` to this module, through
@@ -20,12 +21,12 @@ export function $lambda<
   const Id extends string,
   E extends LambdaEvent | undefined = undefined,
   Env extends EnvVars = {},
->(config: LambdaDeclarationConfig<Id, E, Env>): Lambda<E, Env> {
+>(config: LambdaDeclarationConfig<Id, E, Env>): Lambda<E, ResolvedValues<Env>> {
   return {
     id: config.id,
     env: createRuntimeEnv(config),
     decode: createDecode(config),
-  } as unknown as Lambda<E, Env>;
+  } as unknown as Lambda<E, ResolvedValues<Env>>;
 }
 
 const infraOnly = (name: string) =>

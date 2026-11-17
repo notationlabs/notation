@@ -39,20 +39,26 @@ import {
   OutputRef,
   createPlanViews,
   deployLookup,
+  deployViews,
+  deriveParamsConfigView,
   forEachOutputRef,
-  hasPendingOutput,
   isDependencyRef,
+  isDerived,
   isOutputRef,
   isOwnNameRef,
+  isStateRef,
   markUnknownOutputRefs,
   planLookup,
   resolveOutputRefs,
   recordedLookup,
-  StateOutputRef,
   stateOutputRef,
+  type AnyOutputRef,
+  type CredentialRef,
+  type DeepInputWith,
   type OutputLookup,
   type PlanViews,
   type RecordedOutputs,
+  type StateRef,
 } from "./output-ref";
 import { ownPhysicalName } from "./physical-name";
 import { getActiveResourceCollection } from "./resource-collection";
@@ -67,8 +73,56 @@ export type { Schema, SchemaItem, DefineResourceApiSchema };
 
 export type ResourceType = `${string}/${string}/${string}`;
 
+/**
+ * The config a resource takes for params `C`: each param takes its value, or
+ * a ref or a derived value at any level. A param also takes a credential of
+ * its type at any level. The top level is a mapped type, so that config
+ * itself is not a ref, and a resource whose params are all optional takes no
+ * options.
+ */
+export type ConfigInput<C> = {
+  [K in keyof C]: DeepInputWith<C[K], "credential">;
+};
+
+/**
+ * The values `contribute` takes for collected params `V`: as config takes,
+ * and a `~state` ref at any level.
+ */
+export type ContributionInput<V> = {
+  [K in keyof V]: DeepInputWith<V[K], "credential" | "state">;
+};
+
+/**
+ * The dependencies as `deriveParams` receives them: each with its config
+ * filled in. An entry can be a view of the dependency, an object whose
+ * prototype is the dependency. So it can differ from the dependency in an
+ * identity check, a `WeakMap` keyed by the dependency doesn't find it, and
+ * a method that reads a private field of the dependency throws on it.
+ * `outputRef`, `credentials` and `~state` run on the dependency.
+ */
+export type ResolvedDependencies<D> = {
+  [K in keyof D]: ResolvedDependency<D[K]>;
+};
+
+/**
+ * One dependency as `deriveParams` receives it, with its config filled in. A
+ * helper that takes `deps.x` types its argument as
+ * `ResolvedDependency<WorkerScriptInstance>`, not `WorkerScriptInstance`,
+ * because the type of `deps.x` leaves out the private members of the
+ * instance. Distributes over a union, so that an optional dependency has its
+ * config filled in too.
+ */
+export type ResolvedDependency<R> = R extends {
+  deriveParams(opts: { config: infer C }): unknown;
+}
+  ? Omit<R, "config"> & { readonly config: C }
+  : R;
+
 /** The options a resource takes after its ID. */
-export type ResourceOpts<C, D> = OptionalIfAllPropertiesOptional<"config", C> &
+export type ResourceOpts<C, D> = OptionalIfAllPropertiesOptional<
+  "config",
+  ConfigInput<C>
+> &
   OptionalIfAllPropertiesOptional<"dependencies", D> & {
     /** See `ParamChecks`. */
     checks?: { [K in keyof C]?: StandardSchemaV1 };
@@ -238,6 +292,10 @@ export interface BaseResource {
    * has ended, or once the resource's params have been read.
    */
   contribute(values: {}): void;
+  /**
+   * @deprecated Contribute values instead. Place an output whole, join it
+   * with `text`, or compute with it in `map` or `all`.
+   */
   contribute<Deps extends Record<string, BaseResource>>(
     compute: ContributionFunction<Deps, {}>,
     options: { deps: Deps },
@@ -278,7 +336,7 @@ export interface BaseResource {
     /** The outputs that `~state` refs resolve to. */
     recordedOutputs?: RecordedOutputs;
   }): Promise<Record<string, unknown>>;
-  /** A token for one of the resource's outputs, to place whole in config. */
+  /** See `Resource.outputRef`. */
   outputRef(key: string): unknown;
   /** See `Resource.credentials`. */
   readonly credentials: {};
@@ -286,7 +344,7 @@ export interface BaseResource {
    * The output refs that the resource's config and its contributions of
    * values hold.
    */
-  getOutputRefs(): OutputRef[];
+  getOutputRefs(): AnyOutputRef[];
   /** See `Resource["~state"]`. */
   readonly "~state": { outputRef(key: string): unknown };
   /**
@@ -302,7 +360,7 @@ export abstract class Resource<
   C extends Record<string, any> = T["params"],
 > implements BaseResource {
   readonly kind: ResourceKind = "resource";
-  config: C;
+  config: ConfigInput<C>;
   readonly checks: ParamChecks;
   id: string;
   declare readonly declaredAt?: string;
@@ -347,10 +405,15 @@ export abstract class Resource<
     context?: ResourceOperationContext,
     deletion?: ResourceDeletion,
   ) => Promise<void>;
+  /**
+   * Receives config with its refs and derived values filled in, and its
+   * dependencies, each with its config filled in. At plan it receives views
+   * of them; see `planParams`.
+   */
   abstract deriveParams(opts: {
     id: string;
     config: C;
-    deps: D;
+    deps: ResolvedDependencies<D>;
   }): Record<string, any> | Promise<Record<string, any>>;
 
   constructor(
@@ -360,13 +423,13 @@ export abstract class Resource<
       dependencies,
       checks,
     }: {
-      config?: C;
+      config?: ConfigInput<C>;
       dependencies?: D;
       checks?: { [K in keyof C]?: StandardSchemaV1 };
     } = {},
   ) {
     this.id = id;
-    this.config = config || ({} as C);
+    this.config = config || ({} as ConfigInput<C>);
     this.checks = (checks ?? {}) as ParamChecks;
     this.dependencies = dependencies || ({} as D);
     // ResourceGroup.add() sets the group later, and does not push it again.
@@ -398,9 +461,18 @@ export abstract class Resource<
    */
   protected checkDeclaration(): void {
     if (this.#collection?.declarationChecks === false) return;
-    const config = this.config as Record<string, unknown>;
+    // A derived value that reads no ref is computed, and the result is
+    // checked.
+    const config = resolveOutputRefs(this.config, () => ({
+      known: false,
+    })) as Record<string, unknown>;
     assertParamFields(this, config);
-    const pending = validateValues(this, config, "declaration", isOutputRef);
+    const pending = validateValues(
+      this,
+      config,
+      "declaration",
+      (value) => isOutputRef(value) || isDerived(value),
+    );
     if (!pending) return;
     // Handled now, so that a rejection before collection awaits it is not
     // reported as unhandled. Collection still fails with it.
@@ -457,37 +529,44 @@ export abstract class Resource<
   }
 
   /**
-   * Returns a token for one of the resource's outputs, typed as the output.
-   * Place it whole in config or in a contribution. The resource holding it
-   * depends on this one, and the real value is filled in at deploy. Turning
-   * it into a string throws: compute with the output in `deriveParams`, or
-   * in a function contribution, which receive real outputs.
+   * Returns a ref to one of the resource's outputs. Place it whole in config
+   * or in a contribution, join it with `text`, or compute with it in `map`.
+   * The resource holding it depends on this one, and the real value is
+   * filled in at deploy. An output that the schema makes optional gives a
+   * ref to a value that can be undefined.
    */
   outputRef<K extends keyof T["output"] & string>(
     key: K,
-  ): NonNullable<T["output"][K]> {
-    return new OutputRef(this, [key]) as any;
+  ): OutputRef<T["output"][K]> {
+    if (this.schema[key]?.propertyType === "credential") {
+      throw new Error(
+        `${key} of ${this.id} is a credential. Use ${this.id}.credentials.${key} for a ref to it.`,
+      );
+    }
+    return new OutputRef(this, [key]);
   }
 
   /**
-   * A token for each of the resource's credentials, typed as the credential.
-   * Place it whole in the config of the resource that takes the credential.
-   * That resource depends on this one, and its operations receive the value
-   * in their params. State holds a marker in place of the value.
+   * A ref to each of the resource's credentials. Place it whole in the
+   * config of the resource that takes the credential. That resource depends
+   * on this one, and its operations receive the value in their params. State
+   * holds a marker in place of the value.
    */
-  get credentials(): T["credentials"] {
-    const refs: Record<string, OutputRef> = {};
+  get credentials(): {
+    [K in keyof T["credentials"]]: CredentialRef<T["credentials"][K]>;
+  } {
+    const refs: Record<string, CredentialRef> = {};
     for (const [key, item] of Object.entries(this.schema)) {
       if (item.propertyType === "credential") {
-        refs[key] = new OutputRef(this, [key]);
+        refs[key] = new OutputRef(this, [key], "credential");
       }
     }
-    return refs as T["credentials"];
+    return refs as any;
   }
 
-  getOutputRefs(): OutputRef[] {
+  getOutputRefs(): AnyOutputRef[] {
     this.#sealed = true;
-    const found: OutputRef[] = [];
+    const found: AnyOutputRef[] = [];
     forEachOutputRef(this.config, (token) => found.push(token));
     for (const contribution of this.#contributions) {
       if ("compute" in contribution) continue;
@@ -513,13 +592,13 @@ export abstract class Resource<
   get "~state"(): {
     outputRef<K extends keyof T["output"] & string>(
       key: K,
-    ): T["output"][K] | undefined;
+    ): StateRef<T["output"][K]>;
   } {
     return {
       outputRef: (key) => {
         const token = stateOutputRef(this, key);
         this.#stateRefTarget = true;
-        return token as any;
+        return token;
       },
     };
   }
@@ -528,7 +607,11 @@ export abstract class Resource<
     return this.#stateRefTarget;
   }
 
-  contribute(values: T["collected"]): void;
+  contribute(values: ContributionInput<T["collected"]>): void;
+  /**
+   * @deprecated Contribute values instead. Place an output whole, join it
+   * with `text`, or compute with it in `map` or `all`.
+   */
   contribute<Deps extends Record<string, BaseResource>>(
     compute: ContributionFunction<Deps, T["collected"]>,
     options: { deps: Deps },
@@ -584,7 +667,7 @@ export abstract class Resource<
     forEachOutputRef(this.config, (token) => {
       // Create and update resolve config with the live output of each ref,
       // which a `~state` ref's target may not have yet.
-      if (token instanceof StateOutputRef) {
+      if (isStateRef(token)) {
         throw new Error(
           `The config of ${this.id} holds a ~state ref to ${token.resource.id}. A ~state ref can only be placed in a contribution.`,
         );
@@ -622,12 +705,13 @@ export abstract class Resource<
     recordedOutputs?: RecordedOutputs;
   } = {}): Promise<T["params"]> {
     this.#sealed = true;
+    const config = this.#resolveRefs(this.config, false, recordedOutputs);
     const derivedParams = await this.deriveParams({
       id: this.id,
-      config: this.config,
-      deps: this.dependencies,
+      config: deriveParamsConfigView(this, config) as C,
+      deps: deployViews(this.dependencies) as ResolvedDependencies<D>,
     });
-    return (await this.#combineParams(derivedParams, {
+    return (await this.#combineParams(config, derivedParams, {
       plan: false,
       excludeContributionsFrom,
       recordedOutputs,
@@ -635,15 +719,19 @@ export abstract class Resource<
   }
 
   /**
-   * At plan, `deriveParams` receives views of its dependencies. Reading the
-   * output of a dependency that has none yet, or a required output that is
-   * missing from a dependency's output, throws `PendingOutput`. When
-   * `deriveParams` reads such an output, the plan cannot tell which params
-   * are known: every param not set in config is unknown. When it reads none,
-   * the plan is exact.
+   * At plan, `deriveParams` receives a view of config, and views of its
+   * dependencies. Reading a value in config that a ref or a derived value
+   * gives, when plan does not know it, throws `PendingOutput`. So does
+   * reading the output of a dependency that has none yet, a required output
+   * that is missing from a dependency's output, or such a value in the
+   * config of a dependency. When `deriveParams` reads such a value, the plan
+   * cannot tell which params are known: every param not set in config is
+   * unknown. When it reads none, the plan is exact.
    *
    * A ref to the resource's own `physicalName` param is an `OwnPhysicalName`
    * in the result, here and in `getParams`, for the reconciler to fill in.
+   * A credential is a credential marker. Reading either of them in the
+   * config that `deriveParams` receives throws.
    */
   async planParams({
     recordedOutputs,
@@ -651,23 +739,19 @@ export abstract class Resource<
     Record<string, unknown>
   > {
     this.#sealed = true;
-    const pending = this.getDependencies().some(hasPendingOutput);
-    if (!pending) {
-      return withoutUndefined(await this.getParams({ recordedOutputs }));
-    }
-
+    const config = this.#resolveRefs(this.config, true, recordedOutputs);
     const views = createPlanViews();
     const derivedParams = await tryAtPlan(views, () =>
       this.deriveParams({
         id: this.id,
-        config: this.config,
-        deps: views.of(this.dependencies),
+        config: deriveParamsConfigView(this, config, views.pending) as C,
+        deps: views.of(this.dependencies) as ResolvedDependencies<D>,
       }),
     );
     if (derivedParams === undefined) {
       return this.#cautiousPlanParams(recordedOutputs);
     }
-    const params = await this.#combineParams(derivedParams, {
+    const params = await this.#combineParams(config, derivedParams, {
       plan: true,
       recordedOutputs,
     });
@@ -704,6 +788,7 @@ export abstract class Resource<
   }
 
   async #combineParams(
+    config: unknown,
     derivedParams: Record<string, unknown>,
     options: {
       plan: boolean;
@@ -713,7 +798,7 @@ export abstract class Resource<
   ): Promise<Record<string, unknown>> {
     const { plan, excludeContributionsFrom, recordedOutputs } = options;
     const params: Record<string, unknown> = {
-      ...this.config,
+      ...(config as Record<string, unknown>),
       ...derivedParams,
     };
     const contributions = await this.#evaluateContributions(
@@ -738,8 +823,9 @@ export abstract class Resource<
   }
 
   /**
-   * Fills in the refs in `value` that are known. A `~state` ref takes its
-   * value from `recordedOutputs`. A ref to the resource's own
+   * Fills in the refs in `value` that are known, and computes the derived
+   * values whose refs are known. A `~state` ref takes its value from
+   * `recordedOutputs`. A ref to the resource's own
    * `physicalName` param becomes an `OwnPhysicalName`, as the name is
    * decided after the params.
    */
@@ -751,7 +837,7 @@ export abstract class Resource<
     const lookup: OutputLookup = plan ? planLookup : deployLookup;
     const lookupRecorded = recordedLookup(recordedOutputs);
     return resolveOutputRefs(value, (token) =>
-      token instanceof StateOutputRef
+      isStateRef(token)
         ? lookupRecorded(token)
         : isOwnNameRef(this, token)
           ? { known: true, value: ownPhysicalName(token.path[0]!) }
@@ -760,10 +846,10 @@ export abstract class Resource<
   }
 
   /**
-   * Runs function contributions. At deploy each one receives its deps. At
-   * plan each one receives views of its deps. When one reads an output that
-   * does not exist yet, plan cannot tell which params it would set, so
-   * `unknown` is set and `#collect` marks every collected param unknown.
+   * Runs function contributions. Each one receives views of its deps, as
+   * `deriveParams` does. When one reads an output that does not exist yet,
+   * plan cannot tell which params it would set, so `unknown` is set and
+   * `#collect` marks every collected param unknown.
    */
   async #evaluateContributions(
     plan: boolean,
@@ -777,7 +863,9 @@ export abstract class Resource<
         continue;
       }
       if (!plan) {
-        const values = contribution.compute({ deps: contribution.deps });
+        const values = contribution.compute({
+          deps: deployViews(contribution.deps),
+        });
         evaluated.items.push({
           values: this.#checkContribution(values),
           contributor: contribution.contributor,
@@ -1113,7 +1201,7 @@ export type ResourceDependenciesBuilder<
     deriveParams: (opts: {
       id: string;
       config: T["params"];
-      deps: Dependencies;
+      deps: ResolvedDependencies<Dependencies>;
     }) => DepAwareParams | Promise<DepAwareParams>,
   ) => ResourceClass<
     T,
@@ -1223,7 +1311,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             constructor(
               id: string,
               args?: {
-                config?: NoInfer<C>;
+                config?: NoInfer<ConfigInput<C>>;
                 dependencies?: NoInfer<D>;
                 checks?: { [K in keyof C]?: StandardSchemaV1 };
               },
@@ -1232,10 +1320,14 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
               this.checkDeclaration();
             }
 
-            async deriveParams(_opts?: { deps: D }) {
+            async deriveParams(input: {
+              id: string;
+              config: C;
+              deps: ResolvedDependencies<D>;
+            }) {
               if (!opts.deriveParams) return {};
               return await opts.deriveParams({
-                config: this.config as any as Partial<T["params"]>,
+                config: input.config as Partial<T["params"]>,
               });
             }
 
@@ -1247,7 +1339,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
                   deriveParams: (opts: {
                     id: string;
                     config: T["params"];
-                    deps: Dependencies;
+                    deps: ResolvedDependencies<Dependencies>;
                   }) => DepAwareParams | Promise<DepAwareParams>,
                 ) {
                   return class DependencyAwareResource extends SimpleResource<
@@ -1257,14 +1349,21 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
                       keyof DepAwareParams | keyof IntrinsicParams
                     >
                   > {
-                    async deriveParams(opts?: { deps: Dependencies }) {
-                      const superParams = await super.deriveParams();
+                    async deriveParams(input: {
+                      id: string;
+                      config: ConfigParams<
+                        T,
+                        keyof DepAwareParams | keyof IntrinsicParams
+                      >;
+                      deps: ResolvedDependencies<Dependencies>;
+                    }) {
+                      const superParams = await super.deriveParams(input);
                       return {
                         ...superParams,
                         ...(await deriveParams({
                           id: this.id,
-                          config: this.config as T["params"],
-                          deps: opts?.deps ?? this.dependencies,
+                          config: input.config as T["params"],
+                          deps: input.deps,
                         })),
                       };
                     }

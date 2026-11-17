@@ -1,4 +1,4 @@
-import { getDeclaredIn, perCollection } from "@notation/resource";
+import { getDeclaredIn, perCollection, type Input } from "@notation/resource";
 import { assertNamespaceId } from "src/id";
 import type {
   DurableObjectClass,
@@ -71,7 +71,7 @@ export type DurableObjectContainerConfig = {
    * Don't put secrets here. The values are stored as plain text in state and
    * shown in plan output.
    */
-  environmentVariables?: Record<string, string>;
+  environmentVariables?: Record<string, Input<string>>;
   network?: {
     /** Cloudflare can't change the mode of an existing application. */
     mode?: "private" | "public";

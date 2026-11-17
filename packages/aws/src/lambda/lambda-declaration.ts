@@ -12,6 +12,7 @@ import {
   type LambdaEvent,
   type LambdaEventKind,
 } from "./declaration";
+import type { ResolvedValues } from "@notation/resource";
 import { ScheduleGroup } from "src/event-bridge/schedule-group";
 import { isLambdaGroup, LambdaGroup, type LambdaConfig } from "./lambda";
 import { assertId, type NameSafe } from "src/id";
@@ -85,7 +86,7 @@ export function $lambda<
   const Id extends string,
   E extends LambdaEvent | undefined = undefined,
   Env extends EnvVars = {},
->(config: LambdaDeclarationConfig<Id, E, Env>): Lambda<E, Env> {
+>(config: LambdaDeclarationConfig<Id, E, Env>): Lambda<E, ResolvedValues<Env>> {
   assertId("$lambda", config.id);
   // The event is evaluated once, on first use, as infra modules that it
   // refers to may still be loading when $lambda is called.
@@ -93,9 +94,19 @@ export function $lambda<
   const getEvent = () => (event ??= { value: config.event?.() }).value;
   const declaration = {
     id: config.id,
-    env: () => (config.env?.() ?? {}) as Env,
+    // The infra build of a runtime module keeps only the declaration and the
+    // statements it uses, so a call in the handler, or at the top level of the
+    // module, never runs here. A call that does run here is in infra code, or
+    // in a test that imports the module without the `notation-runtime`
+    // condition. The declared values can be refs there, which only deploy
+    // resolves, so this throws instead of returning them as strings.
+    env: () => {
+      throw new Error(
+        `env() of the Lambda "${config.id}" was called outside the function. env() reads the function's environment variables, so it works only in the runtime build of @notation/aws/lambda, which the deployed function loads. To call env() in a test, run the test with the "notation-runtime" export condition, so that it imports the runtime build.`,
+      );
+    },
     decode: createDecode({ event: getEvent }),
-  } as unknown as Lambda<E, Env>;
+  } as unknown as Lambda<E, ResolvedValues<Env>>;
   let built: { group: LambdaGroup } | { error: unknown } | undefined;
   // A build that throws throws the same error on each later call, so the
   // group isn't made twice, or returned without its event's resources.

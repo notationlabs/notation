@@ -627,6 +627,23 @@ describe("Bundle", () => {
     );
   });
 
+  it("fails when the output calls text, a @resource tag, from @notation/resource", async () => {
+    // The build resolves the link to the package's dist, so the package must
+    // have been built.
+    mkdirSync(path.join(root, "node_modules/@notation"), { recursive: true });
+    symlinkSync(
+      fileURLToPath(new URL("../../resource", import.meta.url)),
+      path.join(root, "node_modules/@notation/resource"),
+    );
+    write(
+      "src/worker.ts",
+      `import { text } from "@notation/resource";\nexport default { fetch(request) { return text\`\${request.url}/x\`; } };`,
+    );
+    await expect(worker().deriveParams()).rejects.toThrow(
+      "text from @notation/resource/dist/index.js can't be used in bundle:router, because text() declares infrastructure",
+    );
+  });
+
   it("fails when the output renders a @declaration export of a package", async () => {
     write(
       "node_modules/fn-lib/package.json",

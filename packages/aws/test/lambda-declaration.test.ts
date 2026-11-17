@@ -3,8 +3,12 @@ import type { APIGatewayProxyEventV2, SQSEvent, SQSRecord } from "aws-lambda";
 import { setConfigFile } from "@notation/core";
 import {
   collectResourceGraph,
+  credentialMarker,
+  resource,
+  text,
   type StandardSchemaV1,
 } from "@notation/resource";
+import * as v from "valibot";
 import * as infra from "src/lambda";
 import {
   $lambda,
@@ -12,6 +16,7 @@ import {
   DecodeError,
   sqs,
   type JwtClaims,
+  type LambdaEnv,
   type LambdaHandler,
   type SqsOptions,
 } from "src/lambda";
@@ -108,6 +113,52 @@ test("env is set as the function's environment variables", async () => {
   });
 });
 
+const Token = resource<{
+  Key: { Id: string };
+  CreateParams: {};
+  UpdateParams: {};
+  ReadResult: { Id: string };
+}>({ type: "test/lambda-declaration/token", provider: "test" })
+  .defineSchema({
+    Id: {
+      propertyType: "computed",
+      value: v.string(),
+      presence: "required",
+      primaryKey: true,
+    },
+    Value: { propertyType: "credential", value: v.string() },
+  })
+  .defineOperations({
+    create: async () => ({ Id: "1", Value: "secret" }),
+    delete: async () => undefined,
+  });
+
+test("a credential in env is set as an environment variable", async () => {
+  const graph = await collectResourceGraph(() => {
+    const token = new Token("token");
+    token.setOutput({
+      Id: "1",
+      Value: credentialMarker("token", "Value", "v1"),
+    } as { Id: string });
+    inModule(
+      $lambda({
+        id: "orders",
+        env: () => ({ TOKEN: token.credentials.Value }),
+      }),
+    );
+  });
+  const group = lambdaGroup(graph, "orders");
+  group.role.setOutput({ Arn: "arn:role" } as any);
+  group.fn.dependencies.zipFile.setOutput({
+    filePath: "orders.zip",
+    fileSha256: "sha",
+  } as any);
+
+  expect((await group.fn.getParams()).Environment).toEqual({
+    Variables: { TOKEN: credentialMarker("token", "Value", "v1") },
+  });
+});
+
 test("a declaration without env sets no environment", async () => {
   const graph = await collectResourceGraph(() => {
     inModule($lambda({ id: "orders" }));
@@ -165,13 +216,15 @@ test("a duplicate id names $lambda in the error", async () => {
   ).rejects.toThrow('Duplicate $lambda id "orders"');
 });
 
-test("env() in infra returns the evaluated env", () => {
+test("env() outside the function throws", () => {
   const fn = $lambda({
     id: "orders",
     env: () => ({ TABLE: "orders" }),
   });
 
-  expect(fn.env()).toEqual({ TABLE: "orders" });
+  expect(() => fn.env()).toThrow(
+    'env() of the Lambda "orders" was called outside the function.',
+  );
 });
 
 test("decode() returns an SQS record with its body decoded", async () => {
@@ -277,7 +330,7 @@ test("a declaration types its handler, env() and decode()", () => {
   expectTypeOf<
     Parameters<LambdaHandler<typeof sqsLambda>>[0]
   >().toEqualTypeOf<SQSEvent>();
-  expectTypeOf(sqsLambda.env()).toEqualTypeOf<
+  expectTypeOf<ReturnType<typeof sqsLambda.env>>().toEqualTypeOf<
     Readonly<{ TABLE: string; STAGE: string }>
   >();
   const decodeRecord = (item: SQSRecord) => sqsLambda.decode(item);
@@ -286,10 +339,43 @@ test("a declaration types its handler, env() and decode()", () => {
   expectTypeOf<DecodedRecord["messageId"]>().toEqualTypeOf<string>();
 
   // @ts-expect-error the key is misspelt
-  sqsLambda.env().TABEL;
+  type Misspelt = ReturnType<typeof sqsLambda.env>["TABEL"];
 
   // @ts-expect-error env values are strings
   $lambda({ id: "numbers", env: () => ({ N: 1 }) });
+});
+
+test("LambdaEnv and env() give the values of output refs and derived values", () => {
+  const fn = $lambda({
+    id: "orders",
+    env: () => ({
+      QUEUE_URL: orders.url,
+      DLQ_ARN: text`${orders.arn}-dlq`,
+      HOST: orders.url.map((url) => new URL(url).host),
+    }),
+  });
+  type Env = { QUEUE_URL: string; DLQ_ARN: string; HOST: string };
+
+  expectTypeOf<LambdaEnv<typeof fn>>().toEqualTypeOf<Readonly<Env>>();
+  expectTypeOf<ReturnType<typeof fn.env>>().toEqualTypeOf<Readonly<Env>>();
+
+  $lambda({
+    id: "lengths",
+    // @ts-expect-error env takes a ref to a string
+    env: () => ({ N: orders.url.map((u) => u.length) }),
+  });
+});
+
+test("LambdaEnv and env() give a credential as a string", () => {
+  const token = new Token("token");
+  const fn = $lambda({
+    id: "orders",
+    env: () => ({ TOKEN: token.credentials.Value, STAGE: "dev" }),
+  });
+  type Env = { TOKEN: string; STAGE: string };
+
+  expectTypeOf<LambdaEnv<typeof fn>>().toEqualTypeOf<Readonly<Env>>();
+  expectTypeOf<ReturnType<typeof fn.env>>().toEqualTypeOf<Readonly<Env>>();
 });
 
 test("an SQS handler can return batch item failures only when the mapping reports them", () => {
