@@ -15,6 +15,7 @@ import {
 } from "./infra-strip";
 import type { ImportBinding, Mark } from "./marks";
 import { isProjectModule, type ModuleAnalyses } from "./modules";
+import { describeOutputRead, findOutputRead } from "./output-reads";
 import { describeProvided, providerOfModule } from "./platforms";
 import { stripForRuntime } from "./runtime-strip";
 
@@ -249,6 +250,8 @@ export type RuntimePluginOptions = {
  * 4. Fails the build if an infra module, or an infra function from a
  *    package, is still in the bundle, and names the import chain.
  * 5. Fails the build if a shared module in the bundle breaks its rules.
+ * 6. Fails the build if the code reads an output of a declaration, such as
+ *    `api.url` of a `$worker`, which is known only at deploy.
  *
  * The build's input options must set `optimization: { inlineConst: false }`.
  * Otherwise the bundler copies a short constant, such as `"eu"`, from an
@@ -320,6 +323,8 @@ export function runtimePlugin({
           show: (file) =>
             file === resolvedEntryId ? undefined : analyses.show(file),
         });
+        const read = findOutputRead(output.modules, analyses);
+        if (read) this.error(describeOutputRead(read));
       }
     },
   };
@@ -566,6 +571,8 @@ export function bundlePlugin({
               ? file.slice(generated.length)
               : analyses.show(file),
         });
+        const read = findOutputRead(output.modules, analyses);
+        if (read) this.error(describeOutputRead(read));
       }
     },
   };

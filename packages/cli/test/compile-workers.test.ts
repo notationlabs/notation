@@ -65,7 +65,7 @@ function writeCloudflarePackage() {
       `  (globalThis.namespaces ??= []).push(namespace);`,
       `  return namespace;`,
       `}`,
-      `/** @declaration shared: id, bindings; runtime: entrypoint; entryOption: entrypoint; keys: bindings; entry: default; platform: workerd */`,
+      `/** @declaration shared: id, bindings; runtime: entrypoint; entryOption: entrypoint; keys: bindings; entry: default; platform: workerd; outputs: url */`,
       `export function $worker(config) {`,
       `  const worker = { kind: "INFRA_WORKER", id: config.id, bindings: config.bindings, check: () => checkExports(worker, config) };`,
       `  (globalThis.workers ??= []).push(worker);`,
@@ -378,6 +378,85 @@ export default {
     await expect(build()).rejects.toThrow(
       "runtime/router.ts calls worker at its top level, and it holds a declaration, so it can't be an infra module. Move the call to worker to an infra module.",
     );
+  });
+});
+
+describe("a read of a Worker's url in Worker code", () => {
+  const message = (at: string, read: string, id: string) =>
+    `${at} reads ${read}, an output of $worker({ id: "${id}" }). An output is known only at deploy, so Worker code can't read it. Bind it to the Worker that needs it, and read it from env.`;
+
+  const callerModule = (imports: string, read: string) => `
+import { $worker } from "@notation/cloudflare/workers";
+${imports}
+
+export const caller = $worker({ id: "caller" });
+
+export default {
+  async fetch() {
+    return new Response(String(${read}));
+  },
+};
+`;
+
+  function writeUrlProject(caller: string) {
+    writeProject();
+    write("runtime/caller.ts", caller);
+  }
+
+  it("fails the build for a read in the Worker's own module, with the file and line", async () => {
+    writeProject();
+    write(
+      "runtime/api.ts",
+      apiModule(reexport).replace(
+        "return new Response(",
+        "if (!worker.url) return new Response();\n    return new Response(",
+      ),
+    );
+    await expect(build()).rejects.toThrow(
+      message("runtime/api.ts:15", "worker.url", "api"),
+    );
+  });
+
+  it("fails the build for a read of another Worker's url through an import alias", async () => {
+    writeUrlProject(
+      callerModule(`import { worker as api } from "./api";`, "api.url"),
+    );
+    await expect(build()).rejects.toThrow(
+      message("runtime/caller.ts:9", "api.url", "api"),
+    );
+  });
+
+  it("follows a re-export, a namespace import and a const alias", async () => {
+    writeUrlProject(
+      callerModule(
+        `import * as workers from "./workers";\nconst target = workers.api;`,
+        "target.url",
+      ),
+    );
+    write("runtime/workers.ts", `export { worker as api } from "./api";`);
+    await expect(build()).rejects.toThrow(
+      message("runtime/caller.ts:10", "target.url", "api"),
+    );
+  });
+
+  it("fails the build for a destructured read", async () => {
+    writeUrlProject(
+      callerModule(
+        `import { worker } from "./api";\nconst { url } = worker;`,
+        "url",
+      ),
+    );
+    await expect(build()).rejects.toThrow(
+      message("runtime/caller.ts:4", "worker.url", "api"),
+    );
+  });
+
+  it("builds a Worker that reads a property that isn't an output", async () => {
+    writeUrlProject(
+      callerModule(`import { worker as api } from "./api";`, "api.id"),
+    );
+    await build();
+    expect(read("dist/runtime/caller/index.mjs")).toContain(`"api"`);
   });
 });
 

@@ -39,6 +39,11 @@ export type DeclarationMark = {
   entryOption?: string;
   /** The platform that runs the function. Defaults to `node`. */
   platform?: PlatformName;
+  /**
+   * Properties of the declaration's value that hold outputs, such as `url`.
+   * They are known only at deploy, so the runtime build fails a read of one.
+   */
+  outputs?: string[];
 };
 
 /**
@@ -128,7 +133,12 @@ export function parseMark(
       .map((part) => part.trim())
       .filter(Boolean)) {
       const [name, value = ""] = clause.split(":").map((part) => part.trim());
-      if (name === "shared" || name === "runtime" || name === "keys") {
+      if (
+        name === "shared" ||
+        name === "runtime" ||
+        name === "keys" ||
+        name === "outputs"
+      ) {
         mark[name] = list(value);
       } else if (name === "entry") {
         if (!value) {
@@ -153,7 +163,7 @@ export function parseMark(
         mark.platform = value;
       } else {
         throw new Error(
-          `${where}: unknown clause "${name}" in the @declaration mark. ${fix("use shared, runtime, keys, entry, entryOption or platform.")}`,
+          `${where}: unknown clause "${name}" in the @declaration mark. ${fix("use shared, runtime, keys, entry, entryOption, platform or outputs.")}`,
         );
       }
     }
