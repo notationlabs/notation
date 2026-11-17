@@ -26,9 +26,7 @@ export function $worker<
   const Id extends string,
   B extends Bindings = {},
   E = undefined,
->(
-  config: WorkerDeclarationConfig<Id, B, E>,
-): Worker<ResolvedValues<B>, E> {
+>(config: WorkerDeclarationConfig<Id, B, E>): Worker<ResolvedValues<B>, E> {
   const declaration = Object.defineProperty({ id: config.id }, "url", {
     enumerable: false,
     get() {
@@ -73,9 +71,6 @@ export function isWorkerGroup(_value: unknown): false {
  * The mark fails the runtime build of a Worker that calls it.
  * @resource
  */
-export function addBindings(
-  _worker: Worker<any>,
-  _bindings: Bindings,
-): never {
+export function addBindings(_worker: Worker<any>, _bindings: Bindings): never {
   throw infraOnly("addBindings()");
 }
