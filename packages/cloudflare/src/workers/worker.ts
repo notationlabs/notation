@@ -608,7 +608,9 @@ function registerWorker(
       return (url ??= deferredOutputRef<string>({
         resourceId: subdomainResourceId(config.id),
         path: ["Url"],
-        resolve: () => entry.build().subdomain!,
+        // Not called during the Worker's own build: `group` isn't set until
+        // the build returns, so the group would be built twice.
+        resolve: () => entry.build().subdomain,
       }));
     },
   });
@@ -738,6 +740,11 @@ function resolveBindings(
     if (typeof value === "string") {
       resolved.bindings.push({ type: "plain_text", name, text: value });
       continue;
+    }
+    if (isStateRef(value)) {
+      throw new Error(
+        `${self.describe()} binds ${name} to the ~state ref ${[value.resourceId, ...value.path].join(".")}. A ~state ref can only be placed whole in a contribution.`,
+      );
     }
     if (isOutputRef(value) || isDerived(value)) {
       resolved.contributedText.push({

@@ -7,7 +7,12 @@ import {
   runDurableWorkflow,
   setConfigFile,
 } from "@notation/core";
-import { createPlan, createResourceRegistry } from "@notation/reconciler";
+import {
+  createPlan,
+  createResourceRegistry,
+  instanceHash,
+  type Overrides,
+} from "@notation/reconciler";
 import * as durable from "@notation/reconciler/durable";
 import { collectResourceGraph, declaredIn } from "@notation/resource";
 import * as std from "@notation/std/resources";
@@ -46,6 +51,9 @@ function fakeCloudflare() {
     if (url.pathname === "/client/v4/accounts/acc/workers/subdomain") {
       return ok({ subdomain: "acme" });
     }
+    if (url.pathname.startsWith("/client/v4/accounts/acc/workers/tails/")) {
+      return ok([]);
+    }
     const route = url.pathname.replace(
       "/client/v4/accounts/acc/workers/scripts",
       "",
@@ -70,6 +78,12 @@ function fakeCloudflare() {
       return ok({});
     }
     if (!worker) return fail(404, 10007, "This Worker does not exist");
+    if (method === "DELETE" && sub === "") {
+      log.push(`delete ${name}`);
+      workers.delete(name);
+      return ok({});
+    }
+    if (method === "GET" && sub === "references") return ok({});
     if (method === "GET" && sub === "settings") {
       return ok({
         compatibility_date: compatibilityDate,
@@ -107,7 +121,7 @@ const registry = createResourceRegistry([
   std.fs.File,
 ]);
 
-async function deploy(executionId: string) {
+async function deploy(executionId: string, overrides?: Overrides) {
   const { resources } = await collectResourceGraph(infra, { scope });
   await runDurableWorkflow(
     { workflowId: "deploy", runtime, executionId },
@@ -118,6 +132,7 @@ async function deploy(executionId: string) {
         registry,
         state: runtime.state,
         ...scope,
+        overrides,
         emit: () => {},
       }),
   );
@@ -202,6 +217,46 @@ describe("a Worker that binds a URL", () => {
       "worker:api": "noop",
       "worker:api:subdomain": "noop",
     });
+  });
+
+  it("updates a Worker that binds another Worker's URL when that Worker is replaced", async () => {
+    infra = () => {
+      const api = inWorker(
+        $worker({ id: "api", compatibilityDate }),
+        "runtime/api.ts",
+      );
+      inWorker(
+        $worker({
+          id: "web",
+          compatibilityDate,
+          bindings: () => ({ API_URL: api.url }),
+        }),
+        "runtime/web.ts",
+      );
+    };
+
+    await deploy("first");
+    const replaced = nameOf("api");
+    const before = urlOf("api");
+    expect(workers.get(nameOf("web"))!.text).toEqual({ API_URL: before });
+
+    const { resources } = await collectResourceGraph(infra, { scope });
+    const hash = instanceHash(
+      runtime.state.deploymentId,
+      resources.find(({ id }) => id === "worker:api")!,
+      (await runtime.state.get("worker:api"))!,
+    );
+    await deploy("replace", {
+      replace: [{ id: "worker:api", instanceHash: hash }],
+    });
+
+    const after = urlOf("api");
+    expect(after).not.toBe(before);
+    expect(workers.has(replaced)).toBe(false);
+    expect(workers.get(nameOf("web"))!.text).toEqual({ API_URL: after });
+    expect(Object.values(await decisions())).toEqual(
+      expect.not.arrayContaining(["create", "update", "replace"]),
+    );
   });
 
   it("binds the URLs of two Workers that bind each other's", async () => {

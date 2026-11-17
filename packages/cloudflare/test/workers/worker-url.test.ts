@@ -308,6 +308,30 @@ describe("URL bindings", () => {
   });
 });
 
+describe("~state refs in bindings", () => {
+  it("throws for a ~state ref, and names the Worker and the binding", async () => {
+    await expect(
+      collect(() => {
+        const namespace = new kv.KVNamespace("config", {
+          config: { Title: "config" },
+        });
+        inWorker(
+          $worker({
+            id: "web",
+            compatibilityDate,
+            bindings: () => ({
+              ACCOUNT: namespace["~state"].outputRef("AccountId") as any,
+            }),
+          }),
+          "runtime/web.ts",
+        );
+      }),
+    ).rejects.toThrow(
+      `$worker({ id: "web" }) in runtime/web.ts binds ACCOUNT to the ~state ref config.AccountId. A ~state ref can only be placed whole in a contribution.`,
+    );
+  });
+});
+
 describe("environmentVariables as a function", () => {
   const container = (env: () => Record<string, Input<string>>) => ({
     image: { context: "containers/room" },

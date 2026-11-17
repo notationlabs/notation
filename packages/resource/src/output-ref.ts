@@ -161,7 +161,7 @@ class OutputRefClass extends Unstringable {
   readonly [outputRefBrand] = true as const;
   readonly resourceId: string;
   #resource: BaseResource | undefined;
-  #resolve: (() => BaseResource) | undefined;
+  #resolve: (() => BaseResource | undefined) | undefined;
   // The collection that was active when a deferred ref was made, if any.
   #collection: ResourceCollection | undefined;
 
@@ -246,9 +246,10 @@ export type DeferredOutputRefOptions = {
   path: readonly string[];
   /**
    * Returns the resource. It is called on the first read of `ref.resource`,
-   * once the infra modules have loaded.
+   * once the infra modules have loaded, and on each later read until it
+   * returns the resource.
    */
-  resolve: () => BaseResource;
+  resolve: () => BaseResource | undefined;
 };
 
 /**
@@ -329,7 +330,8 @@ export function isOwnNameRef(
   owner: BaseResource,
   token: AnyOutputRef,
 ): boolean {
-  if (token.resource !== owner || token.path.length !== 1) return false;
+  if (token.resourceId !== owner.id || token.path.length !== 1) return false;
+  if (token.resource !== owner) return false;
   const item = owner.schema[token.path[0]!];
   return item?.propertyType === "param" && Boolean(item.physicalName);
 }
