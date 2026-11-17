@@ -520,7 +520,7 @@ const scriptName = (script: ResolvedDependency<WorkerScriptInstance>) =>
   script.output.ScriptName;
 ```
 
-#### Dependencies are views
+### Dependencies are views
 
 At plan, every entry of `deps` is a view. At deploy, an entry is a view when the dependency's config holds a ref or a derived value, and the instance otherwise. When an entry is a view:
 
