@@ -45,7 +45,11 @@ const Queue = resource<{
 
 const Fn = resource<{
   Key: { FunctionName: string };
-  CreateParams: { FunctionName: string; Url: string; Environment?: Environment };
+  CreateParams: {
+    FunctionName: string;
+    Url: string;
+    Environment?: Environment;
+  };
   UpdateParams: { Url: string; Environment?: Environment };
   ReadResult: {};
 }>({ type: "test/deferred/function", provider: "test" })

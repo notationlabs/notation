@@ -4,6 +4,7 @@ import { filePaths, fromProjectRoot, toProjectRoot } from "@notation/core";
 import {
   all,
   captureCallSiteLazily,
+  deferredOutputRef,
   evaluationEnded,
   getDeclaredIn,
   isCredentialRef,
@@ -71,7 +72,10 @@ export type WorkerDeclarationConfig<
   compatibilityDate: string;
   /** `nodejs_compat` is always added. */
   compatibilityFlags?: string[];
-  /** Serves the Worker on its workers.dev URL. Defaults to `true`, as in wrangler. */
+  /**
+   * Serves the Worker on its workers.dev URL. Defaults to `true`, as in
+   * wrangler. With `false`, the Worker has no `url`.
+   */
   url?: boolean;
   /**
    * The class that the module exports as its default, such as
@@ -99,6 +103,22 @@ export type WorkerConfig<
    */
   code: { type: "file"; path: string } | BundleLike;
 };
+
+/**
+ * The `url` of a Worker, unless its `url` option is `false`. A `boolean`
+ * that isn't a literal gives `url`, and a read throws when it is `false`.
+ */
+export type WorkerUrl<U extends boolean> = [U] extends [false]
+  ? {}
+  : {
+      /**
+       * The Worker's workers.dev URL, which deploy fills in. Place it whole
+       * in config, in a contribution or in a binding, or compute with it in
+       * `text`, `map` or `all`. Worker code can't read it: bind it, and read
+       * it from `env`.
+       */
+      readonly url: OutputRef<string>;
+    };
 
 /** The module that a Worker uploads: a file, or code declared elsewhere. */
 export type WorkerGroupCode =
@@ -200,10 +220,9 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
     );
     if (config.url) {
       this.subdomain = this.add(
-        new cloudflare.workers.WorkerSubdomain(
-          `worker:${config.id}:subdomain`,
-          { dependencies: { script: this.script } },
-        ),
+        new cloudflare.workers.WorkerSubdomain(subdomainResourceId(config.id), {
+          dependencies: { script: this.script },
+        }),
       );
     }
     // The ids don't depend on the Worker, so that when the namespace moves
@@ -240,6 +259,7 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
   }
 }
 
+const subdomainResourceId = (id: string) => `worker:${id}:subdomain`;
 const containerResourceId = (namespaceId: string) => `container:${namespaceId}`;
 const containerImageResourceId = (namespaceId: string) =>
   `container:${namespaceId}:image`;
@@ -316,13 +336,17 @@ export function $worker<
   const Id extends string,
   B extends Bindings = {},
   E = undefined,
->(config: WorkerDeclarationConfig<Id, B, E>): Worker<ResolvedValues<B>, E> {
+  const U extends boolean = true,
+>(
+  config: WorkerDeclarationConfig<Id, B, E> & { url?: U },
+): Worker<ResolvedValues<B>, E> & WorkerUrl<U> {
   assertWorkerId("$worker", config.id);
   assertCompatibilityDate(`$worker({ id: "${config.id}" })`, config);
   const declaration = { id: config.id } as unknown as Worker<
     ResolvedValues<B>,
     E
-  >;
+  > &
+    WorkerUrl<U>;
   registerWorker(config, {
     declaration,
     describe: () => {
@@ -364,7 +388,10 @@ export function worker<
   const Id extends string,
   B extends Bindings = {},
   E = undefined,
->(config: WorkerConfig<Id, B, E>): Worker<ResolvedValues<B>, E> {
+  const U extends boolean = true,
+>(
+  config: WorkerConfig<Id, B, E> & { url?: U },
+): Worker<ResolvedValues<B>, E> & WorkerUrl<U> {
   assertWorkerId("worker()", config.id);
   const label = `worker({ id: "${config.id}" })`;
   assertCompatibilityDate(label, config);
@@ -372,7 +399,8 @@ export function worker<
   const declaration = { id: config.id } as unknown as Worker<
     ResolvedValues<B>,
     E
-  >;
+  > &
+    WorkerUrl<U>;
   if (!isBundle(code)) {
     if (code?.type !== "file" || typeof code.path !== "string" || !code.path) {
       throw new Error(
@@ -514,6 +542,11 @@ function registerWorker(
       // A binding of the Worker to itself refers to its own name, which is
       // no dependency.
       const script = group.script;
+      // A plain text binding to an output ref is a contribution too, so that
+      // a Worker can bind its own URL, or two Workers each other's.
+      if (resolved.contributedText.length > 0) {
+        script.contribute({ Bindings: resolved.contributedText });
+      }
       for (const { name, worker } of resolved.services) {
         worker.whenBuilt((bound) =>
           script.contribute({
@@ -555,6 +588,23 @@ function registerWorker(
   };
   Object.defineProperty(source.declaration, workerRegistration, {
     value: entry,
+  });
+  // The subdomain is built with the Worker, once every module has loaded, so
+  // `url` is a deferred ref. It is not enumerable, as the registration isn't.
+  let url: OutputRef<string> | undefined;
+  Object.defineProperty(source.declaration, "url", {
+    get: () => {
+      if (config.url === false) {
+        throw new Error(
+          `url was read on ${entry.describe()}, which sets url: false, so it has no workers.dev URL. Remove url: false, or bind the Worker as a service.`,
+        );
+      }
+      return (url ??= deferredOutputRef<string>({
+        resourceId: subdomainResourceId(config.id),
+        path: ["Url"],
+        resolve: () => entry.build().subdomain!,
+      }));
+    },
   });
   const workers = declaredWorkers();
   if (workers) {
@@ -645,6 +695,8 @@ type ResolvedBindings = {
   transferSources: { id: string; binders: Entry[] }[];
   /** The Workers that the Worker binds as services, itself included. */
   services: { name: string; worker: Entry }[];
+  /** The plain text bindings to an output ref or a derived value. */
+  contributedText: DeepInput<cloudflare.workers.WorkerBinding>[];
   containers: WorkerGroupContainer[];
 };
 
@@ -665,6 +717,7 @@ function resolveBindings(
     bound: [],
     transferSources: [],
     services: [],
+    contributedText: [],
     containers: [],
   };
   for (const [name, value] of Object.entries(self.bindings())) {
@@ -677,8 +730,16 @@ function resolveBindings(
         `${self.describe()} binds ${name} to a ~state ref. A binding needs a value at deploy, so use outputRef().`,
       );
     }
-    if (typeof value === "string" || isOutputRef(value) || isDerived(value)) {
+    if (typeof value === "string") {
       resolved.bindings.push({ type: "plain_text", name, text: value });
+      continue;
+    }
+    if (isOutputRef(value) || isDerived(value)) {
+      resolved.contributedText.push({
+        type: "plain_text",
+        name,
+        text: value as DeepInput<string>,
+      });
       continue;
     }
     const namespace = registeredNamespace(value);
@@ -827,6 +888,10 @@ function containerOf(
   container: DurableObjectContainerConfig,
 ): WorkerGroupContainer {
   const { image, network } = container;
+  const environmentVariables =
+    typeof container.environmentVariables === "function"
+      ? container.environmentVariables()
+      : container.environmentVariables;
   return {
     namespaceId,
     image: {
@@ -847,10 +912,11 @@ function containerOf(
             ? undefined
             : { size_mb: container.diskMb },
         environment_variables:
-          container.environmentVariables &&
-          Object.entries(container.environmentVariables).map(
-            ([name, value]) => ({ name, value }),
-          ),
+          environmentVariables &&
+          Object.entries(environmentVariables).map(([name, value]) => ({
+            name,
+            value,
+          })),
         network:
           network &&
           definedValues({

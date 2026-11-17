@@ -70,8 +70,15 @@ export type DurableObjectContainerConfig = {
   /**
    * Don't put secrets here. The values are stored as plain text in state and
    * shown in plan output.
+   *
+   * A function is called once every infra module has loaded, so it can name
+   * a Worker that is declared later, such as the Worker that hosts the
+   * namespace: `(): Record<string, Input<string>> => ({ URL: api.url })`.
+   * Annotate its return type when it names a Worker that binds the
+   * namespace, as the types of the two would otherwise depend on each other.
    */
-  environmentVariables?: Record<string, Input<string>>;
+  environmentVariables?:
+    Record<string, Input<string>> | (() => Record<string, Input<string>>);
   network?: {
     /** Cloudflare can't change the mode of an existing application. */
     mode?: "private" | "public";
