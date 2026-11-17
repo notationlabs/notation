@@ -840,9 +840,8 @@ export abstract class Resource<
   }
 
   /**
-   * Runs function contributions. At deploy each one receives its deps. At
-   * plan each one receives views of its deps. When one reads an output that
-   * does not exist yet, plan cannot tell which params it would set, so
+   * Runs function contributions. Each one receives views of its deps, as
+   * `deriveParams` does. When one reads an output that does not exist yet, plan cannot tell which params it would set, so
    * `unknown` is set and `#collect` marks every collected param unknown.
    */
   async #evaluateContributions(
@@ -857,7 +856,9 @@ export abstract class Resource<
         continue;
       }
       if (!plan) {
-        const values = contribution.compute({ deps: contribution.deps });
+        const values = contribution.compute({
+          deps: deployViews(contribution.deps),
+        });
         evaluated.items.push({
           values: this.#checkContribution(values),
           contributor: contribution.contributor,

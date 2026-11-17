@@ -19,8 +19,9 @@ export type CollectContext = {
 };
 
 /**
- * A contribution computed from the outputs of `deps`. At deploy it receives
- * the deps. At plan it receives views of the deps; see `createPlanViews`.
+ * A contribution computed from the outputs of `deps`. It receives views of
+ * the deps, with their config filled in. See `deployViews` and
+ * `createPlanViews`.
  */
 export type ContributionFunction<Deps, Values> = (context: {
   deps: Deps;

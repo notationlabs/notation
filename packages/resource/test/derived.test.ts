@@ -592,6 +592,35 @@ describe("deriveParams", () => {
   });
 });
 
+describe("function contributions", () => {
+  it("receive the config of their deps with refs filled in, at plan and at deploy", async () => {
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    const target = new Fn("target", {
+      config: { Url: text`${queue.outputRef("QueueUrl")}/x` },
+    });
+    target.setOutput({ FunctionName: "target", FunctionArn: "arn" } as any);
+    const fn = new Fn("fn", { config: { Url: "https://x" } });
+    fn.contribute(
+      ({ deps }) => ({
+        Environment: {
+          Variables: { HOST: hostOf(deps.target.config.Url) },
+        },
+      }),
+      { deps: { target } },
+    );
+
+    expect((await fn.planParams()).Environment).toEqual(UNKNOWN_AFTER_APPLY);
+    queue.setOutput({
+      QueueUrl: "https://sqs/orders",
+      QueueName: "orders",
+      QueueArn: "arn",
+    });
+    const expected = { Variables: { HOST: "sqs" } };
+    expect((await fn.planParams()).Environment).toEqual(expected);
+    expect((await fn.getParams()).Environment).toEqual(expected);
+  });
+});
+
 describe("deriveParams with a marker in config", () => {
   type NamedConfig = { Label?: string | string[]; Secret?: string };
   const named = (
