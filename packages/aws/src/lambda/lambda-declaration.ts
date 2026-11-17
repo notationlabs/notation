@@ -102,7 +102,7 @@ export function $lambda<
     // resolves, so this throws instead of returning them as strings.
     env: () => {
       throw new Error(
-        `env() of the Lambda "${config.id}" was called outside the function. env() reads the function's environment variables, so it works only in the runtime build of @notation/aws/lambda, which the deployed function loads. A test that imports the function's module loads the runtime build when it resolves imports with the "notation-runtime" export condition.`,
+        `env() of the Lambda "${config.id}" was called outside the function. env() reads the function's environment variables, so it works only in the runtime build of @notation/aws/lambda, which the deployed function loads. To call env() in a test, run the test with the "notation-runtime" export condition, so that it imports the runtime build.`,
       );
     },
     decode: createDecode({ event: getEvent }),
