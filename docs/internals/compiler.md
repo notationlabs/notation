@@ -363,7 +363,7 @@ An output, such as a Worker's URL, is known only at deploy. A value from an infr
 In `generateBundle`, `runtimePlugin` and `bundlePlugin` call `findOutputRead` in `packages/build/src/output-reads.ts`. It looks at each project module in the chunk that renders code. For each reference in the module, it takes the outermost member expression with static keys, such as `api.url` or `api["url"]`. It resolves the name at its root with the resolver of the runtime strip, and fails the build when the value is the declaration call of its module and the next key is in the mark's `outputs:` clause:
 
 - The name is the module's own declaration, a named import of one, or a namespace import whose first key names one, such as `workers.api.url`. The resolver follows imports under another name, re-exports and `export * from`.
-- A reference in the declaration's own options is left out, because the runtime strip removes or checks those options.
+- A reference in an option that the strip removes, or in a `keys:` option, is left out.
 
 ```
 runtime/api.ts:14 reads api.url, an output of $worker({ id: "api" }). An output is known only at deploy, so Worker code can't read it. Bind it to the Worker that needs it, and read it from env.
