@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { readEntryExports } from "@notation/build";
 import { filePaths, fromProjectRoot, toProjectRoot } from "@notation/core";
 import {
+  all,
   captureCallSiteLazily,
   evaluationEnded,
   getDeclaredIn,
@@ -39,6 +40,7 @@ import {
   type DurableObjectContainerConfig,
   type Registered,
 } from "./durable-object";
+import type { Jurisdiction } from "src/api/r2";
 import { isJsonBinding } from "./json";
 
 // Always set: the build imports Node's built-in modules as `node:` modules,
@@ -722,20 +724,23 @@ function resolveBindings(
     if (hasResourceType(value, "cloudflare/r2/R2Bucket")) {
       const bucket = value as cloudflare.r2.R2BucketInstance;
       // The name is an output ref, so that the Worker depends on the bucket.
-      // The jurisdiction decides whether the binding has the key, so it must
-      // be known when the bindings are resolved.
+      // The jurisdiction decides whether the binding has the key. When it is
+      // a ref or a derived value, the whole binding is a derived value, so
+      // plan shows the binding as unknown until the jurisdiction is known.
+      const bucketName = bucket.outputRef("BucketName");
       const jurisdiction = bucket.config.Jurisdiction;
-      if (isOutputRef(jurisdiction) || isDerived(jurisdiction)) {
+      if (isCredentialRef(jurisdiction)) {
         throw new Error(
-          `${self.describe()} binds ${name} to the R2 bucket ${bucket.id}, whose Jurisdiction is an output ref or a derived value. The binding needs the jurisdiction before deploy, so set it as a value.`,
+          `${self.describe()} binds ${name} to the R2 bucket ${bucket.id}, whose Jurisdiction is a credential. A binding records its jurisdiction as a plain param, so set it as a value or an output ref.`,
         );
       }
-      resolved.bindings.push({
-        type: "r2_bucket",
-        name,
-        bucket_name: bucket.outputRef("BucketName"),
-        ...(jurisdiction !== "default" ? { jurisdiction } : {}),
-      });
+      resolved.bindings.push(
+        typeof jurisdiction === "string"
+          ? r2Binding(name, bucketName, jurisdiction)
+          : all([jurisdiction, bucketName]).map(([jurisdiction, bucketName]) =>
+              r2Binding(name, bucketName, jurisdiction),
+            ),
+      );
       continue;
     }
     if (hasResourceType(value, "cloudflare/kv/KVNamespace")) {
@@ -770,6 +775,21 @@ function resolveBindings(
     );
   }
   return resolved;
+}
+
+// Cloudflare takes no jurisdiction key for a bucket in the default
+// jurisdiction.
+function r2Binding<T extends string | OutputRef<string>>(
+  name: string,
+  bucketName: T,
+  jurisdiction: Jurisdiction,
+) {
+  return {
+    type: "r2_bucket" as const,
+    name,
+    bucket_name: bucketName,
+    ...(jurisdiction !== "default" ? { jurisdiction } : {}),
+  };
 }
 
 // Compared by type, not instanceof, so that a resource from another loaded

@@ -383,16 +383,97 @@ describe("$worker", () => {
     ]);
   });
 
-  it("fails for an R2 bucket whose jurisdiction is an output ref", async () => {
+  describe("an R2 bucket whose jurisdiction is a derived value", () => {
+    let cache!: InstanceType<typeof kv.KVNamespace>;
+    let uploads!: InstanceType<typeof r2.R2Bucket>;
+    let api!: WorkerGroup;
+
+    beforeEach(async () => {
+      const graph = await collect(() => {
+        cache = new kv.KVNamespace("cache", { config: { Title: "cache" } });
+        uploads = new r2.R2Bucket("uploads", {
+          config: {
+            BucketName: "uploads",
+            Jurisdiction: cache
+              .outputRef("NamespaceId")
+              .map((id) => (id === "ns-eu" ? "eu" : "default")),
+            StorageClass: "Standard",
+          },
+        });
+        inWorker(
+          $worker({
+            id: "api",
+            compatibilityDate,
+            bindings: () => ({ GREETING: "hi", UPLOADS: uploads }),
+          }),
+          "runtime/api.ts",
+        );
+      });
+      api = group(graph, "api");
+    });
+
+    it("shows the binding as unknown at plan", async () => {
+      vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "account");
+      try {
+        api.code.setOutput({
+          filePath: "dist/runtime/api/index.mjs",
+          sourceSha256: "hex",
+          fileSha256: "sha",
+        });
+        const known = await planKnownParams(
+          api.script,
+          { get: async () => undefined },
+          "plan",
+          {},
+        );
+        expect(() =>
+          decideAction({
+            resource: api.script,
+            stateNode: known.stateNode,
+            params: known.params,
+          }),
+        ).not.toThrow();
+        expect(known.params.Bindings).toEqual([
+          { type: "plain_text", name: "GREETING", text: "hi" },
+          UNKNOWN_AFTER_APPLY,
+        ]);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it("binds the bucket with its jurisdiction at deploy", async () => {
+      cache.setOutput({ NamespaceId: "ns-eu" } as any);
+      uploads.setOutput({ BucketName: "uploads" } as any);
+      expect((await deployParams(api, [])).Bindings).toEqual([
+        { type: "plain_text", name: "GREETING", text: "hi" },
+        {
+          type: "r2_bucket",
+          name: "UPLOADS",
+          bucket_name: "uploads",
+          jurisdiction: "eu",
+        },
+      ]);
+    });
+
+    it("binds the bucket without a jurisdiction at deploy when it is the default", async () => {
+      cache.setOutput({ NamespaceId: "ns-default" } as any);
+      uploads.setOutput({ BucketName: "uploads" } as any);
+      expect((await deployParams(api, [])).Bindings).toEqual([
+        { type: "plain_text", name: "GREETING", text: "hi" },
+        { type: "r2_bucket", name: "UPLOADS", bucket_name: "uploads" },
+      ]);
+    });
+  });
+
+  it("fails for an R2 bucket whose jurisdiction is a credential", async () => {
     await expect(
       collect(() => {
-        const cache = new kv.KVNamespace("cache", {
-          config: { Title: "cache" },
-        });
+        const source = new TestSource("source", { config: { key: "KEY" } });
         const uploads = new r2.R2Bucket("uploads", {
           config: {
             BucketName: "uploads",
-            Jurisdiction: cache.outputRef("NamespaceId") as any,
+            Jurisdiction: source.credentials.value as any,
             StorageClass: "Standard",
           },
         });
@@ -405,7 +486,7 @@ describe("$worker", () => {
           "runtime/api.ts",
         );
       }),
-    ).rejects.toThrow("whose Jurisdiction is an output ref or a derived value");
+    ).rejects.toThrow("whose Jurisdiction is a credential");
   });
 
   it("fails for a binding to a ~state ref", async () => {
