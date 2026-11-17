@@ -160,6 +160,32 @@ describe("resource dependencies", () => {
     }
   });
 
+  it("gives a copy of each dependency's config at plan and at deploy", async () => {
+    const seen: unknown[] = [];
+    const TestResourceWithDeps = TestResource.requireDependencies<{
+      dep1: InstanceType<typeof TestResource>;
+    }>().deriveParams(({ deps }) => {
+      seen.push(deps.dep1.config);
+      deps.dep1.config.requiredParam = "changed";
+      return {};
+    });
+    const dep1 = new TestResource("dep-1", {
+      config: { ...testResourceConfig },
+    });
+    const testResource = new TestResourceWithDeps("test-resource-1", {
+      config: testResourceConfig,
+      dependencies: { dep1 },
+    });
+    dep1.output = {} as any;
+
+    await testResource.planParams();
+    await testResource.getParams();
+
+    expect(seen).toHaveLength(2);
+    for (const config of seen) expect(config).not.toBe(dep1.config);
+    expect(dep1.config).toEqual(testResourceConfig);
+  });
+
   it("merges config and intrinsic config", async () => {
     const deriveParamsMock = vi.fn(() => ({
       requiredParam: "preset",

@@ -470,15 +470,6 @@ function isMissingRequiredOutput(
   );
 }
 
-/**
- * Whether plan does not know some of the resource's outputs: it has no output
- * yet, or its output lacks a required output.
- */
-export function hasPendingOutput(resource: BaseResource): boolean {
-  const output = resource.output as Record<string, unknown> | null;
-  return output == null || missingRequiredOutputs(resource, output).length > 0;
-}
-
 function readPath(output: unknown, path: readonly string[]): unknown {
   let value = output;
   for (const key of path) {
@@ -583,37 +574,36 @@ export function createPlanViews() {
     throw new PendingOutput(dep);
   };
 
-  const planView = (dep: BaseResource): BaseResource => {
-    const pending = hasPendingOutput(dep);
-    const resolvesConfig = containsRefOrDerived(dep.config);
+  // Deploy fails when a required output is missing, so each one is present
+  // at deploy. Each missing one is a getter, so that `in`, `Object.hasOwn`
+  // and `Object.keys` give the answers they will give at deploy, and only
+  // a read of its value throws.
+  const planOutput = (dep: BaseResource): unknown => {
     const output = dep.output as Record<string, unknown> | null;
-    // Deploy fails when a required output is missing, so each one is present
-    // at deploy. Each missing one is a getter, so that `in`, `Object.hasOwn`
-    // and `Object.keys` give the answers they will give at deploy, and only
-    // a read of its value throws.
-    const viewedOutput =
-      output &&
-      Object.defineProperties(
-        { ...output },
-        Object.fromEntries(
-          missingRequiredOutputs(dep, output).map((key) => [
-            key,
-            { enumerable: true, get: () => throwPending(dep) },
-          ]),
-        ),
-      );
-    return dependencyView(dep, {
-      output: pending ? () => viewedOutput ?? throwPending(dep) : undefined,
-      config: resolvesConfig
-        ? () =>
-            deriveParamsConfigView(
-              dep,
-              resolveOutputRefs(dep.config, planLookup),
-              views.pending,
-            )
-        : undefined,
-    });
+    if (output == null) return throwPending(dep);
+    const missing = missingRequiredOutputs(dep, output);
+    if (missing.length === 0) return output;
+    return Object.defineProperties(
+      { ...output },
+      Object.fromEntries(
+        missing.map((key) => [
+          key,
+          { enumerable: true, get: () => throwPending(dep) },
+        ]),
+      ),
+    );
   };
+
+  const planView = (dep: BaseResource): BaseResource =>
+    dependencyView(dep, {
+      output: () => planOutput(dep),
+      config: () =>
+        deriveParamsConfigView(
+          dep,
+          resolveOutputRefs(dep.config, planLookup),
+          views.pending,
+        ),
+    });
 
   return views;
 }
@@ -644,9 +634,10 @@ export function deployViews<Deps extends Record<string, BaseResource | void>>(
 // A view has none of the dependency's private fields, so `outputRef`,
 // `credentials` and `~state` run on the dependency, which also makes a ref
 // name the dependency and not the view. Other getters run on the view, so
-// that `key` reads the view's output. Config is filled in on its first read,
-// so code that doesn't read it doesn't run the functions of its derived
-// values.
+// that `key` reads the view's output. Output and config are made on their
+// first read, so code that doesn't read config doesn't run the functions of
+// its derived values. A read that throws is not kept, so the next read
+// throws too.
 function dependencyView(
   dep: BaseResource,
   replaced: { output?: () => unknown; config?: () => unknown },
@@ -656,11 +647,11 @@ function dependencyView(
     credentials: { get: () => dep.credentials },
     "~state": { get: () => dep["~state"] },
   };
-  if (replaced.output) view.output = { get: replaced.output };
-  const fillConfig = replaced.config;
-  if (fillConfig) {
-    let config: { value: unknown } | undefined;
-    view.config = { get: () => (config ??= { value: fillConfig() }).value };
+  for (const key of ["output", "config"] as const) {
+    const make = replaced[key];
+    if (!make) continue;
+    let made: { value: unknown } | undefined;
+    view[key] = { get: () => (made ??= { value: make() }).value };
   }
   return Object.create(dep, view);
 }
