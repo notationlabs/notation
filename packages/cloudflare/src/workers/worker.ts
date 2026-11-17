@@ -4,7 +4,6 @@ import { filePaths, fromProjectRoot, toProjectRoot } from "@notation/core";
 import {
   captureCallSiteLazily,
   evaluationEnded,
-  forEachOutputRef,
   getDeclaredIn,
   isCredentialRef,
   isDerived,
@@ -675,14 +674,6 @@ function resolveBindings(
       continue;
     }
     if (typeof value === "string" || isOutputRef(value) || isDerived(value)) {
-      // A plain-text binding's value is recorded in params and state.
-      forEachOutputRef(value, (ref) => {
-        if (ref.resource.schema[ref.path[0]!]?.sensitive) {
-          throw new Error(
-            `${self.describe()} binds ${name} to the sensitive output ${[ref.resource.id, ...ref.path].join(".")}. A plain-text binding is recorded in state, so a Worker can't bind a sensitive output. Bind a credential, such as \`source.credentials.value\`, or a SecretsStoreSecret.`,
-          );
-        }
-      });
       resolved.bindings.push({ type: "plain_text", name, text: value });
       continue;
     }
