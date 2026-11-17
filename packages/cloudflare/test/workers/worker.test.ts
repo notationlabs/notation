@@ -408,6 +408,26 @@ describe("$worker", () => {
     ).rejects.toThrow("whose Jurisdiction is an output ref or a derived value");
   });
 
+  it("fails for a binding to a ~state ref", async () => {
+    await expect(
+      collect(() => {
+        const cache = new kv.KVNamespace("cache", {
+          config: { Title: "cache" },
+        });
+        inWorker(
+          $worker({
+            id: "api",
+            compatibilityDate,
+            bindings: () => ({
+              CACHE_ACCOUNT: cache["~state"].outputRef("AccountId") as any,
+            }),
+          }),
+          "runtime/api.ts",
+        );
+      }),
+    ).rejects.toThrow("binds CACHE_ACCOUNT to a ~state ref");
+  });
+
   it("hosts a namespace whose class its module exports", async () => {
     const graph = await collect(() => {
       const counters = inModule(

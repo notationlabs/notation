@@ -8,6 +8,7 @@ import {
   isCredentialRef,
   isDerived,
   isOutputRef,
+  isStateRef,
   onEvaluationEnd,
   perCollection,
   ResourceGroup,
@@ -672,6 +673,11 @@ function resolveBindings(
     if (isCredentialRef(value)) {
       resolved.secrets[name] = value as CredentialRef<string>;
       continue;
+    }
+    if (isStateRef(value)) {
+      throw new Error(
+        `${self.describe()} binds ${name} to a ~state ref. A binding needs a value at deploy, so use outputRef().`,
+      );
     }
     if (typeof value === "string" || isOutputRef(value) || isDerived(value)) {
       resolved.bindings.push({ type: "plain_text", name, text: value });
