@@ -369,7 +369,11 @@ In `generateBundle`, `runtimePlugin` and `bundlePlugin` call `findOutputRead` in
 runtime/api.ts:14 reads api.url, an output of $worker({ id: "api" }). An output is known only at deploy, so Worker code can't read it. Bind it to the Worker that needs it, and read it from env.
 ```
 
-The error names the first read that the check finds. As for infra modules, the check reads the code before minify and before tree-shaking, so it can fail on a read in code that the bundler removed.
+The error names the first read that the check finds. It names the declaration by the name of the marked function, such as `$worker`, and not by a local import name. It says "Worker code" or "function code" from the platform of the bundle that reads the output.
+
+The check skips a read in an option of the module's own declaration only when the runtime build doesn't run that option's value: an option that the strip removes, or a `keys:` option, whose values become `undefined`. A read in any other kept option, such as the class in the `class` option of a `$durableObject` or a `shared:` option kept whole, fails the build.
+
+As for infra modules, the check reads the code before minify and before tree-shaking, so it can fail on a read in code that the bundler removed. A helper in a `$worker` module that reads `api.url` fails the build even when nothing calls it. To fix this, move the helper to an infra module.
 
 The check doesn't follow a destructured read, such as `const { url } = api`, a `const` alias of a declaration, a declaration passed to a function that reads the property, a declaration in an array or a map, or a key that isn't a string literal. It doesn't analyse files in `node_modules/`. The runtime half of the declaration function covers these cases: the runtime `$worker` defines `url` as a getter that isn't enumerable and that throws. A test checks that each name in the `outputs:` clause of `$worker`'s mark is such a getter.
 

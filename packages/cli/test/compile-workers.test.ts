@@ -439,6 +439,40 @@ export default {
     );
   });
 
+  it("fails the build for a read in an option that the runtime build keeps, such as the class of a Durable Object", async () => {
+    writeProject(`export { counters } from "./counter";`);
+    write(
+      "runtime/counter.ts",
+      `
+import { DurableObject } from "cloudflare:workers";
+import { $durableObject } from "@notation/cloudflare/workers";
+import { caller as other } from "./caller";
+
+export const counters = $durableObject({
+  id: "counters",
+  class: class Counter extends DurableObject {
+    async fetch() {
+      return new Response(String(other.url));
+    }
+  },
+});
+`,
+    );
+    write(
+      "runtime/caller.ts",
+      `
+import { $worker as w } from "@notation/cloudflare/workers";
+
+export const caller = w({ id: "caller" });
+
+export default { fetch: () => new Response() };
+`,
+    );
+    await expect(build()).rejects.toThrow(
+      message("runtime/counter.ts:10", "other.url", "caller"),
+    );
+  });
+
   it("builds a Worker that reads a property that isn't an output", async () => {
     writeUrlProject(
       callerModule(`import { worker as api } from "./api";`, "api.id"),

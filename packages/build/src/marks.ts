@@ -44,6 +44,8 @@ export type DeclarationMark = {
    * They are known only at deploy, so the runtime build fails a read of one.
    */
   outputs?: string[];
+  /** The name that the module declares the function with, such as `$worker`. */
+  name?: string;
 };
 
 /**
@@ -196,7 +198,7 @@ function markOfDeclaration(
   if (node.type === "FunctionDeclaration" && node.id) {
     const jsDoc = leadingJsDoc(module, commentStart);
     const mark = jsDoc && parseMark(jsDoc, where);
-    if (mark) marks.set(node.id.name, mark);
+    if (mark) marks.set(node.id.name, named(mark, node.id.name));
   }
   if (node.type === "VariableDeclaration" && node.declarations.length === 1) {
     const [declarator] = node.declarations;
@@ -205,9 +207,12 @@ function markOfDeclaration(
       return;
     const jsDoc = leadingJsDoc(module, commentStart);
     const mark = jsDoc && parseMark(jsDoc, where);
-    if (mark) marks.set(declarator.id.name, mark);
+    if (mark) marks.set(declarator.id.name, named(mark, declarator.id.name));
   }
 }
+
+const named = (mark: Mark, name: string): Mark =>
+  mark.kind === "declaration" ? { ...mark, name } : mark;
 
 function declaredNames(node: Node): string[] {
   if (node.type === "VariableDeclaration") {

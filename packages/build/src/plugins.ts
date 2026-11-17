@@ -16,7 +16,11 @@ import {
 import type { ImportBinding, Mark } from "./marks";
 import { isProjectModule, type ModuleAnalyses } from "./modules";
 import { describeOutputRead, findOutputRead } from "./output-reads";
-import { describeProvided, providerOfModule } from "./platforms";
+import {
+  describeProvided,
+  providerOfModule,
+  type PlatformName,
+} from "./platforms";
 import { stripForRuntime } from "./runtime-strip";
 
 const isBareSpecifier = (source: string) =>
@@ -324,7 +328,8 @@ export function runtimePlugin({
             file === resolvedEntryId ? undefined : analyses.show(file),
         });
         const read = findOutputRead(output.modules, analyses);
-        if (read) this.error(describeOutputRead(read));
+        if (read)
+          this.error(describeOutputRead(read, module.platform ?? "node"));
       }
     },
   };
@@ -510,6 +515,7 @@ const generated = "\0notation-bundle:";
 
 type BundlePluginOptions = {
   label: string;
+  platform: PlatformName;
   modules: Record<string, string>;
   analyses: ModuleAnalyses;
   onModuleIds: (ids: string[]) => void;
@@ -522,6 +528,7 @@ type BundlePluginOptions = {
  */
 export function bundlePlugin({
   label,
+  platform,
   modules,
   analyses,
   onModuleIds,
@@ -572,7 +579,7 @@ export function bundlePlugin({
               : analyses.show(file),
         });
         const read = findOutputRead(output.modules, analyses);
-        if (read) this.error(describeOutputRead(read));
+        if (read) this.error(describeOutputRead(read, platform));
       }
     },
   };

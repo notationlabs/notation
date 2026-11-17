@@ -1,7 +1,13 @@
 import type { Declaration } from "./analyze";
 import { location, unwrap, type Node } from "./ast";
 import type { ModuleAnalyses } from "./modules";
-import { exportedValue, localValue, memberPath } from "./runtime-strip";
+import type { PlatformName } from "./platforms";
+import {
+  exportedValue,
+  localValue,
+  memberPath,
+  keptOptions,
+} from "./runtime-strip";
 
 export type OutputRead = {
   /** Where the code reads the output, as `file:line`. */
@@ -26,12 +32,12 @@ export function findOutputRead(
     const analysis = analyses.fromFile(file);
     if (!analysis) continue;
     const { table, declaration } = analysis;
+    const unchecked = declaration ? strippedOptions(declaration) : [];
     for (const { node, ancestors } of analysis.references) {
-      // The runtime strip removes or checks the declaration's own options.
       if (
-        declaration &&
-        node.start >= declaration.call.start &&
-        node.end <= declaration.call.end
+        unchecked.some(
+          (option) => node.start >= option.start && node.end <= option.end,
+        )
       )
         continue;
       const path = memberPath(outermostMember(node, ancestors));
@@ -39,14 +45,9 @@ export function findOutputRead(
       // A namespace import takes the export's name from the first key.
       const binding = table.imports.get(node.name);
       const namespace = binding?.imported === "*";
-      const resolved =
-        namespace && analyses.marks.resolve(binding.source, file);
-      const value = !namespace
-        ? localValue(file, node.name, analyses, new Set())
-        : resolved && path.keys[0] !== undefined
-          ? exportedValue(resolved, path.keys[0], analyses, new Set())
-          : undefined;
-      const consumed = namespace ? 1 : 0;
+      const [value, consumed] = namespace
+        ? [namespaceValue(file, binding.source, path.keys[0], analyses), 1]
+        : [localValue(file, node.name, analyses, new Set()), 0];
       const key = path.keys[consumed];
       const owner = value && analyses.fromFile(value.file)?.declaration;
       if (
@@ -68,6 +69,30 @@ export function findOutputRead(
   return undefined;
 }
 
+// The value of an export of the module that a namespace import names.
+function namespaceValue(
+  file: string,
+  source: string,
+  name: string | undefined,
+  analyses: ModuleAnalyses,
+) {
+  const resolved = analyses.marks.resolve(source, file);
+  return resolved && name !== undefined
+    ? exportedValue(resolved, name, analyses, new Set())
+    : undefined;
+}
+
+// The options of a declaration whose values the runtime build doesn't run:
+// those that it removes, and the `keys` options, whose values become
+// `undefined`. A read in any other option, such as the `class` of a
+// `$durableObject`, runs in the function.
+function strippedOptions(declaration: Declaration): Node[] {
+  const kept = keptOptions(declaration.mark);
+  return [...declaration.properties]
+    .filter(([key]) => !kept.has(key) || declaration.mark.keys.includes(key))
+    .map(([, property]) => property);
+}
+
 // The outermost member expression with static keys that has `node` at its
 // root, or `node` itself.
 function outermostMember(node: Node, ancestors: Node[]): Node {
@@ -86,16 +111,23 @@ function outermostMember(node: Node, ancestors: Node[]): Node {
   return outer;
 }
 
-/** The message for a read of an output, at build or when the code runs. */
-export function describeOutputRead({ at, read, declaration }: OutputRead) {
+/**
+ * The message for a read of an output, at build or when the code runs.
+ * `platform` is the platform of the code that reads the output.
+ */
+export function describeOutputRead(
+  { at, read, declaration }: OutputRead,
+  platform: PlatformName,
+) {
+  const name = declaration.mark.name ?? declaration.name;
   const id = declaration.properties.get("id");
   const value = id && unwrap(id.value);
   const declared =
     value?.type === "Literal" && typeof value.value === "string"
-      ? `${declaration.name}({ id: ${JSON.stringify(value.value)} })`
-      : `${declaration.name}()`;
+      ? `${name}({ id: ${JSON.stringify(value.value)} })`
+      : `${name}()`;
   const [code, target] =
-    declaration.mark.platform === "workerd"
+    platform === "workerd"
       ? ["Worker code", "Worker"]
       : ["function code", "function"];
   return `${at} reads ${read}, an output of ${declared}. An output is known only at deploy, so ${code} can't read it. Bind it to the ${target} that needs it, and read it from env.`;
