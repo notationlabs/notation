@@ -506,6 +506,13 @@ Two values in config, or in the config of a dependency, can't be read, at plan o
 
 A `deriveParams` that annotates `deps` types it as `ResolvedDependencies<Deps>`, which types the `config` of each dependency as plain params.
 
+A helper that `deriveParams` calls with one dependency, such as `deps.script`, types its argument as `ResolvedDependency<WorkerScriptInstance>`. It can't take `WorkerScriptInstance`, because the type of `deps.script` leaves out the private members of the instance.
+
+```ts
+const scriptName = (script: ResolvedDependency<WorkerScriptInstance>) =>
+  script.output.ScriptName;
+```
+
 An entry of `deps` can be a view of the dependency, an object whose prototype is the dependency, with its config filled in or its pending outputs guarded. So:
 
 - `deps.queue === queue` can be false.

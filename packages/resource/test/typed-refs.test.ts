@@ -11,7 +11,7 @@ import {
   type Resolved,
   type StateRef,
 } from "src";
-import type { ContributionInput } from "src/resource";
+import type { ContributionInput, ResolvedDependency } from "src/resource";
 import { number, object, string } from "./validators";
 
 // The type checker checks these tests. A line that would throw at run time
@@ -250,6 +250,20 @@ describe("output ref types", () => {
       Statements: [{ Effect: "Allow", Resource: [recorded] }],
     };
     void [statements, effect, resources];
+  });
+
+  it("passes a dependency to a helper typed ResolvedDependency, and not to one typed as the instance", () => {
+    type BucketInstance = InstanceType<typeof Bucket>;
+    const arnOf = (bucket: ResolvedDependency<BucketInstance>) =>
+      bucket.output.Arn;
+    const nameOf = (bucket: BucketInstance) => bucket.config.Name;
+    Optional.requireDependencies<{ bucket: BucketInstance }>().deriveParams(
+      async ({ deps }) => {
+        // @ts-expect-error the type of deps.bucket leaves out private members
+        nameOf(deps.bucket);
+        return { Label: arnOf(deps.bucket) };
+      },
+    );
   });
 
   it("makes a resource whose params are all optional with no options", () => {

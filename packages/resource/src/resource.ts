@@ -104,9 +104,15 @@ export type ResolvedDependencies<D> = {
   [K in keyof D]: ResolvedDependency<D[K]>;
 };
 
-// Distributes over a union, so that an optional dependency has its config
-// filled in too.
-type ResolvedDependency<R> = R extends {
+/**
+ * One dependency as `deriveParams` receives it, with its config filled in. A
+ * helper that takes `deps.x` types its argument as
+ * `ResolvedDependency<WorkerScriptInstance>`, not `WorkerScriptInstance`,
+ * because the type of `deps.x` leaves out the private members of the
+ * instance. Distributes over a union, so that an optional dependency has its
+ * config filled in too.
+ */
+export type ResolvedDependency<R> = R extends {
   deriveParams(opts: { config: infer C }): unknown;
 }
   ? Omit<R, "config"> & { readonly config: C }
