@@ -1,7 +1,7 @@
 {
   "type": "module",
   "name": "@notation/infisical",
-  "version": "0.28.0",
+  "version": "0.28.1",
   "sideEffects": false,
   "exports": {
     "./resources": {

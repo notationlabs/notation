@@ -1,5 +1,14 @@
 # @notation/std
 
+## 0.28.1
+
+### Patch Changes
+
+- Updated dependencies [b20b20f]
+  - @notation/core@0.28.1
+  - @notation/resource@0.28.1
+  - @notation/utils@0.28.1
+
 ## 0.28.0
 
 ### Patch Changes
