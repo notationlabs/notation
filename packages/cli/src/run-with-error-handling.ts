@@ -1,4 +1,5 @@
-import { findReportedError, scrubError } from "@notation/core";
+import { findReportedError, projectRoot, scrubError } from "@notation/core";
+import { formatError } from "./format-error";
 import type { Logger } from "./logger";
 
 export async function runWithErrorHandling(
@@ -25,7 +26,9 @@ export async function runWithErrorHandling(
     const scrubbed = scrubError(error);
     const reported = opts.debug ? undefined : findReportedError(scrubbed);
     if (!reported) {
-      opts.logger.error(scrubbed);
+      opts.logger.error(
+        opts.debug ? scrubbed : formatError(scrubbed, projectRoot()),
+      );
       return 1;
     }
     // The error event has printed the error. An error that wraps it adds

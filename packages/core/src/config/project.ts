@@ -37,6 +37,9 @@ export async function loadProject(): Promise<Project> {
       platform: "node",
       packages: "external",
       logLevel: "silent",
+      // The CLI enables source maps, so a frame in the config names
+      // notation.config.ts and not the deleted bundle.
+      sourcemap: "inline",
     });
     const module = await import(pathToFileURL(outfile).href);
     return { config: parseConfig(module.default, path.basename(file)) };

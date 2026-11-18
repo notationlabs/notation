@@ -1,7 +1,15 @@
-import { describe, expect, it, vi } from "vitest";
+import { setConfigFile } from "@notation/core";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runWithErrorHandling } from "../src/run-with-error-handling";
 
+const reconcilerFrame =
+  "    at plan (file:///app/node_modules/@notation/reconciler/dist/plan.js:12:1)";
+const infraFrame = "    at defineBucket (file:///app/infra.ts:4:3)";
+
 describe("CLI error handling", () => {
+  beforeEach(() => setConfigFile("/app/notation.config.ts"));
+  afterEach(() => setConfigFile(undefined));
+
   it("reports credential failures with command-specific guidance", async () => {
     const error = new Error("Could not load credentials");
     error.name = "CredentialsProviderError";
@@ -23,8 +31,11 @@ describe("CLI error handling", () => {
     );
   });
 
-  it("reports non-credential failures unchanged", async () => {
+  it("prints the message and the project's frames of any other error", async () => {
     const error = new Error("deploy failed");
+    error.stack = ["Error: deploy failed", reconcilerFrame, infraFrame].join(
+      "\n",
+    );
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
     const exitCode = await runWithErrorHandling(
@@ -35,8 +46,9 @@ describe("CLI error handling", () => {
     );
 
     expect(exitCode).toBe(1);
-    expect(logger.error).toHaveBeenCalledOnce();
-    expect(logger.error).toHaveBeenCalledWith(error);
+    expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+      `Error: deploy failed\n${infraFrame}`,
+    );
   });
 
   it("prints one line for an error that an event reported", async () => {
@@ -80,6 +92,25 @@ describe("CLI error handling", () => {
       ["\nnotation deploy stopped because rotate privateKey of app failed."],
       ["Run notation deploy --stage prod"],
     ]);
+  });
+
+  it("prints any other error unchanged with debug", async () => {
+    const error = new Error("deploy failed");
+    const stack = ["Error: deploy failed", reconcilerFrame, infraFrame].join(
+      "\n",
+    );
+    error.stack = stack;
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    await runWithErrorHandling(
+      async () => {
+        throw error;
+      },
+      { logger, command: "deploy", debug: true },
+    );
+
+    expect(logger.error).toHaveBeenCalledExactlyOnceWith(error);
+    expect(error.stack).toBe(stack);
   });
 
   it("prints a reported error in full with debug", async () => {
