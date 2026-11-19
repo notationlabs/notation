@@ -15,6 +15,7 @@ import {
   ownPhysicalName,
   type BaseResource,
   type CredentialRef,
+  type OutputRef,
   type RecordedOutputs,
   type ResourceGraph,
   generatedPhysicalName,
@@ -174,6 +175,9 @@ describe("$worker", () => {
       Bindings: [],
       DurableObjectNamespaces: [],
       BoundDurableObjects: [],
+      Observability: { enabled: false },
+      Logpush: false,
+      TailConsumers: [],
     });
     expect(api.subdomain?.dependencies.script).toBe(api.script);
   });
@@ -1278,6 +1282,216 @@ describe("$worker", () => {
         $worker({ id: "Orders_API", compatibilityDate });
       }),
     ).rejects.toThrow(`Invalid $worker id "Orders_API"`);
+  });
+});
+
+describe("logs", () => {
+  it("passes Workers Logs and Logpush to the script, and turns them off when unset", async () => {
+    const graph = await collect(() => {
+      inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          observability: { enabled: true, headSamplingRate: 0.25 },
+          logpush: true,
+        }),
+        "runtime/api.ts",
+      );
+      inWorker($worker({ id: "plain", compatibilityDate }), "runtime/plain.ts");
+    });
+
+    expect(group(graph, "api").script.config).toMatchObject({
+      Observability: { enabled: true, head_sampling_rate: 0.25 },
+      Logpush: true,
+    });
+    expect(group(graph, "plain").script.config).toMatchObject({
+      Observability: { enabled: false },
+      Logpush: false,
+      TailConsumers: [],
+    });
+  });
+
+  it("sends Cloudflare's default sampling rate when it is unset", async () => {
+    const graph = await collect(() => {
+      inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          observability: { enabled: true },
+        }),
+        "runtime/api.ts",
+      );
+      inWorker(
+        $worker({
+          id: "off",
+          compatibilityDate,
+          observability: { enabled: false },
+        }),
+        "runtime/off.ts",
+      );
+    });
+
+    expect(group(graph, "api").script.config.Observability).toEqual({
+      enabled: true,
+      head_sampling_rate: 1,
+    });
+    expect(group(graph, "off").script.config.Observability).toEqual({
+      enabled: false,
+    });
+  });
+
+  it.each([-0.1, 1.5, Number.NaN])(
+    "fails for a head sampling rate of %s",
+    async (rate) => {
+      await expect(
+        collect(() => {
+          inWorker(
+            $worker({
+              id: "api",
+              compatibilityDate,
+              observability: { enabled: true, headSamplingRate: rate },
+            }),
+            "runtime/api.ts",
+          );
+        }),
+      ).rejects.toThrow(
+        `$worker({ id: "api" }) in runtime/api.ts sets observability.headSamplingRate to ${rate}. Set it to a number from 0 to 1.`,
+      );
+    },
+  );
+
+  it("fails for a head sampling rate without enabled: true", async () => {
+    await expect(
+      collect(() => {
+        inWorker(
+          $worker({
+            id: "api",
+            compatibilityDate,
+            observability: { enabled: false, headSamplingRate: 0.5 },
+          }),
+          "runtime/api.ts",
+        );
+      }),
+    ).rejects.toThrow(
+      `$worker({ id: "api" }) in runtime/api.ts sets observability.headSamplingRate without enabled: true.`,
+    );
+  });
+
+  it("contributes each tail consumer by its script name, so either Worker can be created first", async () => {
+    const graph = await collect(() => {
+      const api: unknown = inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          tailConsumers: () => [tail, tail],
+        }),
+        "runtime/api.ts",
+      );
+      const tail = inWorker(
+        $worker({
+          id: "tail",
+          compatibilityDate,
+          bindings: () => ({ API: api as any }),
+        }),
+        "runtime/tail.ts",
+      );
+    });
+    const api = group(graph, "api");
+    const tail = group(graph, "tail");
+
+    expect(api.script.getDependencies()).toContain(tail.script);
+    expect(api.script.getFixedDependencies()).not.toContain(tail.script);
+    expect(api.script.getContributedParams()).toEqual(["TailConsumers"]);
+    expect(
+      (await deployParams(api, [], { peers: [api, tail] })).TailConsumers,
+    ).toEqual([]);
+    expect(await deployParams(api, [tail])).toMatchObject({
+      TailConsumers: [{ service: nameOf("tail") }],
+    });
+  });
+
+  it("fails for a tail consumer that is not a Worker", async () => {
+    await expect(
+      collect(() => {
+        inWorker(
+          $worker({
+            id: "api",
+            compatibilityDate,
+            tailConsumers: () => [{ id: "tail" } as any],
+          }),
+          "runtime/api.ts",
+        );
+      }),
+    ).rejects.toThrow(
+      `$worker({ id: "api" }) in runtime/api.ts lists a value in tailConsumers that is not a Worker.`,
+    );
+  });
+
+  it("fails for a Worker that lists itself as a tail consumer", async () => {
+    await expect(
+      collect(() => {
+        const api: unknown = inWorker(
+          $worker({
+            id: "api",
+            compatibilityDate,
+            tailConsumers: () => [api as any],
+          }),
+          "runtime/api.ts",
+        );
+      }),
+    ).rejects.toThrow(
+      `$worker({ id: "api" }) in runtime/api.ts lists itself in tailConsumers.`,
+    );
+  });
+});
+
+describe("scriptName", () => {
+  it("is a ref to the script's ScriptName, the same on each read, which makes its holder depend on the script", async () => {
+    let held!: BaseResource;
+    const graph = await collect(() => {
+      const api = inWorker(
+        $worker({ id: "api", compatibilityDate }),
+        "runtime/api.ts",
+      );
+      expect(api.scriptName).toBe(api.scriptName);
+      expect(api.scriptName.resourceId).toBe("worker:api");
+      expect(api.scriptName.path).toEqual(["ScriptName"]);
+      held = new kv.KVNamespace("names", {
+        config: { Title: api.scriptName },
+      });
+    });
+
+    expect(held.getDependencies()).toEqual([group(graph, "api").script]);
+  });
+
+  it("is a property of a Worker with url: false, and not an enumerable one", async () => {
+    await collect(() => {
+      const api = inWorker(
+        $worker({ id: "api", compatibilityDate, url: false }),
+        "runtime/api.ts",
+      );
+      expect(api.scriptName.resourceId).toBe("worker:api");
+      expect(Object.keys(api)).toEqual(["id"]);
+    });
+  });
+
+  it("throws for a read while no resource graph is being collected", async () => {
+    let api!: { scriptName: unknown };
+    await collect(() => {
+      api = inWorker(
+        $worker({ id: "api", compatibilityDate }),
+        "runtime/api.ts",
+      );
+    });
+
+    expect(() => api.scriptName).toThrow(
+      `scriptName was read on $worker({ id: "api" }) in runtime/api.ts while no resource graph is being collected.`,
+    );
+  });
+
+  it("is typed as an OutputRef<string>", () => {
+    const api = {} as ReturnType<typeof $worker<"api">>;
+    expectTypeOf(api.scriptName).toEqualTypeOf<OutputRef<string>>();
   });
 });
 

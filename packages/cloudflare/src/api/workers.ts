@@ -89,9 +89,16 @@ export type DurableObjectExport =
     }
   | { type: "durable-object"; state: "transferred"; transferred_to: string };
 
+/** A Worker that receives the tail events of another Worker. */
+export type TailConsumer = { service: string };
+
 export type ScriptSettings = {
   compatibility_date?: string;
   compatibility_flags?: string[];
+  logpush?: boolean;
+  // Cloudflare returns more fields, such as `logs` and `traces`.
+  observability?: { enabled?: boolean; head_sampling_rate?: number | null };
+  tail_consumers?: TailConsumer[] | null;
 };
 
 /**
@@ -114,6 +121,9 @@ export type ScriptUpload = {
   exports: Record<string, DurableObjectExport>;
   /** The Durable Object classes whose namespaces run containers. */
   containers: { class_name: string }[];
+  observability: { enabled: boolean; head_sampling_rate?: number };
+  logpush: boolean;
+  tailConsumers: TailConsumer[];
 };
 
 /**
@@ -156,6 +166,9 @@ export async function putScript(
       ? { exports: upload.exports }
       : {}),
     ...(upload.containers.length > 0 ? { containers: upload.containers } : {}),
+    observability: upload.observability,
+    logpush: upload.logpush,
+    tail_consumers: upload.tailConsumers,
   };
   const form = new FormData();
   form.set("metadata", JSON.stringify(metadata));

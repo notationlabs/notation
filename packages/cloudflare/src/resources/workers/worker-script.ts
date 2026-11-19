@@ -31,11 +31,13 @@ import {
   type AccountNamespace,
   type DurableObjectExport,
   type ScriptBinding,
+  type ScriptSettings,
   type ScriptUpload,
   type SecretTextBinding,
+  type TailConsumer,
 } from "src/api/workers";
 
-export type { DurableObjectExport };
+export type { DurableObjectExport, TailConsumer };
 
 export type WorkerBinding = ScriptBinding;
 
@@ -76,6 +78,18 @@ const transferSourceSchema = v.object({
 
 /** A Worker that binds a namespace that this Worker hosts. */
 export type TransferSource = v.InferOutput<typeof transferSourceSchema>;
+
+const observabilitySchema = v.variant("enabled", [
+  v.object({
+    enabled: v.literal(true),
+    /** The share of requests that are logged, from 0 to 1. */
+    head_sampling_rate: v.pipe(v.number(), v.minValue(0), v.maxValue(1)),
+  }),
+  v.object({ enabled: v.literal(false) }),
+]);
+
+/** The Workers Logs settings of a Worker. */
+export type ScriptObservability = v.InferOutput<typeof observabilitySchema>;
 
 type WorkerScriptParams = {
   AccountId: string;
@@ -118,6 +132,21 @@ type WorkerScriptParams = {
    * of its names hosts the class.
    */
   DurableObjectTransferSources?: TransferSource[];
+  /**
+   * The Workers Logs settings. An upload without this param turns Workers
+   * Logs off.
+   */
+  Observability?: ScriptObservability;
+  /**
+   * Sends the Worker's trace events to the account's Logpush jobs. An upload
+   * without this param turns Logpush off.
+   */
+  Logpush?: boolean;
+  /**
+   * The Workers that receive the Worker's tail events. An upload without
+   * this param removes every tail consumer.
+   */
+  TailConsumers?: TailConsumer[];
 };
 
 export type WorkerScriptSchema = {
@@ -302,6 +331,22 @@ const workerScriptSchema = workerScript.defineSchema({
     value: v.array(transferSourceSchema),
     collect: (items: TransferSource[][]) => items.flat(),
   },
+  Observability: {
+    propertyType: "param",
+    presence: "optional",
+    value: observabilitySchema,
+  },
+  Logpush: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.boolean(),
+  },
+  TailConsumers: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.array(v.object({ service: v.string() })),
+    collect: (items: TailConsumer[][]) => items.flat(),
+  },
 } as const);
 
 export const WorkerScript = workerScriptSchema
@@ -332,7 +377,9 @@ export const WorkerScript = workerScriptSchema
     // Returns only the entries of `Secrets` that the Worker still has, so a
     // secret deleted outside notation shows as drift and the update sends it
     // again. Cloudflare never returns secret values, so a changed value is
-    // not detected.
+    // not detected. Each log setting is returned only when the params set
+    // it. A read after create or update is recorded as the output, so the
+    // output of a Worker whose params leave a setting out doesn't hold it.
     read: async (key, _context, params) => {
       const settings = await getScriptSettings(key.AccountId, key.ScriptName);
       if (!settings) {
@@ -348,6 +395,7 @@ export const WorkerScript = workerScriptSchema
         ...(params?.Secrets
           ? { Secrets: await presentSecrets(key, params.Secrets) }
           : {}),
+        ...readLogSettings(settings, params),
       };
     },
 
@@ -480,11 +528,52 @@ async function upload(
     containers: hosted
       .filter((namespace) => namespace.container)
       .map((namespace) => ({ class_name: namespace.className })),
+    // Cloudflare keeps a setting that the upload leaves out, so each one is
+    // sent, and a setting changed in the dashboard is reset.
+    observability: params.Observability ?? { enabled: false },
+    logpush: params.Logpush ?? false,
+    tailConsumers: params.TailConsumers ?? [],
   };
   if (found.transfers.length > 0) {
     await transferNamespaces(params, upload, found.transfers, found.account);
   }
   await putScript(params.AccountId, params.ScriptName, upload);
+}
+
+/**
+ * The log settings of the Worker, for each one that `params` sets. The tail
+ * consumers are those of `params` when Cloudflare has the same services.
+ */
+function readLogSettings(
+  settings: ScriptSettings,
+  params: Partial<WorkerScriptParams> | undefined,
+): Pick<WorkerScriptParams, "Observability" | "Logpush" | "TailConsumers"> {
+  const read: Pick<
+    WorkerScriptParams,
+    "Observability" | "Logpush" | "TailConsumers"
+  > = {};
+  if (params?.Observability) {
+    const remote = settings.observability;
+    read.Observability = remote?.enabled
+      ? { enabled: true, head_sampling_rate: remote.head_sampling_rate ?? 1 }
+      : { enabled: false };
+  }
+  if (params?.Logpush !== undefined) read.Logpush = settings.logpush ?? false;
+  if (params?.TailConsumers) {
+    const remote = (settings.tail_consumers ?? []).map(
+      (consumer) => consumer.service,
+    );
+    const declared = new Set(
+      params.TailConsumers.map((consumer) => consumer.service),
+    );
+    const same =
+      new Set(remote).size === declared.size &&
+      remote.every((service) => declared.has(service));
+    read.TailConsumers = same
+      ? params.TailConsumers
+      : remote.map((service) => ({ service }));
+  }
+  return read;
 }
 
 type Transfer = {

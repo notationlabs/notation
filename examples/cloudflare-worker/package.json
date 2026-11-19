@@ -1,0 +1,21 @@
+{
+  "private": true,
+  "name": "cloudflare-worker-demo",
+  "scripts": {
+    "compile": "notation compile",
+    "dashboard": "notation dashboard",
+    "deploy": "notation deploy",
+    "destroy": "notation destroy",
+    "viz": "notation viz",
+    "watch": "notation watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@notation/cli": "workspace:*",
+    "@notation/cloudflare": "workspace:*",
+    "@notation/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261012.1"
+  }
+}

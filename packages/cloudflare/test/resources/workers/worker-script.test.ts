@@ -122,6 +122,9 @@ describe("WorkerScript", () => {
         bindings: params.Bindings,
         keep_bindings: ["secret_text"],
         exports: { Counter: { type: "durable-object", storage: "sqlite" } },
+        observability: { enabled: false },
+        logpush: false,
+        tail_consumers: [],
       },
       module: { type: "application/javascript+module", text: code },
     });
@@ -1259,6 +1262,131 @@ describe("rejectChange", () => {
         /^worker:api: Deploy would delete the Durable Object namespaces "rooms"/,
       );
     });
+  });
+});
+
+describe("WorkerScript log settings", () => {
+  const key = { AccountId: "acc", ScriptName: "app--dev--api" };
+  const logs = {
+    ...params,
+    Observability: { enabled: true, head_sampling_rate: 0.1 },
+    Logpush: true,
+    TailConsumers: [{ service: "app--dev--tail" }],
+  };
+
+  it("sends the observability, Logpush and tail consumer settings in the upload", async () => {
+    mockFetch(untilUploaded());
+
+    await script.create(logs);
+
+    const { metadata } = await uploadedMetadata(requests()[1]!);
+    expect(metadata).toMatchObject({
+      observability: { enabled: true, head_sampling_rate: 0.1 },
+      logpush: true,
+      tail_consumers: [{ service: "app--dev--tail" }],
+    });
+  });
+
+  it("reads the settings that the params set", async () => {
+    mockFetch(() =>
+      ok({
+        compatibility_date: "2026-10-12",
+        logpush: false,
+        observability: {
+          enabled: true,
+          head_sampling_rate: 0.5,
+          logs: { enabled: true, invocation_logs: true },
+        },
+        tail_consumers: [
+          { service: "app--dev--audit" },
+          { service: "app--dev--tail" },
+        ],
+      }),
+    );
+
+    const read = await script.read!(key, undefined, logs);
+
+    expect(read).toMatchObject({
+      Observability: { enabled: true, head_sampling_rate: 0.5 },
+      Logpush: false,
+      TailConsumers: [
+        { service: "app--dev--audit" },
+        { service: "app--dev--tail" },
+      ],
+    });
+  });
+
+  it("reads the tail consumers in the order of the params when Cloudflare has the same services", async () => {
+    mockFetch(() =>
+      ok({
+        tail_consumers: [
+          { service: "app--dev--tail" },
+          { service: "app--dev--audit" },
+        ],
+      }),
+    );
+    const consumers = [
+      { service: "app--dev--audit" },
+      { service: "app--dev--tail" },
+    ];
+
+    const read = await script.read!(key, undefined, {
+      ...params,
+      TailConsumers: consumers,
+    });
+
+    expect(read).toMatchObject({ TailConsumers: consumers });
+  });
+
+  it("reads Workers Logs as off when the settings leave it out", async () => {
+    mockFetch(() => ok({ compatibility_date: "2026-10-12" }));
+
+    const read = await script.read!(key, undefined, logs);
+
+    expect(read).toMatchObject({
+      Observability: { enabled: false },
+      Logpush: false,
+      TailConsumers: [],
+    });
+  });
+
+  it("reads the sampling rate as Cloudflare's default when Workers Logs is on and the settings leave it out", async () => {
+    mockFetch(() => ok({ observability: { enabled: true } }));
+
+    const read = await script.read!(key, undefined, logs);
+
+    expect(read).toMatchObject({
+      Observability: { enabled: true, head_sampling_rate: 1 },
+    });
+  });
+
+  it("reads no log settings when the params set none", async () => {
+    mockFetch(() =>
+      ok({
+        logpush: true,
+        observability: { enabled: true },
+        tail_consumers: [],
+      }),
+    );
+
+    const read = await script.read!(key, undefined, params);
+
+    expect(read).not.toHaveProperty("Observability");
+    expect(read).not.toHaveProperty("Logpush");
+    expect(read).not.toHaveProperty("TailConsumers");
+  });
+
+  it("rejects a sampling rate above 1 when it is declared", () => {
+    expect(
+      () =>
+        new WorkerScript("worker:sampled", {
+          config: {
+            CompatibilityDate: params.CompatibilityDate,
+            Observability: { enabled: true, head_sampling_rate: 2 },
+          },
+          dependencies: {} as any,
+        }),
+    ).toThrow(/head_sampling_rate/);
   });
 });
 
