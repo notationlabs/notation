@@ -132,10 +132,20 @@ type WorkerScriptParams = {
    * of its names hosts the class.
    */
   DurableObjectTransferSources?: TransferSource[];
+  /**
+   * The Workers Logs settings. An upload without this param turns Workers
+   * Logs off.
+   */
   Observability?: ScriptObservability;
-  /** Sends the Worker's trace events to the account's Logpush jobs. */
+  /**
+   * Sends the Worker's trace events to the account's Logpush jobs. An upload
+   * without this param turns Logpush off.
+   */
   Logpush?: boolean;
-  /** The Workers that receive the Worker's tail events. */
+  /**
+   * The Workers that receive the Worker's tail events. An upload without
+   * this param removes every tail consumer.
+   */
   TailConsumers?: TailConsumer[];
 };
 

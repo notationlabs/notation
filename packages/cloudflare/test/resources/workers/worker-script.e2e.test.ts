@@ -7,6 +7,7 @@ import {
 } from "src/resources/workers/worker-script";
 import {
   accountId,
+  api,
   describeE2e,
   poll,
   useProject,
@@ -123,7 +124,7 @@ const producerModule = `
     id: "producer",
     compatibilityDate: "2026-10-12",
     url: false,
-    observability: { enabled: true, headSamplingRate: 0.5 },
+    observability: { enabled: true, headSamplingRate: 0.1 },
     logpush: true,
     tailConsumers: () => [sink],
   });
@@ -195,12 +196,41 @@ describeE2e("WorkerScript log settings", () => {
     await project.notation("deploy");
 
     const logs = {
-      Observability: { enabled: true, head_sampling_rate: 0.5 } as const,
+      Observability: { enabled: true, head_sampling_rate: 0.1 } as const,
       Logpush: true,
       TailConsumers: [{ service: await nameOf("sink") }],
     };
     const { read, action } = await readLogs(await nameOf("producer"), logs);
     expect(read).toMatchObject(logs);
+    expect(action).toEqual({ decision: "noop" });
+  });
+
+  it("shows Logpush turned on outside notation as drift, and deploy turns it off", async () => {
+    project.write("runtime/plain.ts", plainModule);
+    await project.notation("deploy");
+    const name = await nameOf("plain");
+
+    const form = new FormData();
+    form.set("settings", JSON.stringify({ logpush: true }));
+    const patched = await api(
+      "PATCH",
+      `/workers/scripts/${name}/settings`,
+      form,
+    );
+    expect(patched.errors).toEqual([]);
+
+    const off = {
+      Observability: { enabled: false } as const,
+      Logpush: false,
+      TailConsumers: [],
+    };
+    const drifted = await readLogs(name, off);
+    expect(drifted.read).toMatchObject({ Logpush: true });
+    expect(drifted.action.decision).toBe("drift-update");
+
+    await project.notation("deploy");
+    const { read, action } = await readLogs(name, off);
+    expect(read).toMatchObject(off);
     expect(action).toEqual({ decision: "noop" });
   });
 });

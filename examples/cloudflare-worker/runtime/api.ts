@@ -4,7 +4,7 @@ import { logSink } from "runtime/log-sink";
 export const api = $worker({
   id: "api",
   compatibilityDate: "2026-10-12",
-  observability: { enabled: true, headSamplingRate: 1 },
+  observability: { enabled: true },
   tailConsumers: () => [logSink],
 });
 

@@ -239,6 +239,8 @@ A Worker's `console.log` output and uncaught exceptions can go to three places. 
 
 Each `deploy` sets all three settings from config, and turns off an option that config leaves out. A setting changed in the Cloudflare dashboard shows as drift in the plan, and `deploy` sets it back.
 
+The first `deploy` after you upgrade to a version of `@notation/cloudflare` with these options turns off Workers Logs, Logpush and tail consumers that were set in the Cloudflare dashboard or by `wrangler`. Add each setting that you want to keep to config before that deploy. A Worker in a gradual rollout must finish the rollout before that deploy.
+
 ### Workers Logs
 
 Set `observability` to turn on Workers Logs for the `orders` Worker from the first example:
@@ -252,7 +254,7 @@ export const ordersWorker = $worker({
 });
 ```
 
-`headSamplingRate` is the share of requests that Cloudflare logs, from `0` to `1`, and Cloudflare's default is `1`. Set it only with `enabled: true`. Notation throws when the rate is outside `0` to `1` or when `enabled` is `false`. The logs appear on the Worker's **Observability** tab in the Cloudflare dashboard.
+`headSamplingRate` is the share of requests that Cloudflare logs, from `0` to `1`, and Cloudflare's default is `1`. Set it only with `enabled: true`. Notation throws when `headSamplingRate` is outside `0` to `1`, or is set with `enabled: false`. The logs appear on the Worker's **Observability** tab in the Cloudflare dashboard.
 
 ### Logpush
 
@@ -296,9 +298,9 @@ export const ordersWorker = $worker({
 
 ### Tail a deployed Worker
 
-`wrangler tail` streams the live logs of a deployed Worker, and it needs the Worker's name in Cloudflare. Deploy names the Worker `<app>--<stage>--<id>-<instance>`, where `<instance>` is 8 random hex characters, so you can't work out the name from config.
+`wrangler tail` streams the live logs of a deployed Worker, and it needs the Worker's name in Cloudflare. Deploy names the Worker `<app>--<stage>--<id>-<instance>`, where `<instance>` is 8 random hex characters, so you can't work out the name from config. When that name is longer than 54 characters, Notation shortens it, as [Physical names](../../core/physical-names.md) describes.
 
-Find the name in the Cloudflare dashboard. The Workers list shows the Worker under a name that starts with `<app>--<stage>--<id>-`, such as `shop--prod--orders-`.
+Find the name with [`notation dashboard`](../../cli/dashboard.md). Select the Worker's `WorkerScript` resource, and the detail pane shows the script name. You can also find the name in the Cloudflare dashboard. For a name under 54 characters, the Workers list shows the Worker under a name that starts with `<app>--<stage>--<id>-`, such as `shop--prod--orders-`.
 
 Then pass the name to `wrangler tail`, with the account in `CLOUDFLARE_ACCOUNT_ID`:
 
