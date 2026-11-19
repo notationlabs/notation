@@ -15,6 +15,7 @@ import {
   keepsResource,
 } from "../plan";
 import { loadUnit, planKnownParams } from "../planner";
+import { prefetchSources } from "../prefetch";
 import { readRecordedOutputs } from "../recorded-outputs";
 import { assertOverrides, findReplaceOverride } from "../overrides";
 import { workflowRegistry, type ResourceRegistry } from "../resource-registry";
@@ -36,6 +37,18 @@ export async function* deploy(
   opts: DurableDeployOptions,
 ): AsyncGenerator<any, void, any> {
   assertDependenciesPresent(opts.resources);
+  // Not a step: what `prefetch` returns is kept in memory only, so a resumed
+  // deploy calls it again.
+  const prefetched = await prefetchSources({
+    resources: opts.resources,
+    state: opts.state,
+    recordedOutputs: await readRecordedOutputs(opts.resources, opts.state),
+    point: "deploy",
+    executionId: opts.executionId,
+    app: opts.app,
+    stage: opts.stage,
+    emit: opts.emit,
+  });
   // A step, so that a resumed execution does not run every resource's
   // deriveParams again.
   yield* step.run("notation:validate", async () => {
@@ -64,6 +77,7 @@ export async function* deploy(
       recordedOutputs: yield* step.run("notation:recorded-outputs", () =>
         readRecordedOutputs(opts.resources, opts.state),
       ),
+      prefetched,
       reconciled: new Set(),
     };
     // Reconcile in dependency order, so a resource only runs once its

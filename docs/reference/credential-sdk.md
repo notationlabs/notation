@@ -71,11 +71,12 @@ Declaring any `"credential"` property other than `value` throws synchronously in
 Passed as the second argument to `loadCredential` and extended by `CredentialSourceReadContext`:
 
 ```ts [@notation/resource]
-export type CredentialSourceContext = {
+export type CredentialSourceContext<Prefetched = unknown> = {
   id: string;
   executionId: string;
   app: string;
   stage: string;
+  prefetched?: Prefetched;
 };
 ```
 
@@ -86,11 +87,13 @@ export type CredentialSourceContext = {
 Passed as the second argument to `read`:
 
 ```ts [@notation/resource]
-export type CredentialSourceReadContext<State = any> =
-  CredentialSourceContext & {
-    state: State | undefined;
-    warn(message: string): void;
-  };
+export type CredentialSourceReadContext<
+  State = any,
+  Prefetched = unknown,
+> = CredentialSourceContext<Prefetched> & {
+  state: State | undefined;
+  warn(message: string): void;
+};
 ```
 
 `state` holds previously recorded params and computed outputs (excluding `hidden` params and credentials), or `undefined` when no state record exists. Call `warn(message)` to display a warning for the source during `plan` and `deploy`.

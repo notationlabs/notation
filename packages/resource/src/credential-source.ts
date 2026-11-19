@@ -24,7 +24,7 @@ export type DefineCredentialSourceApiSchema = {
 };
 
 /** What a source's operations are told about the deploy or plan. */
-export type CredentialSourceContext = {
+export type CredentialSourceContext<Prefetched = unknown> = {
   /** The ID of the source. */
   id: string;
   /**
@@ -34,18 +34,26 @@ export type CredentialSourceContext = {
   executionId: string;
   app: string;
   stage: string;
+  /**
+   * What the class's `prefetch` returned in this plan or deploy. Undefined
+   * when the class has no `prefetch`, or when no source of the class had
+   * known params.
+   */
+  prefetched?: Prefetched;
 };
 
-export type CredentialSourceReadContext<State = any> =
-  CredentialSourceContext & {
-    /**
-     * The outputs in the source's record, without its credential. Undefined
-     * when the source has no record.
-     */
-    state: State | undefined;
-    /** Shows a warning for the source in the output of plan and deploy. */
-    warn(message: string): void;
-  };
+export type CredentialSourceReadContext<
+  State = any,
+  Prefetched = unknown,
+> = CredentialSourceContext<Prefetched> & {
+  /**
+   * The outputs in the source's record, without its credential. Undefined
+   * when the source has no record.
+   */
+  state: State | undefined;
+  /** Shows a warning for the source in the output of plan and deploy. */
+  warn(message: string): void;
+};
 
 /** The outputs that `read` returns: every computed property, with `revision`. */
 export type CredentialSourceReadResult<T extends ResourceTypes> = Omit<
@@ -53,7 +61,47 @@ export type CredentialSourceReadResult<T extends ResourceTypes> = Omit<
   keyof T["params"]
 >;
 
-export type CredentialSourceOperations<T extends ResourceTypes> = {
+/** What a source's `prefetch` is told about the deploy or plan. */
+export type CredentialSourcePrefetchContext = {
+  /** See `CredentialSourceContext.executionId`. */
+  executionId: string;
+  app: string;
+  stage: string;
+  /** Shows a message in the output of plan and deploy. */
+  notify(message: string): void;
+};
+
+/** A source that `prefetch` receives. */
+export type PrefetchedSource<Params = any> = {
+  id: string;
+  params: Params;
+};
+
+export type CredentialSourcePrefetchResult<Prefetched = unknown> = {
+  /** What the source's `read` and `loadCredential` need. */
+  prefetched: Prefetched;
+  /** The sources that could not be fetched. */
+  failed: { id: string; error: Error }[];
+};
+
+export type CredentialSourceOperations<
+  T extends ResourceTypes,
+  Prefetched = undefined,
+> = {
+  /**
+   * Fetches what every source of the class needs, before plan or deploy
+   * plans or changes any resource. Plan and deploy call it once, with each
+   * source whose params are known. A resumed deploy calls it again. The
+   * engine passes `prefetched` to `read` and `loadCredential` as
+   * `context.prefetched`, and keeps it in memory only. A source that is in
+   * `failed` fails the plan or deploy. A source that is in neither `failed`
+   * nor `prefetched` is fetched by its own `read`. Throws for a failure that
+   * concerns every source.
+   */
+  prefetch?: (
+    sources: PrefetchedSource<T["params"]>[],
+    context: CredentialSourcePrefetchContext,
+  ) => Promise<CredentialSourcePrefetchResult<Prefetched>>;
   /**
    * Returns the source's `revision`, and never the value. It may read the
    * value to work the revision out. Plan and deploy call it for every
@@ -62,7 +110,7 @@ export type CredentialSourceOperations<T extends ResourceTypes> = {
    */
   read: (
     params: T["params"],
-    context: CredentialSourceReadContext<T["state"]>,
+    context: CredentialSourceReadContext<T["state"], Prefetched>,
   ) => Promise<CredentialSourceReadResult<T>>;
   /**
    * Returns the value for the revision in `state`, and the same value each
@@ -73,12 +121,20 @@ export type CredentialSourceOperations<T extends ResourceTypes> = {
    */
   loadCredential: (
     state: T["state"],
-    context: CredentialSourceContext,
+    context: CredentialSourceContext<Prefetched>,
   ) => Promise<T["credentials"]["value"]>;
 };
 
 export interface BaseCredentialSource extends BaseResource {
   readonly kind: "credential-source";
+  /**
+   * See `CredentialSourceOperations.prefetch`. Every source of a class has
+   * the same function, so the engine groups sources by it.
+   */
+  readonly prefetch?: (
+    sources: PrefetchedSource[],
+    context: CredentialSourcePrefetchContext,
+  ) => Promise<CredentialSourcePrefetchResult>;
   /** See `CredentialSourceOperations.read`. */
   readSource(
     params: any,
@@ -107,8 +163,9 @@ export abstract class CredentialSource<
   C extends Record<string, any> = T["params"],
 > extends Resource<T, {}, C> {
   override readonly kind = "credential-source" as const;
-  abstract readSource: CredentialSourceOperations<T>["read"];
-  abstract loadCredential: CredentialSourceOperations<T>["loadCredential"];
+  readonly prefetch?: CredentialSourceOperations<T, any>["prefetch"];
+  abstract readSource: CredentialSourceOperations<T, any>["read"];
+  abstract loadCredential: CredentialSourceOperations<T, any>["loadCredential"];
   read = undefined;
   update = undefined;
   create = async (): Promise<never> => {
@@ -148,8 +205,11 @@ export type CredentialSourceBuilder<
   defineSchema: <S extends CredentialSourceSchema<Api>>(
     schema: S,
   ) => {
-    defineOperations: (
-      opts: CredentialSourceOperations<InferResourceTypes<ResolveSchema<S>>>,
+    defineOperations: <Prefetched = undefined>(
+      opts: CredentialSourceOperations<
+        InferResourceTypes<ResolveSchema<S>>,
+        Prefetched
+      >,
     ) => CredentialSourceClass<InferResourceTypes<ResolveSchema<S>>>;
   };
 };
@@ -195,6 +255,7 @@ export function credentialSourceResource<
             type = meta.type;
             provider = meta.provider;
             schema = schema;
+            override readonly prefetch = opts.prefetch;
             readSource = opts.read;
             loadCredential = opts.loadCredential;
 
