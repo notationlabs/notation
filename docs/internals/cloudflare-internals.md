@@ -28,7 +28,7 @@ Storing `AccountId` in state ensures updates and deletes target the owning accou
 
 ### Declaration marks
 
-`$worker` (`packages/cloudflare/src/workers/worker.ts`) carries `@declaration shared: id, bindings; runtime: entrypoint; entryOption: entrypoint; keys: bindings; entry: default; platform: workerd; outputs: url`. `worker()` and `addBindings()` carry `@resource` and throw at runtime. In `packages/cloudflare/src/workers/runtime.ts`, `$worker` defines a non-enumerable `url` getter that throws if Worker code reads `url` directly (see [Transforms](./transforms.md)).
+`$worker` (`packages/cloudflare/src/workers/worker.ts`) carries `@declaration shared: id, bindings; runtime: entrypoint; entryOption: entrypoint; keys: bindings; entry: default; platform: workerd; outputs: url, scriptName`. `worker()` and `addBindings()` carry `@resource` and throw at runtime. In `packages/cloudflare/src/workers/runtime.ts`, `$worker` defines non-enumerable `url` and `scriptName` getters that throw if Worker code reads them directly (see [Transforms](./transforms.md)).
 
 ### Entry export inspection
 
@@ -63,7 +63,7 @@ During incremental updates, the reconciler passes `undefined` for unchanged cred
 
 ### Placeholder uploads
 
-Service bindings (`{ type: "service", name, service: bound.script.outputRef("ScriptName") }`) and `OutputRef`/`Derived` `plain_text` bindings (including a Worker's own `url` or mutual `url` bindings) attach via `script.contribute({ Bindings: [...] })` rather than direct `config`.
+Service bindings (`{ type: "service", name, service: bound.script.outputRef("ScriptName") }`) and `OutputRef`/`Derived` `plain_text` bindings (including a Worker's own `url` or mutual `url` bindings) attach via `script.contribute({ Bindings: [...] })` rather than direct `config`. Tail consumers attach the same way, via `script.contribute({ TailConsumers: [{ service: bound.script.outputRef("ScriptName") }] })`.
 
 Because `WorkerScript.Bindings` is optional and mutable, the cycle breaker ([Planner](./planner.md), [Durable Execution](./durable-execution.md)) resolves mutual binding cycles in three steps. It uploads one Worker first as a placeholder without peer-dependent `Bindings`, uploads the peer, and finally updates the placeholder with the resolved `ScriptName` or `Url`.
 
