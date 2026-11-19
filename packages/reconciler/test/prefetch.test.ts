@@ -403,7 +403,7 @@ describe("prefetch", () => {
     runtime.close();
   });
 
-  it("leaves out a source whose params hold an output that is not deployed, which read fetches", async () => {
+  it("leaves out a source whose params hold an output, which read fetches", async () => {
     const outside = createOutside();
     outside.values.set("A1", "a1-value");
     outside.values.set("named", "named-value");
@@ -436,10 +436,40 @@ describe("prefetch", () => {
       prefetched: { executionId: "first", values: { A1: "a1-value" } },
     });
 
-    // Once the output is in state, the source is passed.
+    // The output is in state now, and the source is still left out.
     outside.calls.length = 0;
     await plan(declareWithRef(), runtime);
-    expect(outside.calls[0]).toBe("prefetch Alpha a1:A1,a-ref:named");
+    expect(outside.calls[0]).toBe("prefetch Alpha a1:A1");
+    runtime.close();
+  });
+
+  it("leaves out a source that depends on a resource, even with known params", async () => {
+    const outside = createOutside();
+    setValues(outside);
+    const types = defineResources(outside);
+    const declareWithDependency = () => {
+      const plain = new types.Secret("plain", {
+        config: { name: "plain", Value: "v" },
+      });
+      const independent = new types.Alpha("a1", { config: { key: "A1" } });
+      const dependent = new types.Alpha("a2", { config: { key: "A2" } });
+      dependent.dependOn(plain);
+      return [plain, independent, dependent];
+    };
+    const runtime = createRuntime();
+
+    await plan(declareWithDependency(), runtime);
+    await runtime.deploy("first", declareWithDependency());
+
+    expect(outside.calls).toEqual([
+      "prefetch Alpha a1:A1",
+      "read Alpha A1",
+      "read Alpha A2",
+      "prefetch Alpha a1:A1",
+      "create plain=v",
+      "read Alpha A1",
+      "read Alpha A2",
+    ]);
     runtime.close();
   });
 

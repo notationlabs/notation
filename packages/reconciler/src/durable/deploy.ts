@@ -37,20 +37,6 @@ export async function* deploy(
   opts: DurableDeployOptions,
 ): AsyncGenerator<any, void, any> {
   assertDependenciesPresent(opts.resources);
-  // Not a step: what `prefetch` returns is kept in memory only. Each delivery
-  // replays this function from the top, so a resume and a wake after a
-  // suspend, such as the deployment hold wait or a retry delay, call it
-  // again.
-  const prefetched = await prefetchSources({
-    resources: opts.resources,
-    state: opts.state,
-    recordedOutputs: await readRecordedOutputs(opts.resources, opts.state),
-    point: "deploy",
-    executionId: opts.executionId,
-    app: opts.app,
-    stage: opts.stage,
-    emit: opts.emit,
-  });
   // A step, so that a resumed execution does not run every resource's
   // deriveParams again.
   yield* step.run("notation:validate", async () => {
@@ -74,12 +60,27 @@ export async function* deploy(
     // Read once, inside the hold, so that every `~state` ref reads the
     // records as they were at the start of the deploy, and a resumed deploy
     // reads the same ones.
+    const recordedOutputs = yield* step.run("notation:recorded-outputs", () =>
+      readRecordedOutputs(opts.resources, opts.state),
+    );
+    // Not a step: what `prefetch` returns is kept in memory only. Each
+    // delivery replays this function from the top, so a resume and a wake
+    // after a suspend, such as a retry delay, call it again. It runs after
+    // validation and inside the hold, so that a validation or override error
+    // comes before any prompt that `prefetch` shows, and a deploy that waits
+    // for the hold shows no prompt until it has the hold.
     const deployOpts: DeployContext = {
       ...opts,
-      recordedOutputs: yield* step.run("notation:recorded-outputs", () =>
-        readRecordedOutputs(opts.resources, opts.state),
-      ),
-      prefetched,
+      recordedOutputs,
+      prefetched: await prefetchSources({
+        resources: opts.resources,
+        recordedOutputs,
+        point: "deploy",
+        executionId: opts.executionId,
+        app: opts.app,
+        stage: opts.stage,
+        emit: opts.emit,
+      }),
       reconciled: new Set(),
     };
     // Reconcile in dependency order, so a resource only runs once its

@@ -144,7 +144,7 @@ All sources in one `plan` or `deploy` read from one account. Sources in two acco
 
 With the desktop app, `op` asks you to approve access the first time it runs in a terminal session. The prompt appears in the 1Password app, not in the terminal. An approval lasts for that terminal session, and covers every process that the session starts, until it expires.
 
-Notation fetches every `OnePasswordSecret` at the start of `plan` and `deploy`, before it changes any resource. So you see at most one prompt for each command, right after you run it. While `op` waits for you, the output shows:
+Notation fetches the `OnePasswordSecret` sources at the start of `plan` and `deploy`, before it changes any resource. So you see at most one prompt for each command, right after you run it. While `op` waits for you, the output shows:
 
 ```txt
 … Waiting for 1Password. Approve the request in the 1Password app. (1password/secrets/OnePasswordSecret)
@@ -154,8 +154,11 @@ Notation fetches every `OnePasswordSecret` at the start of `plan` and `deploy`, 
 
 - **At a terminal**, you approve once. Later plans and deploys in the same terminal session run without a prompt until the approval expires.
 - **`notation watch`** fetches every item on each deploy, so each deploy takes at least 1.3 seconds longer. The deploys run in the terminal session of `notation watch`, so one approval covers them.
-- **A deploy that continues** fetches every item again, and so can show a prompt. This happens when a deploy is resumed, and when it wakes after it waited for another deploy to finish or for a retry delay.
-- **A source whose `reference` is built from another resource's output** is fetched at the start only when that output is already in state. When the output is not deployed yet, Notation fetches the item when it reads the source, in the middle of the deploy. If the approval has expired by then, the prompt appears during the deploy.
+- **A deploy that continues** fetches every item again, and so can show a prompt. This happens when a deploy is resumed, and when it wakes after a retry delay.
+- **A deploy that waits for another deploy to finish** fetches the items only after the other deploy has finished. It shows no prompt while it waits.
+- **A source that depends on another resource** is not fetched at the start. This includes a source whose `reference` is built from another resource's output. Notation fetches its item when it reads the source, in the middle of the plan or deploy. If the approval has expired by then, the prompt appears at that point.
+
+With `OP_SERVICE_ACCOUNT_TOKEN` or `OP_CONNECT_HOST` set, there is no prompt, and the output does not show the message.
 
 ### Agents
 

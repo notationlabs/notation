@@ -60,16 +60,15 @@ After applying an action, `findCredentialsNotReceived` inspects `given` (excludi
 
 Plan and deploy read sources one at a time, in dependency order. So without help, the first read of a source can come halfway through a deploy, after other resources have changed. A source class can define the optional `prefetch` operation to fetch what all of its sources need at the start instead. For example, `OnePasswordSecret` uses it so that the 1Password desktop app shows at most one approval prompt, right after the command starts. See [1Password Internals](./1password-internals.md#fetching-items).
 
-`prefetchSources` (`packages/reconciler/src/prefetch.ts`) runs `prefetch` in four steps:
+`prefetchSources` (`packages/reconciler/src/prefetch.ts`) runs `prefetch` in three steps:
 
-1. **Load the outputs.** It loads the output of every resource from state with `loadOutput`.
-2. **Plan the params.** For each source that has a `prefetch`, it plans the params with `planKnownParams`, as `validateKnownParams` does, and groups the source by its `prefetch` function. Every source of a class has the same function, so each group is one class. A source whose params hold an output that is not deployed yet is left out. Its own `read` fetches it later. A source whose params hold an output that is in state is passed with that output.
-3. **Call each group.** It calls each group's `prefetch` once, with `{ id, params }` for every source in the group, and with `executionId`, `app`, `stage` and `notify`.
-4. **Collect the failures.** It scrubs the message of each source in `failed` with `scrubSecretValues`, and after the last group throws one `SourcePrefetchError` that lists them all.
+1. **Choose the sources.** It takes each source that has a `prefetch` and depends on no other resource (`getDependencyIds(source)` is empty). It plans the params with `planParams`, and resolves `~state` refs through `recordedOutputs`. It leaves out a source whose params are still unknown, and checks the others with `validateParams`. It groups the sources by their `prefetch` function. Every source of a class has the same function, so each group is one class.
+2. **Call each group.** It calls each group's `prefetch` once, with `{ id, params }` for every source in the group, and with `executionId`, `app`, `stage` and `notify`.
+3. **Collect the failures.** It scrubs the message of each source in `failed` with `scrubSecretValues`, and after the last group throws one `SourcePrefetchError` that lists them all.
 
-`prefetchSources` leaves the loaded outputs in place. Plan and deploy load each resource's output from state again before they plan or reconcile it, and they reach a resource's dependencies before it, so the outputs from step 1 do not change a decision.
+Each source that is left out is fetched later by its own `read`. A source that depends on another resource is left out even when that resource's outputs are in state. Plan and deploy can replace the resource, and then its new outputs are unknown. Params built from the old outputs could name a value that no longer exists, and the source would fail a plan or deploy that would otherwise pass.
 
-A `prefetch` that throws stops the calls of the groups after it. `prefetchSources` scrubs the error with `scrubError` and rethrows it. A class throws in this way for a failure that concerns all of its sources, such as a missing `op` binary.
+A `prefetch` that throws stops the calls of the groups after it, and the failures from the groups before it are dropped. `prefetchSources` scrubs the error with `scrubError` and rethrows it. A class throws in this way for a failure that concerns all of its sources, such as a missing `op` binary.
 
 A `SourcePrefetchError` names each failed source, its type and its message:
 
@@ -86,10 +85,12 @@ A `SourcePrefetchError` names each failed source, its type and its message:
 | Command | Call site | Runs before |
 | :--- | :--- | :--- |
 | `plan` | `createPlan` (`packages/reconciler/src/planner.ts`), after `readRecordedOutputs` | The first `planResource` |
-| `deploy` | `deploy()` (`packages/reconciler/src/durable/deploy.ts`), first statement after `assertDependenciesPresent` | The `notation:validate` step and the deployment hold |
+| `deploy` | `deploy()` (`packages/reconciler/src/durable/deploy.ts`), inside `withDeploymentHold`, right after the `notation:recorded-outputs` step, with those recorded outputs | The first `reconcileResource` or `reconcileCycle` |
 | `destroy` | Not called | |
 
-**The call in `deploy()` is not a durable step.** The durable runtime runs `deploy()` from the top on every delivery of the workflow, and replays the steps that finished from the journal. The result of `prefetch` is only in memory, so each delivery calls `prefetch` again, and uses nothing that an earlier delivery fetched. A delivery ends when the deploy suspends, so this happens on a resume, and also on the wake after a suspend, such as the wait for the deployment hold or a retry delay.
+**The call in `deploy()` is not a durable step.** The durable runtime runs `deploy()` from the top on every delivery of the workflow, and replays the steps that finished from the journal. The result of `prefetch` is only in memory, so each delivery calls `prefetch` again, and uses nothing that an earlier delivery fetched. A delivery ends when the deploy suspends, so this happens on a resume, and also on the wake after a suspend, such as a retry delay.
+
+The call comes after `notation:validate` and after the deployment hold is acquired. So a validation or override error comes before any prompt that a `prefetch` shows, and a deploy that waits for the hold shows no prompt while it waits. Nothing has changed at that point.
 
 This has a cost for a later delivery. It replays the `read` of each source from the journal, and loads a value only for a consumer that is not written yet. `prefetch` still fetches every source, and a source that fails still fails the deploy, even when the delivery would not have loaded it. Such a failure can come after an earlier delivery changed resources. The engine can't tell a later delivery from the first before it replays the journal, so it uses one rule for all of them.
 

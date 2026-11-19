@@ -40,14 +40,14 @@ The package also never runs `op item list`. `op item get` resolves names, and re
 
 ## Fetching items
 
-`OnePasswordSecret.prefetch` receives every `OnePasswordSecret` whose params are known, and fetches their items in four steps:
+`OnePasswordSecret.prefetch` receives every `OnePasswordSecret` that depends on no other resource and whose params are known, and fetches their items in four steps:
 
 1. Group the sources by the item and the vault in their reference, so that each item is fetched once. Two references to the same item share one call.
-2. Run `op item get` for the first item alone. If the call has not ended after 2 seconds, call `context.notify("Waiting for 1Password. Approve the request in the 1Password app.")`.
+2. Run `op item get` for the first item alone. If the call has not ended after 2 seconds, call `context.notify("Waiting for 1Password. Approve the request in the 1Password app.")`. When `OP_SERVICE_ACCOUNT_TOKEN` or `OP_CONNECT_HOST` is set, `op` does not use the app, so there is no message. `withAdvice` uses the same check (`signsInWithoutApp`).
 3. Once the first call has ended without a failure that concerns every item, run one call for each other item, at most eight at a time.
 4. For each source, find its field in the item. Put `{ id, version, value }` in `prefetched` under the text of the reference, or put the source in `failed`.
 
-`read` and `loadCredential` look up `context.prefetched.get(reference)`. When it holds the reference, they make no `op` call. When it does not, they fetch the item alone. For example, `prefetch` gets no source whose `reference` is built from an output that is not deployed yet. Its `read` fetches the item alone, and its `loadCredential` fetches it again. A reference built from an output that is already in state is passed to `prefetch` with the output from state.
+`read` and `loadCredential` look up `context.prefetched.get(reference)`. When it holds the reference, they make no `op` call. When it does not, they fetch the item alone. For example, `prefetch` gets no source that depends on another resource, such as a source whose `reference` is built from another resource's output. Its `read` fetches the item alone, and its `loadCredential` fetches it again.
 
 ### Why the first call runs alone
 
@@ -140,7 +140,7 @@ The default is weaker than it is for `InfisicalSecret`, because 1Password raises
 
 ### Loading the value
 
-`loadCredential` takes the entry from `context.prefetched`, so a deploy loads the same version that its `read` saw. Each delivery of the deploy workflow calls `prefetch` again: a resume, or a wake after the deployment hold or a retry delay. In a later delivery, `context.prefetched` holds what `prefetch` fetched at the start of that delivery, and the revision in state can come from an earlier one. `loadCredential` checks the entry against the revision:
+`loadCredential` takes the entry from `context.prefetched`, so a deploy loads the same version that its `read` saw. Each delivery of the deploy workflow that gets the deployment hold calls `prefetch` again: a resume, or a wake after a retry delay. In a later delivery, `context.prefetched` holds what `prefetch` fetched at the start of that delivery, and the revision in state can come from an earlier one. `loadCredential` checks the entry against the revision:
 
 - **Another item ID.** The item was deleted, and another item with the same name was added. `loadCredential` throws `ItemReplacedError`, which asks the user to run deploy again.
 - **Another version.** `op` can't fetch the version that `read` saw, so `loadCredential` throws an error that ends "changed after deploy read it. Run deploy again."
@@ -151,7 +151,7 @@ The default is weaker than it is for `InfisicalSecret`, because 1Password raises
 `op item get` prints every value of the item on stdout, not only the requested field. The package handles stdout and stderr as follows:
 
 - **Decoding.** The package parses stdout as one JSON document, and validates it with valibot. It replaces a parse or validation error with the fixed message "1Password returned output that notation can't read." The message of a `JSON.parse` error contains part of the input, and the input contains values.
-- **Recorded values.** The package passes the value of each field that a source names to `recordSecretValue`, whatever the field's type, because a connection URL is often in a text field. It also records every `CONCEALED` value of the item with eight characters or more. It does not record a shorter one, such as a PIN, because the scrubber replaces every occurrence of a recorded value, and a four-digit value would hide ordinary text in the output.
+- **Recorded values.** The package passes the value of each field that a source names to `recordSecretValue`, whatever the field's type and length. It is the deployed credential, so it is always scrubbed. A connection URL, for example, is often in a text field. Of the item's other fields, the package records every `CONCEALED` value with eight characters or more. It does not record a shorter one, such as a PIN, because the scrubber replaces every occurrence of a recorded value, and a four-digit value would hide ordinary text in the output.
 - **Kept values.** `prefetched` holds only the value of each field that a source names, with the item's ID and version. These values stay in memory until the plan or deploy ends.
 - **Failed calls.** The package discards the stdout of a failed call. The error message is `op failed with exit code <code>: <text>`, or `op was stopped by <signal>. <text>`. `<text>` is stderr without the `[ERROR] <date> <time> ` prefix at the start of each line.
 - **stderr.** The package passes stderr through `scrubSecretValues`, and includes it in the error, because messages such as `isn't an item` tell the user what to do. The `stderr` property of `OnePasswordError` keeps the scrubbed text with the prefixes. stdout is never included in an error.

@@ -517,6 +517,25 @@ describe("OnePasswordSecret", () => {
       ]);
     }, 10_000);
 
+    it.each(["OP_SERVICE_ACCOUNT_TOKEN", "OP_CONNECT_HOST"])(
+      "does not show the message for a slow first call with %s set",
+      async (name) => {
+        vi.stubEnv(name, "set");
+        await setItems({
+          "Prod/Slow": {
+            item: item("Slow", {}, [{ label: "x", value: "slow value" }]),
+            delayMs: 2300,
+          },
+        });
+        const notify = vi.fn();
+
+        await prefetch([{ id: "slow", reference: "op://Prod/Slow/x" }], notify);
+
+        expect(notify).not.toHaveBeenCalled();
+      },
+      10_000,
+    );
+
     it("does not show the message for a fast first call", async () => {
       await setItems(appItems());
       const notify = vi.fn();

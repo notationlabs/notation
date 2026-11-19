@@ -92,7 +92,10 @@ export async function prefetchItems(
 
   const [first, ...rest] = items.values();
   if (!first) return { prefetched, failed };
-  const timer = setTimeout(() => notify(WAITING_MESSAGE), NOTIFY_AFTER_MS);
+  // A service account or a Connect server needs no approval in the app.
+  const timer = signsInWithoutApp()
+    ? undefined
+    : setTimeout(() => notify(WAITING_MESSAGE), NOTIFY_AFTER_MS);
   try {
     await fetchSources(first);
   } finally {
@@ -143,8 +146,10 @@ async function fetchItem(reference: Reference): Promise<Item> {
   }
   const item = decode(stdout);
   for (const field of item.fields) {
-    // A short value, such as a PIN, is not recorded: the scrubber replaces
-    // every occurrence of a recorded value, so it would hide ordinary text.
+    // A short value of another field, such as a PIN, is not recorded: the
+    // scrubber replaces every occurrence of a recorded value, so it would
+    // hide ordinary text. `toEntry` records the value that the reference
+    // names at any length, as it is the deployed credential.
     if (field.type === "CONCEALED" && field.value && field.value.length >= 8) {
       recordSecretValue(field.value);
     }
@@ -244,11 +249,7 @@ function withAdvice(error: unknown): unknown {
   if (error.stderr.includes("authorization timeout")) {
     advice =
       "No one approved the request in the 1Password app. A process with no person to approve it, such as an agent or a CI job, needs a 1Password service account in OP_SERVICE_ACCOUNT_TOKEN.";
-  } else if (
-    ONE_ITEM_ERROR.test(error.stderr) &&
-    !process.env.OP_SERVICE_ACCOUNT_TOKEN &&
-    !process.env.OP_CONNECT_HOST
-  ) {
+  } else if (ONE_ITEM_ERROR.test(error.stderr) && !signsInWithoutApp()) {
     advice = process.env.OP_ACCOUNT
       ? `op looked in the account in OP_ACCOUNT, \`${process.env.OP_ACCOUNT}\`.`
       : "op looked in the account that you signed in to last. Set OP_ACCOUNT to choose another.";
@@ -258,5 +259,13 @@ function withAdvice(error: unknown): unknown {
     `${error.message} ${advice}`,
     error.exitCode,
     error.stderr,
+  );
+}
+
+// `op` uses a service account or a Connect server, not the account of the
+// desktop app.
+function signsInWithoutApp(): boolean {
+  return Boolean(
+    process.env.OP_SERVICE_ACCOUNT_TOKEN || process.env.OP_CONNECT_HOST,
   );
 }

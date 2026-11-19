@@ -13,7 +13,7 @@ Before acquiring the deployment hold, `deploy` runs two checks:
 - **Dependency presence** – `assertDependenciesPresent(opts.resources)` verifies that every dependency is in the deployment or already has an output.
 - **Cached validation** – `step.run("notation:validate", ...)` runs `checkOverrides` and `validateKnownParams` once. Resumed runs skip re-running `deriveParams`, re-checking `rejectChange` or `assertOrphanDeleteAllowed`, and re-collecting `UnobtainableCredentialError`.
 
-Inside `withDeploymentHold`, `deploy` re-checks `opts.overrides` under `notation:overrides` against any prior holder's state. It snapshots `~state` targets once under `notation:recorded-outputs` via `readRecordedOutputs`, walks `orderDeployUnits(opts.resources)` (`reconcileCycle` or `reconcileResource`), and finishes with `sweepOrphans`.
+Inside `withDeploymentHold`, `deploy` re-checks `opts.overrides` under `notation:overrides` against any prior holder's state. It snapshots `~state` targets once under `notation:recorded-outputs` via `readRecordedOutputs`, calls `prefetchSources` with those outputs outside any step (see [Secrets Engine](./secrets-engine.md#source-prefetching)), walks `orderDeployUnits(opts.resources)` (`reconcileCycle` or `reconcileResource`), and finishes with `sweepOrphans`.
 
 ### Durable Stores
 

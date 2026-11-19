@@ -158,7 +158,6 @@ export async function createPlan({
   const recordedOutputs = await readRecordedOutputs(resources, state);
   const prefetched = await prefetchSources({
     resources,
-    state,
     recordedOutputs,
     point: "plan",
     executionId,

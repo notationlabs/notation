@@ -6,11 +6,11 @@ import {
   type PrefetchedSource,
   type RecordedOutputs,
   type ResourceType,
+  validateParams,
 } from "@notation/resource";
-import type { StateNode } from "@notation/state";
 import { scrubError, scrubSecretValues } from "@notation/utils";
 import type { ReconcilerEventEmitter } from "./events";
-import { loadOutput, planKnownParams } from "./planner";
+import { getDependencyIds } from "./plan";
 
 type PrefetchFunction = NonNullable<BaseCredentialSource["prefetch"]>;
 
@@ -66,19 +66,18 @@ export function prefetchedFor(
 
 /**
  * Calls the `prefetch` of each class of source once, with every source of
- * the class whose params are known. A source whose params hold an output
- * that is not deployed yet is left out. Throws one `SourcePrefetchError`
- * with every source that a `prefetch` returned in `failed`. A `prefetch`
- * that throws stops the calls of the classes after it.
+ * the class that depends on no other resource and whose params are known.
+ * Each source that is left out is fetched by its own `read`. Throws one
+ * `SourcePrefetchError` with every source that a `prefetch` returned in
+ * `failed`. A `prefetch` that throws stops the calls of the classes after
+ * it, and the failures from the classes before it are dropped.
  *
- * The params are planned from the outputs in state, as `validateKnownParams`
- * plans them. The outputs are left loaded. This is safe because plan and
- * deploy load each resource's output from state again before they plan or
- * reconcile it, and they reach a resource's dependencies before it.
+ * A source that depends on another resource is left out, because plan and
+ * deploy can replace that resource, and the params built from its old
+ * outputs can name a value that the source no longer has.
  */
 export async function prefetchSources({
   resources,
-  state,
   recordedOutputs,
   point,
   executionId,
@@ -87,7 +86,6 @@ export async function prefetchSources({
   emit,
 }: {
   resources: BaseResource[];
-  state: { get(id: string): Promise<StateNode | undefined> };
   recordedOutputs: RecordedOutputs;
   point: "plan" | "deploy";
   executionId: string;
@@ -102,19 +100,17 @@ export async function prefetchSources({
     isCredentialSource(resource) && resource.prefetch !== undefined;
   if (!resources.some(hasPrefetch)) return prefetched;
 
-  for (const resource of resources) await loadOutput(resource, state);
   const groups = new Map<
     PrefetchFunction,
     { type: ResourceType; sources: PrefetchedSource[] }
   >();
   for (const resource of resources.filter(hasPrefetch)) {
-    const { params } = await planKnownParams(
-      resource,
-      state,
-      point,
-      recordedOutputs,
-    );
+    if (getDependencyIds(resource).length > 0) continue;
+    // A `~state` ref resolves through `recordedOutputs`, and is unknown when
+    // its target has no record.
+    const params = await resource.planParams({ recordedOutputs });
     if (containsUnknownAfterApply(params)) continue;
+    await validateParams(resource, params, point);
     const group = groups.get(resource.prefetch) ?? {
       type: resource.type,
       sources: [],
@@ -134,16 +130,16 @@ export async function prefetchSources({
         // Not awaited: the emitters write the event before they return. A
         // notice that fails to show must not fail the plan or deploy.
         notify: (message) => {
-          void Promise.resolve()
-            .then(() =>
+          try {
+            void Promise.resolve(
               emit?.({
                 level: "info",
                 event: "reconciler.source.notice",
                 resourceType: group.type,
                 message,
               }),
-            )
-            .catch(() => {});
+            ).catch(() => {});
+          } catch {}
         },
       });
     } catch (error) {
