@@ -175,6 +175,9 @@ describe("$worker", () => {
       Bindings: [],
       DurableObjectNamespaces: [],
       BoundDurableObjects: [],
+      Observability: { enabled: false },
+      Logpush: false,
+      TailConsumers: [],
     });
     expect(api.subdomain?.dependencies.script).toBe(api.script);
   });
@@ -1283,7 +1286,7 @@ describe("$worker", () => {
 });
 
 describe("logs", () => {
-  it("passes Workers Logs and Logpush to the script, and leaves them out when unset", async () => {
+  it("passes Workers Logs and Logpush to the script, and turns them off when unset", async () => {
     const graph = await collect(() => {
       inWorker(
         $worker({
@@ -1301,8 +1304,11 @@ describe("logs", () => {
       Observability: { enabled: true, head_sampling_rate: 0.25 },
       Logpush: true,
     });
-    expect(group(graph, "plain").script.config.Observability).toBeUndefined();
-    expect(group(graph, "plain").script.config.Logpush).toBeUndefined();
+    expect(group(graph, "plain").script.config).toMatchObject({
+      Observability: { enabled: false },
+      Logpush: false,
+      TailConsumers: [],
+    });
   });
 
   it("sends Cloudflare's default sampling rate when it is unset", async () => {
@@ -1319,7 +1325,7 @@ describe("logs", () => {
         $worker({
           id: "off",
           compatibilityDate,
-          observability: { enabled: false, headSamplingRate: 0.5 },
+          observability: { enabled: false },
         }),
         "runtime/off.ts",
       );
@@ -1332,6 +1338,43 @@ describe("logs", () => {
     expect(group(graph, "off").script.config.Observability).toEqual({
       enabled: false,
     });
+  });
+
+  it.each([-0.1, 1.5, Number.NaN])(
+    "fails for a head sampling rate of %s",
+    async (rate) => {
+      await expect(
+        collect(() => {
+          inWorker(
+            $worker({
+              id: "api",
+              compatibilityDate,
+              observability: { enabled: true, headSamplingRate: rate },
+            }),
+            "runtime/api.ts",
+          );
+        }),
+      ).rejects.toThrow(
+        `$worker({ id: "api" }) in runtime/api.ts sets observability.headSamplingRate to ${rate}. Set it to a number from 0 to 1.`,
+      );
+    },
+  );
+
+  it("fails for a head sampling rate without enabled: true", async () => {
+    await expect(
+      collect(() => {
+        inWorker(
+          $worker({
+            id: "api",
+            compatibilityDate,
+            observability: { enabled: false, headSamplingRate: 0.5 },
+          }),
+          "runtime/api.ts",
+        );
+      }),
+    ).rejects.toThrow(
+      `$worker({ id: "api" }) in runtime/api.ts sets observability.headSamplingRate without enabled: true.`,
+    );
   });
 
   it("contributes each tail consumer by its script name, so either Worker can be created first", async () => {
@@ -1361,7 +1404,7 @@ describe("logs", () => {
     expect(api.script.getContributedParams()).toEqual(["TailConsumers"]);
     expect(
       (await deployParams(api, [], { peers: [api, tail] })).TailConsumers,
-    ).toBeUndefined();
+    ).toEqual([]);
     expect(await deployParams(api, [tail])).toMatchObject({
       TailConsumers: [{ service: nameOf("tail") }],
     });

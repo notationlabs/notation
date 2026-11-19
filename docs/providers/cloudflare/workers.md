@@ -237,7 +237,7 @@ A Worker's `console.log` output and uncaught exceptions can go to three places. 
 | `logpush` | The account's Logpush jobs for the `workers_trace_events` dataset | A Logpush job |
 | `tailConsumers` | The `tail` handler of other Workers that you declare | Nothing |
 
-Each `deploy` sets all three settings from config, and turns off an option that config leaves out.
+Each `deploy` sets all three settings from config, and turns off an option that config leaves out. A setting changed in the Cloudflare dashboard shows as drift in the plan, and `deploy` sets it back.
 
 ### Workers Logs
 
@@ -252,7 +252,7 @@ export const ordersWorker = $worker({
 });
 ```
 
-`headSamplingRate` is the share of requests that Cloudflare logs, from `0` to `1`, and Cloudflare's default is `1`. The logs appear on the Worker's **Observability** tab in the Cloudflare dashboard.
+`headSamplingRate` is the share of requests that Cloudflare logs, from `0` to `1`, and Cloudflare's default is `1`. Set it only with `enabled: true`. Notation throws when the rate is outside `0` to `1` or when `enabled` is `false`. The logs appear on the Worker's **Observability** tab in the Cloudflare dashboard.
 
 ### Logpush
 
@@ -260,7 +260,7 @@ Set `logpush: true` to send the Worker's trace events to Logpush. Notation turns
 
 ### Tail Workers
 
-A Tail Worker receives the logs, exceptions and outcome of each invocation of another Worker. Declare the Tail Worker with a `tail` handler:
+A Tail Worker receives the logs, exceptions and outcome of each invocation of another Worker. Cloudflare drops the events when a consumer has no `tail` handler, so declare the Tail Worker with one:
 
 ```ts [runtime/log-sink.ts]
 import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";

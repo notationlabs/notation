@@ -93,7 +93,8 @@ export type WorkerDeclarationConfig<
   /**
    * Workers Logs, which keeps the Worker's logs for search in the dashboard.
    * `headSamplingRate` is the share of requests that are logged, from 0 to
-   * 1, and defaults to 1. Leaving the option out turns Workers Logs off.
+   * 1, and defaults to 1. It can be set only with `enabled: true`. Leaving
+   * the option out turns Workers Logs off.
    */
   observability?: { enabled: boolean; headSamplingRate?: number };
   /**
@@ -103,8 +104,9 @@ export type WorkerDeclarationConfig<
   logpush?: boolean;
   /**
    * The Workers that receive this Worker's tail events, each declared with
-   * `$worker` or `worker()`. Each one must export a `tail` handler. It is
-   * called after all infra modules have loaded, as `bindings` is.
+   * `$worker` or `worker()`. Cloudflare drops the events for a consumer that
+   * has no `tail` handler. It is called after all infra modules have loaded,
+   * as `bindings` is.
    */
   tailConsumers?: () => Worker<any, any>[];
 };
@@ -127,7 +129,7 @@ export type WorkerConfig<
  * `false`. A `boolean` that isn't a literal gives `url`, and a read throws
  * when it is `false`.
  */
-export type WorkerUrl<U extends boolean> = {
+export type WorkerOutputs<U extends boolean> = {
   /**
    * The name that deploy gives the Worker in Cloudflare, such as
    * `<app>--<stage>--<id>-<instance>`. Pass it to `wrangler tail` to stream
@@ -244,6 +246,10 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
           BoundDurableObjects: config.boundNamespaces,
           Observability: config.observability,
           Logpush: config.logpush,
+          // Each tail consumer is a contribution. The list is set when there
+          // are none, so that a tail consumer added in the dashboard shows as
+          // drift.
+          TailConsumers: [],
         },
         dependencies: { code: this.code },
       }),
@@ -369,14 +375,14 @@ export function $worker<
   const U extends boolean = true,
 >(
   config: WorkerDeclarationConfig<Id, B, E> & { url?: U },
-): Worker<ResolvedValues<B>, E> & WorkerUrl<U> {
+): Worker<ResolvedValues<B>, E> & WorkerOutputs<U> {
   assertWorkerId("$worker", config.id);
   assertCompatibilityDate(`$worker({ id: "${config.id}" })`, config);
   const declaration = { id: config.id } as unknown as Worker<
     ResolvedValues<B>,
     E
   > &
-    WorkerUrl<U>;
+    WorkerOutputs<U>;
   registerWorker(config, {
     declaration,
     describe: () => {
@@ -421,7 +427,7 @@ export function worker<
   const U extends boolean = true,
 >(
   config: WorkerConfig<Id, B, E> & { url?: U },
-): Worker<ResolvedValues<B>, E> & WorkerUrl<U> {
+): Worker<ResolvedValues<B>, E> & WorkerOutputs<U> {
   assertWorkerId("worker()", config.id);
   const label = `worker({ id: "${config.id}" })`;
   assertCompatibilityDate(label, config);
@@ -430,7 +436,7 @@ export function worker<
     ResolvedValues<B>,
     E
   > &
-    WorkerUrl<U>;
+    WorkerOutputs<U>;
   if (!isBundle(code)) {
     if (code?.type !== "file" || typeof code.path !== "string" || !code.path) {
       throw new Error(
@@ -543,6 +549,7 @@ function registerWorker(
         entry,
         (host) => host.build([...chain, entry]).script,
       );
+      assertHeadSamplingRate(entry, config);
       group = new WorkerGroup({
         ...entry.code(),
         id: config.id,
@@ -566,13 +573,15 @@ function registerWorker(
           ? resolved.containers
           : undefined,
         url: config.url ?? true,
+        // Set when config leaves them out too, so that a change made in the
+        // dashboard shows as drift.
         observability: config.observability?.enabled
           ? {
               enabled: true,
               head_sampling_rate: config.observability.headSamplingRate ?? 1,
             }
-          : config.observability && { enabled: false },
-        logpush: config.logpush,
+          : { enabled: false },
+        logpush: config.logpush ?? false,
       });
       // Each service binding is a contribution, so that deploy can create
       // one of two Workers that bind each other first, without its binding.
@@ -697,6 +706,24 @@ function defineOutput(
       return (ref ??= makeRef());
     },
   });
+}
+
+function assertHeadSamplingRate(
+  entry: Entry,
+  config: WorkerDeclarationConfig<string, Bindings, unknown>,
+) {
+  const rate = config.observability?.headSamplingRate;
+  if (rate === undefined) return;
+  if (!config.observability?.enabled) {
+    throw new Error(
+      `${entry.describe()} sets observability.headSamplingRate without enabled: true. Set enabled: true, or remove headSamplingRate.`,
+    );
+  }
+  if (typeof rate !== "number" || !(rate >= 0 && rate <= 1)) {
+    throw new Error(
+      `${entry.describe()} sets observability.headSamplingRate to ${String(rate)}. Set it to a number from 0 to 1.`,
+    );
+  }
 }
 
 /** The Workers from the `tailConsumers` option, without repeats. */

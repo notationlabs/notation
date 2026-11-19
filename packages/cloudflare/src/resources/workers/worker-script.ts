@@ -368,7 +368,8 @@ export const WorkerScript = workerScriptSchema
     // secret deleted outside notation shows as drift and the update sends it
     // again. Cloudflare never returns secret values, so a changed value is
     // not detected. Each log setting is returned only when the params set
-    // it, so a Worker deployed before the setting existed shows no drift.
+    // it. A read after create or update is recorded as the output, so the
+    // output of a Worker whose params leave a setting out doesn't hold it.
     read: async (key, _context, params) => {
       const settings = await getScriptSettings(key.AccountId, key.ScriptName);
       if (!settings) {
