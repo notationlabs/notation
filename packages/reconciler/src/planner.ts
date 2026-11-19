@@ -602,7 +602,7 @@ export async function loadUnit(
  * Loads the resource's output from its state record, and returns the
  * record. Throws if the record has a different type.
  */
-export async function loadOutput(
+async function loadOutput(
   resource: BaseResource,
   state: { get(id: string): Promise<StateNode | undefined> },
 ): Promise<StateNode | undefined> {

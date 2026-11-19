@@ -7,6 +7,7 @@ import {
 import { clearSecretValues, recordSecretValue } from "@notation/utils";
 import { beforeEach, describe, expect, it } from "vitest";
 import { clearHeldCredentials } from "../src/credentials";
+import * as durable from "../src/durable";
 import { createPlan } from "../src/planner";
 import { SourcePrefetchError } from "../src/prefetch";
 import { createRuntime } from "./credentials-runtime";
@@ -469,6 +470,88 @@ describe("prefetch", () => {
       "create plain=v",
       "read Alpha A1",
       "read Alpha A2",
+    ]);
+    runtime.close();
+  });
+
+  it("is not called by a deploy that fails on validation or on an override", async () => {
+    const outside = createOutside();
+    setValues(outside);
+    const types = defineResources(outside);
+    const Guarded = resource<{
+      Key: { name: string };
+      CreateParams: { name: string; keep: boolean };
+      UpdateParams: { keep: boolean };
+      ReadResult: {};
+    }>({ type: "test/prefetch/Guarded", provider: "test" })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          primaryKey: true,
+          immutable: true,
+          value: v.string(),
+        },
+        keep: {
+          propertyType: "param",
+          presence: "required",
+          value: v.boolean(),
+        },
+      } as const)
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        delete: async () => undefined,
+        rejectChange: (previous, desired) =>
+          previous.keep && desired?.keep !== true ? "it is kept" : undefined,
+      });
+    const runtime = createRuntime();
+    await runtime.deploy("first", [
+      new Guarded("guarded", { config: { name: "g", keep: true } }),
+    ]);
+
+    await expect(
+      runtime.deploy("rejected", [
+        ...declare(types),
+        new Guarded("guarded", { config: { name: "g", keep: false } }),
+      ]),
+    ).rejects.toThrow("it is kept");
+    await expect(
+      runtime.deploy("override", declare(types), {
+        replace: [{ id: "missing" }],
+      }),
+    ).rejects.toThrow("missing");
+
+    expect(outside.calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("is not called by a deploy that waits for the deployment hold, until it holds it", async () => {
+    const outside = createOutside();
+    setValues(outside);
+    const types = defineResources(outside);
+    const runtime = createRuntime();
+    const hold = runtime.stores.store(
+      durable.deploymentHoldStore,
+      runtime.state.deploymentId,
+    );
+    await hold.update(() => ({ holder: "other-execution" }));
+
+    const waiting = await runtime.deploy("waiter", declare(types));
+
+    expect(waiting.status).toBe("suspended");
+    expect(outside.calls).toEqual([]);
+
+    await durable.clearDeploymentHold({
+      storeClient: runtime.stores,
+      deploymentId: runtime.state.deploymentId,
+      fromExecutionId: "other-execution",
+    });
+    await runtime.deploy("waiter", declare(types));
+
+    expect(outside.calls.slice(0, 2)).toEqual([
+      "prefetch Alpha a1:A1,a2:A2",
+      "prefetch Beta b1:B1",
     ]);
     runtime.close();
   });

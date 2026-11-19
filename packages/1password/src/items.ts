@@ -13,8 +13,7 @@ const WAITING_MESSAGE =
   "Waiting for 1Password. Approve the request in the 1Password app.";
 
 // The messages of `op` for a failure that concerns one item.
-const ONE_ITEM_ERROR =
-  /isn't an item|isn't a vault|More than one item matches/;
+const ONE_ITEM_ERROR = /isn't an item|isn't a vault|More than one item matches/;
 
 // The messages of `op` for an item or a vault that it can't find, which can
 // mean that it looked in the wrong account.

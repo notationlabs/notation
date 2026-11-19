@@ -452,7 +452,7 @@ describe("OnePasswordSecret", () => {
 
       expect(result.failed.map((failure) => failure.id)).toEqual(["missing"]);
       expect(result.failed[0]!.error.message).toBe(
-        'Can\'t fetch `op://Nope/Stripe/api key`. op failed with exit code 1: "Nope" isn\'t a vault in this account. Specify the vault with its ID or name. op looked in the account that you signed in to last. Set OP_ACCOUNT to choose another.',
+        "Can't fetch `op://Nope/Stripe/api key`. op failed with exit code 1: \"Nope\" isn't a vault in this account. Specify the vault with its ID or name. op looked in the account that you signed in to last. Set OP_ACCOUNT to choose another.",
       );
       expect([...(result.prefetched as Map<string, unknown>).keys()]).toEqual([
         "op://Prod/Orders database/url",
@@ -475,7 +475,7 @@ describe("OnePasswordSecret", () => {
 
       expect(result.failed.map((failure) => failure.id)).toEqual(["twin"]);
       expect(result.failed[0]!.error.message).toBe(
-        'Can\'t fetch `op://Prod/Twin/x`. op failed with exit code 1: More than one item matches "Twin". Try again and specify the item by its ID. Use the item\'s ID in the reference instead of its name.',
+        "Can't fetch `op://Prod/Twin/x`. op failed with exit code 1: More than one item matches \"Twin\". Try again and specify the item by its ID. Use the item's ID in the reference instead of its name.",
       );
     });
 
