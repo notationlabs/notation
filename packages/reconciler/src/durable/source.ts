@@ -18,7 +18,7 @@ import {
 import { emitErrorEvent, emitLifecycleEvent } from "../operations";
 import { getDependencyIds, hasSameEdges } from "../plan";
 import { assertSameType } from "../resource-type";
-import { prefetchedFor } from "../prefetch";
+import { canPrefetch, prefetchedFor } from "../prefetch";
 import { readAndDecideSource, sourceState } from "../sources";
 import { openStateSession, sameGroup } from "./reconcile";
 import { durableEmitter, type DurableStepRunner } from "./step";
@@ -33,7 +33,9 @@ async function sourceContext(
     executionId: opts.executionId,
     app: opts.app,
     stage: opts.stage,
-    ...prefetchedFor(await opts.prefetched(), source),
+    ...(canPrefetch(source)
+      ? prefetchedFor(await opts.getPrefetched(), source)
+      : {}),
   };
 }
 

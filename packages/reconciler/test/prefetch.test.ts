@@ -502,7 +502,7 @@ describe("prefetch", () => {
     runtime.close();
   });
 
-  it("fails the first read of a resumed deploy when a source can no longer be fetched", async () => {
+  it("is called before any change when a deploy resumes before it has once succeeded", async () => {
     const outside = createOutside();
     setValues(outside);
     const types = defineResources(outside);
@@ -524,9 +524,111 @@ describe("prefetch", () => {
       { id: "b1", type: "test/prefetch/Beta", message: "B1 is not set" },
     ]);
     expect(outside.calls).toEqual([
-      "create plain=v",
       "prefetch Alpha a1:A1,a2:A2",
       "prefetch Beta b1:B1",
+    ]);
+    expect(await runtime.state.values()).toEqual([]);
+    runtime.close();
+  });
+
+  it("fails a resumed deploy with the journaled error, and no new call, when it failed before the crash", async () => {
+    const outside = createOutside();
+    setValues(outside);
+    outside.failing = new Set(["A1"]);
+    const types = defineResources(outside);
+    const runtime = createRuntime({ crashAfterStep: "notation:prefetch" });
+    await expect(runtime.deploy("first", declare(types))).rejects.toThrow(
+      "simulated process crash",
+    );
+    outside.calls.length = 0;
+    outside.failing = new Set();
+
+    const error = await runtime
+      .nextProcess("first", declare(types))
+      .catch((error: unknown) => error);
+
+    expect(SourcePrefetchError.is(error)).toBe(true);
+    expect((error as Error).message).toContain(
+      "a1 (test/prefetch/Alpha): A1 is not set",
+    );
+    expect(outside.calls).toEqual([]);
+    expect(await runtime.state.values()).toEqual([]);
+    runtime.close();
+  });
+
+  it("is not called by a read or load of a source whose class has no prefetch, when a deploy resumes", async () => {
+    const outside = createOutside();
+    setValues(outside);
+    const types = defineResources(outside);
+    const Plain = credentialSourceResource<{
+      Params: { key: string };
+      Value: string;
+    }>({ type: "test/prefetch/Plain", provider: "test" })
+      .defineSchema({
+        key: { propertyType: "param", presence: "required", value: v.string() },
+        revision: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.string(),
+        },
+        value: { propertyType: "credential", value: v.string() },
+      } as const)
+      .defineOperations({
+        read: async (params, context) => {
+          outside.calls.push(`read Plain ${params.key}`);
+          outside.received.push({
+            call: `read ${params.key}`,
+            prefetched: context.prefetched,
+          });
+          return { revision: outside.values.get(params.key)! };
+        },
+        loadCredential: async (state, context) => {
+          outside.calls.push(`load Plain ${state.key}`);
+          outside.received.push({
+            call: `load ${state.key}`,
+            prefetched: context.prefetched,
+          });
+          return outside.values.get(state.key)!;
+        },
+      });
+    outside.values.set("P1", "p1-value");
+    const declareWithPlain = () => {
+      const alpha = new types.Alpha("a1", { config: { key: "A1" } });
+      const plain = new Plain("p1", { config: { key: "P1" } });
+      return [
+        alpha,
+        new types.Secret("first", { config: { name: "first", Value: "v" } }),
+        plain,
+        new types.Secret("secret:p1", {
+          config: { name: "p1", Value: plain.credentials.value },
+        }),
+        new types.Secret("secret:a1", {
+          config: { name: "a1", Value: alpha.credentials.value },
+        }),
+      ];
+    };
+    const runtime = createRuntime({
+      crashAfterStep: "notation:deploy:first:create:remote:effect:0",
+    });
+    await expect(runtime.deploy("first", declareWithPlain())).rejects.toThrow(
+      "simulated process crash",
+    );
+    outside.calls.length = 0;
+    outside.received.length = 0;
+
+    await runtime.nextProcess("first", declareWithPlain());
+
+    expect(outside.calls).toEqual([
+      "read Plain P1",
+      "load Plain P1",
+      "create p1=p1-value",
+      "prefetch Alpha a1:A1",
+      "load Alpha A1",
+      "create a1=a1-value",
+    ]);
+    expect(outside.received.slice(0, 2)).toEqual([
+      { call: "read P1", prefetched: undefined },
+      { call: "load P1", prefetched: undefined },
     ]);
     runtime.close();
   });
@@ -561,7 +663,7 @@ describe("prefetch", () => {
     ]);
     expect(outside.received.at(-1)).toEqual({
       call: "read named",
-      prefetched: { executionId: "first", values: { A1: "a1-value" } },
+      prefetched: undefined,
     });
 
     // The output is in state now, and the source is still left out.

@@ -55,13 +55,32 @@ export class SourcePrefetchError extends Error {
   }
 }
 
-/** What `read` or `loadCredential` of `source` gets as `context.prefetched`. */
+/**
+ * What `read` or `loadCredential` of `source` gets as `context.prefetched`.
+ * A source that `canPrefetch` rejects gets nothing.
+ */
 export function prefetchedFor(
   prefetched: PrefetchedValues,
   source: BaseCredentialSource,
 ): { prefetched?: unknown } {
-  if (!source.prefetch || !prefetched.has(source.prefetch)) return {};
+  if (!canPrefetch(source) || !prefetched.has(source.prefetch)) return {};
   return { prefetched: prefetched.get(source.prefetch) };
+}
+
+/**
+ * Whether `prefetchSources` can pass `resource` to its class's `prefetch`:
+ * it is a source whose class has a `prefetch`, and it depends on no other
+ * resource. `prefetchSources` also leaves out a source whose params are not
+ * known.
+ */
+export function canPrefetch(
+  resource: BaseResource,
+): resource is BaseCredentialSource & { prefetch: PrefetchFunction } {
+  return (
+    isCredentialSource(resource) &&
+    resource.prefetch !== undefined &&
+    getDependencyIds(resource).length === 0
+  );
 }
 
 /**
@@ -94,18 +113,11 @@ export async function prefetchSources({
   emit?: ReconcilerEventEmitter;
 }): Promise<PrefetchedValues> {
   const prefetched = new Map<PrefetchFunction, unknown>();
-  const hasPrefetch = (
-    resource: BaseResource,
-  ): resource is BaseCredentialSource & { prefetch: PrefetchFunction } =>
-    isCredentialSource(resource) && resource.prefetch !== undefined;
-  if (!resources.some(hasPrefetch)) return prefetched;
-
   const groups = new Map<
     PrefetchFunction,
     { type: ResourceType; sources: PrefetchedSource[] }
   >();
-  for (const resource of resources.filter(hasPrefetch)) {
-    if (getDependencyIds(resource).length > 0) continue;
+  for (const resource of resources.filter(canPrefetch)) {
     // A `~state` ref resolves through `recordedOutputs`, and is unknown when
     // its target has no record.
     const params = await resource.planParams({ recordedOutputs });

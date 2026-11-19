@@ -93,7 +93,7 @@ Planning runs `createPlan` directly inside `withRuntime`. In contrast, `deployAp
 
 1. **Admission** – `NodeDurableRuntime.run` admits `opts.executionId` before starting `ExecutionDispatcher` (filtered strictly to `[opts.executionId]`). Resumed runs verify `assertSameOverrides`.
 2. **Pre-hold validation (`notation:validate`)** – `durable.deploy` checks `--replace` and `--credential` hashes. It validates statically known params before acquiring any lock.
-3. **Deployment hold (`withDeploymentHold`)** – Acquires the per-deployment lock and re-checks overrides (`notation:overrides`). Snapshots recorded outputs (`notation:recorded-outputs`) so `StateRef` lookups see a consistent baseline, then, in the first delivery only, calls each source class's `prefetch` outside any step. A later delivery calls `prefetch` at the first `read` or `loadCredential` that runs.
+3. **Deployment hold (`withDeploymentHold`)** – Acquires the per-deployment lock and re-checks overrides (`notation:overrides`). Snapshots recorded outputs (`notation:recorded-outputs`) so `StateRef` lookups see a consistent baseline, then calls each source class's `prefetch` in the `notation:prefetch` step. The step runs in each delivery until it has once succeeded. A delivery that replays it calls `prefetch` at the first `read` or `loadCredential` that runs.
 4. **Topological reconciliation** – `orderDeployUnits(resources)` orders strongly connected components and dependency edges. Each unit runs `reconcileResource` or `reconcileCycle`, followed by `sweepOrphans`.
 
 ## Single-copy invariants

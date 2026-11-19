@@ -36,9 +36,10 @@ export type DeployContext = DurableDeployOptions & {
   /**
    * What each class's `prefetch` returned in this delivery of deploy. The
    * first call in a delivery calls `prefetch`, and later calls return the
-   * same promise. Call it only where a `read` or `loadCredential` runs.
+   * same promise. Call it only where a `read` or `loadCredential` of a
+   * source that `canPrefetch` accepts runs.
    */
-  prefetched: () => Promise<PrefetchedValues>;
+  getPrefetched: () => Promise<PrefetchedValues>;
   /** The resources that the deploy has reconciled so far. */
   reconciled: Set<BaseResource>;
 };
