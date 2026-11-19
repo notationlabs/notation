@@ -37,8 +37,10 @@ export async function* deploy(
   opts: DurableDeployOptions,
 ): AsyncGenerator<any, void, any> {
   assertDependenciesPresent(opts.resources);
-  // Not a step: what `prefetch` returns is kept in memory only, so a resumed
-  // deploy calls it again.
+  // Not a step: what `prefetch` returns is kept in memory only. Each delivery
+  // replays this function from the top, so a resume and a wake after a
+  // suspend, such as the deployment hold wait or a retry delay, call it
+  // again.
   const prefetched = await prefetchSources({
     resources: opts.resources,
     state: opts.state,

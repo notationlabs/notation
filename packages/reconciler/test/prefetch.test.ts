@@ -292,7 +292,7 @@ describe("prefetch", () => {
     expect(SourcePrefetchError.is(error)).toBe(true);
     expect((error as Error).message).toBe(
       [
-        "2 sources could not be fetched. Nothing has changed.",
+        "2 sources could not be fetched.",
         "  a2 (test/prefetch/Alpha): A2 is not set",
         "  b1 (test/prefetch/Beta): B1 is not set",
       ].join("\n"),
@@ -314,7 +314,7 @@ describe("prefetch", () => {
     await expect(
       plan(declare(defineResources(outside)), runtime),
     ).rejects.toThrow(
-      "1 source could not be fetched. Nothing has changed.\n  a1 (test/prefetch/Alpha): A1 is not set",
+      "1 source could not be fetched.\n  a1 (test/prefetch/Alpha): A1 is not set",
     );
     expect(outside.calls).toEqual([
       "prefetch Alpha a1:A1,a2:A2",

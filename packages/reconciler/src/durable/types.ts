@@ -34,8 +34,8 @@ export type DeployContext = DurableDeployOptions & {
   /** The outputs that `~state` refs read, from state at the start. */
   recordedOutputs: RecordedOutputs;
   /**
-   * What each class's `prefetch` returned at the start of this run of
-   * deploy. A resumed deploy calls `prefetch` again.
+   * What each class's `prefetch` returned at the start of this delivery of
+   * deploy. Each delivery calls `prefetch` again.
    */
   prefetched: PrefetchedValues;
   /** The resources that the deploy has reconciled so far. */

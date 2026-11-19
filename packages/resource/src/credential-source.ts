@@ -91,8 +91,9 @@ export type CredentialSourceOperations<
   /**
    * Fetches what every source of the class needs, before plan or deploy
    * plans or changes any resource. Plan and deploy call it once, with each
-   * source whose params are known. A resumed deploy calls it again. The
-   * engine passes `prefetched` to `read` and `loadCredential` as
+   * source whose params are known. Deploy calls it again at the start of
+   * each later delivery of its workflow: a resume, or a wake after the
+   * deployment hold or a retry delay. The engine passes `prefetched` to `read` and `loadCredential` as
    * `context.prefetched`, and keeps it in memory only. A source that is in
    * `failed` fails the plan or deploy. A source that is in neither `failed`
    * nor `prefetched` is fetched by its own `read`. Throws for a failure that

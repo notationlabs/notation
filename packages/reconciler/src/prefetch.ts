@@ -9,9 +9,8 @@ import {
 } from "@notation/resource";
 import type { StateNode } from "@notation/state";
 import { scrubError, scrubSecretValues } from "@notation/utils";
-import { orderDeployUnits } from "./cycles";
 import type { ReconcilerEventEmitter } from "./events";
-import { loadOutput, loadUnit, planKnownParams } from "./planner";
+import { loadOutput, planKnownParams } from "./planner";
 
 type PrefetchFunction = NonNullable<BaseCredentialSource["prefetch"]>;
 
@@ -36,8 +35,8 @@ export class SourcePrefetchError extends Error {
     super(
       [
         failed.length === 1
-          ? "1 source could not be fetched. Nothing has changed."
-          : `${failed.length} sources could not be fetched. Nothing has changed.`,
+          ? "1 source could not be fetched."
+          : `${failed.length} sources could not be fetched.`,
         ...failed.map(
           (source) => `  ${source.id} (${source.type}): ${source.message}`,
         ),
@@ -73,8 +72,9 @@ export function prefetchedFor(
  * that throws stops the calls of the classes after it.
  *
  * The params are planned from the outputs in state, as `validateKnownParams`
- * plans them. Each resource's output is put back afterwards, so that the
- * plan or deploy starts as it would without this call.
+ * plans them. The outputs are left loaded. This is safe because plan and
+ * deploy load each resource's output from state again before they plan or
+ * reconcile it, and they reach a resource's dependencies before it.
  */
 export async function prefetchSources({
   resources,
@@ -102,66 +102,52 @@ export async function prefetchSources({
     isCredentialSource(resource) && resource.prefetch !== undefined;
   if (!resources.some(hasPrefetch)) return prefetched;
 
+  for (const resource of resources) await loadOutput(resource, state);
   const groups = new Map<
     PrefetchFunction,
     { type: ResourceType; sources: PrefetchedSource[] }
   >();
-  const outputs = new Map(
-    resources.map((resource) => [resource, resource.output]),
-  );
-  try {
-    for (const unit of orderDeployUnits(resources)) {
-      for (const resource of await loadUnit(unit, state)) {
-        if (!hasPrefetch(resource)) {
-          await loadOutput(resource, state);
-          continue;
-        }
-        const { params } = await planKnownParams(
-          resource,
-          state,
-          point,
-          recordedOutputs,
-        );
-        if (containsUnknownAfterApply(params)) continue;
-        const group = groups.get(resource.prefetch) ?? {
-          type: resource.type,
-          sources: [],
-        };
-        group.sources.push({ id: resource.id, params });
-        groups.set(resource.prefetch, group);
-      }
-    }
-  } finally {
-    for (const [resource, output] of outputs) resource.setOutput(output);
+  for (const resource of resources.filter(hasPrefetch)) {
+    const { params } = await planKnownParams(
+      resource,
+      state,
+      point,
+      recordedOutputs,
+    );
+    if (containsUnknownAfterApply(params)) continue;
+    const group = groups.get(resource.prefetch) ?? {
+      type: resource.type,
+      sources: [],
+    };
+    group.sources.push({ id: resource.id, params });
+    groups.set(resource.prefetch, group);
   }
 
   const failed: FailedSource[] = [];
   for (const [prefetch, group] of groups) {
-    // `notify` returns nothing, so the emits are awaited after the call.
-    const notices: Promise<void>[] = [];
     let result;
     try {
       result = await prefetch(group.sources, {
         executionId,
         app,
         stage,
+        // Not awaited: the emitters write the event before they return. A
+        // notice that fails to show must not fail the plan or deploy.
         notify: (message) => {
-          notices.push(
-            Promise.resolve(
+          void Promise.resolve()
+            .then(() =>
               emit?.({
                 level: "info",
                 event: "reconciler.source.notice",
                 resourceType: group.type,
                 message,
               }),
-            ),
-          );
+            )
+            .catch(() => {});
         },
       });
     } catch (error) {
       throw scrubError(error);
-    } finally {
-      await Promise.all(notices);
     }
     prefetched.set(prefetch, result.prefetched);
     for (const { id, error } of result.failed) {
