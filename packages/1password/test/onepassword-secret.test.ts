@@ -429,10 +429,33 @@ describe("OnePasswordSecret", () => {
         );
         const items = result.prefetched as Map<string, unknown>;
         expect([...items.keys()].sort()).toEqual([
-          JSON.stringify(["Prod", "Orders database"]),
-          JSON.stringify(["Prod", "Stripe"]),
+          "op://Prod/Orders database/url",
+          "op://Prod/Stripe/api key",
         ]);
       }
+    });
+
+    it("puts the sources of a vault that isn't there in failed, and fetches the others", async () => {
+      await setItems({
+        ...appItems(),
+        "Nope/Stripe": {
+          stderr:
+            '[ERROR] 2026/11/19 12:00:00 "Nope" isn\'t a vault in this account. Specify the vault with its ID or name.',
+        },
+      });
+
+      const result = await prefetch([
+        { id: "missing", reference: "op://Nope/Stripe/api key" },
+        { id: "database-url", reference: "op://Prod/Orders database/url" },
+      ]);
+
+      expect(result.failed.map((failure) => failure.id)).toEqual(["missing"]);
+      expect(result.failed[0]!.error.message).toBe(
+        'Can\'t fetch `op://Nope/Stripe/api key`. op failed with exit code 1: "Nope" isn\'t a vault in this account. Specify the vault with its ID or name. op looked in the account that you signed in to last. Set OP_ACCOUNT to choose another.',
+      );
+      expect([...(result.prefetched as Map<string, unknown>).keys()]).toEqual([
+        "op://Prod/Orders database/url",
+      ]);
     });
 
     it("names OP_ACCOUNT when it is set", async () => {
@@ -568,6 +591,21 @@ describe("OnePasswordSecret", () => {
         load(declared, { reference, revision }, prefetched),
       ).resolves.toBe("sk_live_1");
       expect(await calls()).toHaveLength(2);
+    });
+
+    it("fetch a source that prefetch was not given, when prefetch fetched another field of its item", async () => {
+      await setItems(appItems());
+      const { prefetched } = await prefetch([{ id: "stripe-key", reference }]);
+      const webhook = "op://Prod/Stripe/webhook secret";
+      const declared = source("stripe-webhook", webhook);
+
+      const revision = await read(declared, { reference: webhook }, prefetched);
+      await expect(
+        load(declared, { reference: webhook, revision }, prefetched),
+      ).resolves.toBe("whsec_12345678");
+
+      expect(revision).toBe("version:stripe-id:1");
+      expect(await calls()).toHaveLength(3);
     });
 
     it("with track, keep the revision when another field of the item changes", async () => {

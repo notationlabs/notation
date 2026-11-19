@@ -12,6 +12,10 @@ const NOTIFY_AFTER_MS = 2000;
 const WAITING_MESSAGE =
   "Waiting for 1Password. Approve the request in the 1Password app.";
 
+// The messages of `op` for a failure that concerns one item.
+const ONE_ITEM_ERROR =
+  /isn't an item|isn't a vault|More than one item matches/;
+
 const fieldSchema = v.object({
   id: v.string(),
   label: v.optional(v.string()),
@@ -31,79 +35,66 @@ const itemSchema = v.object({
   fields: v.optional(v.array(fieldSchema), []),
 });
 
-export type Field = v.InferOutput<typeof fieldSchema>;
+type Field = v.InferOutput<typeof fieldSchema>;
 
-/** An item, with the values of only the fields that its sources asked for. */
-export type Item = v.InferOutput<typeof itemSchema>;
+type Item = v.InferOutput<typeof itemSchema>;
 
-/** The items that `prefetch` fetched, by `entryKey`. */
-export type Items = ReadonlyMap<string, Item>;
-
-/** The key of the item that a reference names. References to the same item share it. */
-export function entryKey(reference: Reference): string {
-  return JSON.stringify([reference.vault, reference.item]);
-}
+/** What `read` and `loadCredential` need of the field that a reference names. */
+export type Entry = { id: string; version: number; value: string };
 
 type Source = { id: string; reference: string };
 
 /**
- * Fetches the items of `sources`. The first item is fetched alone, as a
- * shell with no approval shows one prompt for each call that runs before the
- * user approves. The others are fetched once it has succeeded, at most eight
- * at a time. Throws for a failure that concerns every item.
+ * Fetches the items of `sources`, and returns the entry of each source by
+ * its reference. The first item is fetched alone, as a shell with no
+ * approval shows one prompt for each call that runs before the user
+ * approves. The others are fetched once it has succeeded, at most eight at
+ * a time. Throws for a failure that concerns every item.
  */
 export async function prefetchItems(
   sources: Source[],
   notify: (message: string) => void,
-): Promise<{ items: Items; failed: { id: string; error: Error }[] }> {
+): Promise<{
+  prefetched: Map<string, Entry>;
+  failed: { id: string; error: Error }[];
+}> {
   const failed: { id: string; error: Error }[] = [];
-  const entries = new Map<string, { id: string; reference: Reference }[]>();
+  // The sources of each item, so that each item is fetched once.
+  const items = new Map<string, { id: string; reference: Reference }[]>();
   for (const source of sources) {
-    let reference: Reference;
-    try {
-      reference = parseReference(source.reference);
-    } catch (error) {
-      failed.push({ id: source.id, error: error as Error });
-      continue;
-    }
-    const key = entryKey(reference);
-    entries.set(key, [...(entries.get(key) ?? []), { ...source, reference }]);
+    const reference = parseReference(source.reference);
+    const key = JSON.stringify([reference.vault, reference.item]);
+    items.set(key, [...(items.get(key) ?? []), { id: source.id, reference }]);
   }
 
-  const items = new Map<string, Item>();
-  const fetchEntry = async (
-    key: string,
-    entrySources: { id: string; reference: Reference }[],
+  const prefetched = new Map<string, Entry>();
+  const fetchSources = async (
+    itemSources: { id: string; reference: Reference }[],
   ) => {
-    const references = entrySources.map((source) => source.reference);
     let item: Item;
     try {
-      item = await fetchItem(references[0]!, references);
+      item = await fetchItem(itemSources[0]!.reference);
     } catch (error) {
       if (!concernsOneItem(error)) throw error;
-      for (const source of entrySources) {
-        failed.push({
-          id: source.id,
-          error: forReference(error, source.reference),
-        });
+      for (const { id, reference } of itemSources) {
+        failed.push({ id, error: forReference(error, reference) });
       }
       return;
     }
-    items.set(key, item);
-    for (const source of entrySources) {
+    for (const { id, reference } of itemSources) {
       try {
-        resolveValue(item, source.reference);
+        prefetched.set(reference.text, toEntry(item, reference));
       } catch (error) {
-        failed.push({ id: source.id, error: error as Error });
+        failed.push({ id, error: error as Error });
       }
     }
   };
 
-  const [first, ...rest] = entries;
-  if (!first) return { items, failed };
+  const [first, ...rest] = items.values();
+  if (!first) return { prefetched, failed };
   const timer = setTimeout(() => notify(WAITING_MESSAGE), NOTIFY_AFTER_MS);
   try {
-    await fetchEntry(...first);
+    await fetchSources(first);
   } finally {
     clearTimeout(timer);
   }
@@ -112,9 +103,9 @@ export async function prefetchItems(
   let stopped: { error: unknown } | undefined;
   const worker = async () => {
     while (!stopped && next < rest.length) {
-      const entry = rest[next++]!;
+      const itemSources = rest[next++]!;
       try {
-        await fetchEntry(...entry);
+        await fetchSources(itemSources);
       } catch (error) {
         stopped ??= { error };
       }
@@ -124,39 +115,29 @@ export async function prefetchItems(
     Array.from({ length: Math.min(CONCURRENT_CALLS, rest.length) }, worker),
   );
   if (stopped) throw stopped.error;
-  return { items, failed };
+  return { prefetched, failed };
 }
 
-/**
- * Returns the item of `reference` from `items`, or fetches it alone when
- * `prefetch` was not given its source.
- */
-export async function getItem(
-  reference: Reference,
-  items: Items | undefined,
-): Promise<Item> {
-  const item = items?.get(entryKey(reference));
-  if (item) return item;
+/** Fetches the item of `reference` alone, and returns its entry. */
+export async function fetchEntry(reference: Reference): Promise<Entry> {
+  let item: Item;
   try {
-    return await fetchItem(reference, [reference]);
+    item = await fetchItem(reference);
   } catch (error) {
     if (concernsOneItem(error)) throw forReference(error, reference);
     throw error;
   }
+  return toEntry(item, reference);
 }
 
 /**
- * Fetches one item with `op item get`, and records its values so that
- * errors scrub them. Only the values of the fields that `references` name
- * are kept.
+ * Fetches one item with `op item get`, and records its concealed values so
+ * that errors scrub them.
  */
-async function fetchItem(
-  entry: Reference,
-  references: Reference[],
-): Promise<Item> {
+async function fetchItem(reference: Reference): Promise<Item> {
   let stdout: string;
   try {
-    stdout = await opItemGet(entry.item, entry.vault);
+    stdout = await opItemGet(reference.item, reference.vault);
   } catch (error) {
     throw withAdvice(error);
   }
@@ -168,22 +149,7 @@ async function fetchItem(
       recordSecretValue(field.value);
     }
   }
-  const requested = new Set<Field>();
-  for (const reference of references) {
-    try {
-      const field = matchField(item, reference);
-      if (field.value) recordSecretValue(field.value);
-      requested.add(field);
-    } catch {
-      // `resolveValue` throws this again for the source.
-    }
-  }
-  return {
-    ...item,
-    fields: item.fields.map((field) =>
-      requested.has(field) ? field : { ...field, value: undefined },
-    ),
-  };
+  return item;
 }
 
 // The message of `JSON.parse` and the issues of valibot hold part of the
@@ -204,8 +170,11 @@ function unreadable(): Error {
   return new Error("1Password returned output that notation can't read.");
 }
 
-/** Returns the value of the field that `reference` names in `item`. */
-export function resolveValue(item: Item, reference: Reference): string {
+/**
+ * Returns the entry of the field that `reference` names in `item`, and
+ * records its value, whatever the field's type.
+ */
+function toEntry(item: Item, reference: Reference): Entry {
   // `op` finds an archived item by ID, so a reference with IDs would keep
   // deploying it.
   if (item.state === "ARCHIVED") {
@@ -217,7 +186,8 @@ export function resolveValue(item: Item, reference: Reference): string {
   if (value === "") {
     throw new Error(`The value of \`${reference.text}\` is empty.`);
   }
-  return value;
+  recordSecretValue(value);
+  return { id: item.id, version: item.version, value };
 }
 
 /**
@@ -254,10 +224,7 @@ function matchField(item: Item, reference: Reference): Field {
 // `op` signs in before it prints these, so the calls after one of them
 // need no approval.
 function concernsOneItem(error: unknown): error is OnePasswordError {
-  return (
-    error instanceof OnePasswordError &&
-    /isn't an item|More than one item matches/.test(error.stderr)
-  );
+  return error instanceof OnePasswordError && ONE_ITEM_ERROR.test(error.stderr);
 }
 
 function forReference(
@@ -278,7 +245,7 @@ function withAdvice(error: unknown): unknown {
     advice =
       "No one approved the request in the 1Password app. A process with no person to approve it, such as an agent or a CI job, needs a 1Password service account in OP_SERVICE_ACCOUNT_TOKEN.";
   } else if (
-    /isn't an item|isn't a vault/.test(error.stderr) &&
+    ONE_ITEM_ERROR.test(error.stderr) &&
     !process.env.OP_SERVICE_ACCOUNT_TOKEN &&
     !process.env.OP_CONNECT_HOST
   ) {

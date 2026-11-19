@@ -6,7 +6,7 @@ import {
   trackValidator,
   type Track,
 } from "@notation/std/track";
-import { getItem, prefetchItems, resolveValue } from "../items";
+import { fetchEntry, prefetchItems } from "../items";
 import { parseReference } from "../reference";
 
 export type OnePasswordSecretSchema = {
@@ -75,27 +75,25 @@ export const OnePasswordSecret =
       value: { propertyType: "credential", value: v.string() },
     } as const)
     .defineOperations({
-      prefetch: async (sources, context) => {
-        const { items, failed } = await prefetchItems(
+      prefetch: (sources, context) =>
+        prefetchItems(
           sources.map(({ id, params }) => ({
             id,
             reference: params.reference,
           })),
           context.notify,
-        );
-        return { prefetched: items, failed };
-      },
+        ),
       read: async (params, context) => {
         if (params.track) assertTrackKey(params.track);
-        const reference = parseReference(params.reference);
-        const item = await getItem(reference, context.prefetched);
-        const value = resolveValue(item, reference);
+        const entry =
+          context.prefetched?.get(params.reference) ??
+          (await fetchEntry(parseReference(params.reference)));
         if (params.track) {
           return {
-            revision: await trackRevision(params.track, context, value),
+            revision: await trackRevision(params.track, context, entry.value),
           };
         }
-        return { revision: `version:${item.id}:${item.version}` };
+        return { revision: `version:${entry.id}:${entry.version}` };
       },
       // `op` can't fetch a past version, so the item must still be the one
       // that `read` saw.
@@ -110,16 +108,15 @@ export const OnePasswordSecret =
             `The revision of ${context.id} in state is \`${state.revision}\`, which does not match \`track: ${state.track ? `"${state.track}"` : "undefined"}\`. Run deploy again.`,
           );
         }
-        const reference = parseReference(state.reference);
-        const item = await getItem(reference, context.prefetched);
-        const value = resolveValue(item, reference);
+        const { id, version, value } =
+          context.prefetched?.get(state.reference) ??
+          (await fetchEntry(parseReference(state.reference)));
         const changed = new Error(
           `\`${state.reference}\` changed after deploy read it. Run deploy again.`,
         );
         if (revision.kind === "version") {
-          if (item.id !== revision.id)
-            throw new ItemReplacedError(state.reference);
-          if (item.version !== revision.version) throw changed;
+          if (id !== revision.id) throw new ItemReplacedError(state.reference);
+          if (version !== revision.version) throw changed;
         } else if (
           (await trackRevision(revision.track, context, value)) !==
           state.revision
