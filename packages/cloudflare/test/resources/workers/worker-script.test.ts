@@ -1262,6 +1262,145 @@ describe("rejectChange", () => {
   });
 });
 
+describe("WorkerScript log settings", () => {
+  const key = { AccountId: "acc", ScriptName: "app--dev--api" };
+  const logs = {
+    ...params,
+    Observability: { enabled: true, head_sampling_rate: 0.1 },
+    Logpush: true,
+    TailConsumers: [{ service: "app--dev--tail" }],
+  };
+
+  it("sends the observability, Logpush and tail consumer settings in the upload", async () => {
+    mockFetch(untilUploaded());
+
+    await script.create(logs);
+
+    const { metadata } = await uploadedMetadata(requests()[1]!);
+    expect(metadata).toMatchObject({
+      observability: { enabled: true, head_sampling_rate: 0.1 },
+      logpush: true,
+      tail_consumers: [{ service: "app--dev--tail" }],
+    });
+  });
+
+  it("leaves the settings out of an upload whose params don't set them", async () => {
+    mockFetch(untilUploaded());
+
+    await script.create(params);
+
+    const { metadata } = await uploadedMetadata(requests()[1]!);
+    expect(metadata).not.toHaveProperty("observability");
+    expect(metadata).not.toHaveProperty("logpush");
+    expect(metadata).not.toHaveProperty("tail_consumers");
+  });
+
+  it("turns off each setting that state has and the params no longer set", async () => {
+    mockFetch(() => ok({}));
+
+    await script.update!(key, {} as any, params, logs);
+
+    const { metadata } = await uploadedMetadata(requests()[0]!);
+    expect(metadata).toMatchObject({
+      observability: { enabled: false },
+      logpush: false,
+      tail_consumers: [],
+    });
+  });
+
+  it("reads the settings that the params set, in the shape of the params", async () => {
+    mockFetch(() =>
+      ok({
+        compatibility_date: "2026-10-12",
+        logpush: false,
+        observability: {
+          enabled: true,
+          head_sampling_rate: 0.5,
+          logs: { enabled: true, invocation_logs: true },
+        },
+        tail_consumers: [
+          { service: "app--dev--audit" },
+          { service: "app--dev--tail" },
+        ],
+      }),
+    );
+
+    const read = await script.read!(key, undefined, {
+      ...logs,
+      TailConsumers: [
+        { service: "app--dev--tail" },
+        { service: "app--dev--metrics" },
+      ],
+    });
+
+    expect(read).toMatchObject({
+      Observability: { enabled: true, head_sampling_rate: 0.5 },
+      Logpush: false,
+      TailConsumers: [
+        { service: "app--dev--tail" },
+        { service: "app--dev--audit" },
+      ],
+    });
+  });
+
+  it("reads Workers Logs as off, and the sampling rate as Cloudflare's default, when the settings leave them out", async () => {
+    mockFetch(() => ok({ compatibility_date: "2026-10-12" }));
+
+    const read = await script.read!(key, undefined, logs);
+
+    expect(read).toMatchObject({
+      Observability: { enabled: false, head_sampling_rate: 1 },
+      Logpush: false,
+      TailConsumers: [],
+    });
+  });
+
+  it("leaves the sampling rate out of the read when the params leave it out", async () => {
+    mockFetch(() =>
+      ok({ observability: { enabled: true, head_sampling_rate: 1 } }),
+    );
+
+    const read = await script.read!(key, undefined, {
+      ...params,
+      Observability: { enabled: true },
+    });
+
+    expect(read).toMatchObject({ Observability: { enabled: true } });
+    expect(
+      (read as { Observability?: object }).Observability,
+    ).not.toHaveProperty("head_sampling_rate");
+  });
+
+  it("reads no log settings when the params set none", async () => {
+    mockFetch(() =>
+      ok({
+        logpush: true,
+        observability: { enabled: true },
+        tail_consumers: [],
+      }),
+    );
+
+    const read = await script.read!(key, undefined, params);
+
+    expect(read).not.toHaveProperty("Observability");
+    expect(read).not.toHaveProperty("Logpush");
+    expect(read).not.toHaveProperty("TailConsumers");
+  });
+
+  it("rejects a sampling rate above 1 when it is declared", () => {
+    expect(
+      () =>
+        new WorkerScript("worker:sampled", {
+          config: {
+            CompatibilityDate: params.CompatibilityDate,
+            Observability: { enabled: true, head_sampling_rate: 2 },
+          },
+          dependencies: {} as any,
+        }),
+    ).toThrow(/head_sampling_rate/);
+  });
+});
+
 describe("WorkerScript secrets", () => {
   const secrets = { API_KEY: "sk_live", ADMIN: "hunter2" };
   const withSecrets = { ...params, Secrets: secrets };

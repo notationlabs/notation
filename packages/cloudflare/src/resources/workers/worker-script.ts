@@ -26,16 +26,20 @@ import {
   listAccountNamespaces,
   listScriptSecretNames,
   latestDeployment,
+  observabilitySchema,
   patchScriptExports,
   putScript,
   type AccountNamespace,
   type DurableObjectExport,
   type ScriptBinding,
+  type ScriptObservability,
+  type ScriptSettings,
   type ScriptUpload,
   type SecretTextBinding,
+  type TailConsumer,
 } from "src/api/workers";
 
-export type { DurableObjectExport };
+export type { DurableObjectExport, ScriptObservability, TailConsumer };
 
 export type WorkerBinding = ScriptBinding;
 
@@ -118,6 +122,11 @@ type WorkerScriptParams = {
    * of its names hosts the class.
    */
   DurableObjectTransferSources?: TransferSource[];
+  Observability?: ScriptObservability;
+  /** Sends the Worker's trace events to the account's Logpush jobs. */
+  Logpush?: boolean;
+  /** The Workers that receive the Worker's tail events. */
+  TailConsumers?: TailConsumer[];
 };
 
 export type WorkerScriptSchema = {
@@ -302,6 +311,22 @@ const workerScriptSchema = workerScript.defineSchema({
     value: v.array(transferSourceSchema),
     collect: (items: TransferSource[][]) => items.flat(),
   },
+  Observability: {
+    propertyType: "param",
+    presence: "optional",
+    value: observabilitySchema,
+  },
+  Logpush: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.boolean(),
+  },
+  TailConsumers: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.array(v.object({ service: v.string() })),
+    collect: (items: TailConsumer[][]) => items.flat(),
+  },
 } as const);
 
 export const WorkerScript = workerScriptSchema
@@ -332,7 +357,8 @@ export const WorkerScript = workerScriptSchema
     // Returns only the entries of `Secrets` that the Worker still has, so a
     // secret deleted outside notation shows as drift and the update sends it
     // again. Cloudflare never returns secret values, so a changed value is
-    // not detected.
+    // not detected. The log settings are returned only when the params set
+    // them, in the shape of the params.
     read: async (key, _context, params) => {
       const settings = await getScriptSettings(key.AccountId, key.ScriptName);
       if (!settings) {
@@ -348,6 +374,7 @@ export const WorkerScript = workerScriptSchema
         ...(params?.Secrets
           ? { Secrets: await presentSecrets(key, params.Secrets) }
           : {}),
+        ...readLogSettings(settings, params),
       };
     },
 
@@ -363,7 +390,7 @@ export const WorkerScript = workerScriptSchema
       const previous = state.DurableObjectNamespaces ?? [];
       const found = await findTransfers(params, previous);
       const secrets = secretBindings(params.Secrets);
-      await upload(params, previous, found, secrets);
+      await upload(params, previous, found, secrets, state);
       await waitUntilSecretsListed(
         params.AccountId,
         params.ScriptName,
@@ -462,6 +489,7 @@ async function upload(
   previous: HostedNamespace[],
   found: FoundTransfers,
   secrets: SecretTextBinding[],
+  state?: Partial<WorkerScriptParams>,
 ): Promise<void> {
   const code = await readCode(params.CodeFilePath, params.CodeSha256);
   const hosted = params.DurableObjectNamespaces ?? [];
@@ -480,11 +508,68 @@ async function upload(
     containers: hosted
       .filter((namespace) => namespace.container)
       .map((namespace) => ({ class_name: namespace.className })),
+    ...uploadedLogSettings(params, state),
   };
   if (found.transfers.length > 0) {
     await transferNamespaces(params, upload, found.transfers, found.account);
   }
   await putScript(params.AccountId, params.ScriptName, upload);
+}
+
+// Cloudflare keeps a Worker's observability settings when an upload leaves
+// them out, so a log setting that state has and the params don't is sent
+// switched off.
+function uploadedLogSettings(
+  params: WorkerScriptParams,
+  state: Partial<WorkerScriptParams> | undefined,
+): Pick<ScriptUpload, "observability" | "logpush" | "tailConsumers"> {
+  return {
+    observability:
+      params.Observability ??
+      (state?.Observability ? { enabled: false } : undefined),
+    logpush: params.Logpush ?? (state?.Logpush ? false : undefined),
+    tailConsumers:
+      params.TailConsumers ?? (state?.TailConsumers?.length ? [] : undefined),
+  };
+}
+
+/**
+ * The log settings of the Worker, for each one that `params` sets. The tail
+ * consumers are in the order of `params`, and the ones that `params` doesn't
+ * list follow by name.
+ */
+function readLogSettings(
+  settings: ScriptSettings,
+  params: Partial<WorkerScriptParams> | undefined,
+): Pick<WorkerScriptParams, "Observability" | "Logpush" | "TailConsumers"> {
+  const read: Pick<
+    WorkerScriptParams,
+    "Observability" | "Logpush" | "TailConsumers"
+  > = {};
+  if (params?.Observability) {
+    const remote = settings.observability;
+    read.Observability = {
+      enabled: remote?.enabled ?? false,
+      ...(params.Observability.head_sampling_rate !== undefined && {
+        head_sampling_rate: remote?.head_sampling_rate ?? 1,
+      }),
+    };
+  }
+  if (params?.Logpush !== undefined) read.Logpush = settings.logpush ?? false;
+  if (params?.TailConsumers) {
+    const order = params.TailConsumers.map((consumer) => consumer.service);
+    const rank = (service: string) => {
+      const index = order.indexOf(service);
+      return index === -1 ? order.length : index;
+    };
+    const services = new Set(
+      (settings.tail_consumers ?? []).map((consumer) => consumer.service),
+    );
+    read.TailConsumers = [...services]
+      .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+      .map((service) => ({ service }));
+  }
+  return read;
 }
 
 type Transfer = {
