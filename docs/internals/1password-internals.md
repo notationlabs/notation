@@ -88,12 +88,15 @@ A failed call exits with code 1, and `op` prints a message on stderr. The packag
 | `More than one item matches` | One item | The same |
 | Anything else, such as `authorization timeout` or `error initializing client` | Every item | Starts no more calls, and throws |
 
+The package kills an `op` call that has not finished after 120 seconds, and rejects with a `OnePasswordError`. Its message and its `stderr` are "op did not finish within 120 seconds, and was stopped.", so it counts as a failure of every item.
+
 A one-item failure on the first call still lets the other calls run, because `op` had signed in before it printed the message.
 
-The package adds advice to two kinds of error:
+The package adds advice to three kinds of error:
 
 - For `authorization timeout`, the error adds "No one approved the request in the 1Password app. A process with no person to approve it, such as an agent or a CI job, needs a 1Password service account in OP_SERVICE_ACCOUNT_TOKEN."
-- For a one-item failure, when neither `OP_SERVICE_ACCOUNT_TOKEN` nor `OP_CONNECT_HOST` is set, the error names the account that `op` looked in: "op looked in the account in OP_ACCOUNT, `<account>`.", or "op looked in the account that you signed in to last. Set OP_ACCOUNT to choose another."
+- For `More than one item matches`, the error adds "Use the item's ID in the reference instead of its name."
+- For `isn't an item` and `isn't a vault`, when neither `OP_SERVICE_ACCOUNT_TOKEN` nor `OP_CONNECT_HOST` is set, the error names the account that `op` looked in: "op looked in the account in OP_ACCOUNT, `<account>`.", or "op looked in the account that you signed in to last. Set OP_ACCOUNT to choose another."
 
 **A message that the package does not know counts as a failure of every item.** If a later `op` changes one of the three messages, a wrong reference stops `prefetch` with that one error, and the user does not see the other failed sources until the next run. The message that `op` prints for a vault that a service account can't read is not known yet. If it does not contain `isn't a vault`, it counts as a failure of every item.
 

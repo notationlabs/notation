@@ -136,7 +136,7 @@ If you are signed in to two accounts, for example a personal one and a work one,
 export OP_ACCOUNT="acme.1password.com"
 ```
 
-Without `OP_ACCOUNT`, `op` can look up a reference with names in the wrong account. When `op` signs in with the desktop app, and can't find a vault or an item, or finds more than one item with the name, the error says which account `op` used.
+Without `OP_ACCOUNT`, `op` can look up a reference with names in the wrong account. When `op` signs in with the desktop app, and can't find a vault or an item, the error says which account `op` used. When more than one item has the name, the error says to use the item's ID in the reference.
 
 All sources in one `plan` or `deploy` read from one account. Sources in two accounts need two deploys, or references with IDs and a Connect server.
 

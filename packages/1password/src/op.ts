@@ -5,6 +5,8 @@ import { scrubSecretValues } from "@notation/utils";
 
 const INSTALL_GUIDE = "https://developer.1password.com/docs/cli/get-started/";
 
+const TIMEOUT_MS = 120_000;
+
 /** A call to `op` that failed. `stderr` has every recorded value scrubbed. */
 export class OnePasswordError extends Error {
   readonly exitCode: number | null;
@@ -22,13 +24,20 @@ export class OnePasswordError extends Error {
  * Runs `op item get <item> --vault=<vault> --format json`, and returns its
  * stdout. The environment is passed through, so `op` chooses how to sign in.
  */
-export function opItemGet(item: string, vault: string): Promise<string> {
-  return runOp(["item", "get", item, `--vault=${vault}`, "--format", "json"]);
+export function opItemGet(
+  item: string,
+  vault: string,
+  timeoutMs = TIMEOUT_MS,
+): Promise<string> {
+  return runOp(
+    ["item", "get", item, `--vault=${vault}`, "--format", "json"],
+    timeoutMs,
+  );
 }
 
 // `spawn`, because `execFile` ignores `stdio` and always gives the child a
 // pipe on stdin.
-function runOp(args: string[]): Promise<string> {
+function runOp(args: string[], timeoutMs: number): Promise<string> {
   const file = opPath();
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, {
@@ -39,6 +48,15 @@ function runOp(args: string[]): Promise<string> {
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    // The error's stderr is the message, so that a timeout never counts as
+    // a failure of one item.
+    const timer = setTimeout(() => {
+      child.kill();
+      const message = `op did not finish within ${timeoutMs / 1000} seconds, and was stopped.`;
+      reject(new OnePasswordError(message, null, message));
+    }, timeoutMs);
+    child.on("error", () => clearTimeout(timer));
+    child.on("close", () => clearTimeout(timer));
     child.on("error", (error: NodeJS.ErrnoException) => {
       reject(error.code === "ENOENT" ? missingOp() : error);
     });

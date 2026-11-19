@@ -16,6 +16,10 @@ const WAITING_MESSAGE =
 const ONE_ITEM_ERROR =
   /isn't an item|isn't a vault|More than one item matches/;
 
+// The messages of `op` for an item or a vault that it can't find, which can
+// mean that it looked in the wrong account.
+const WRONG_ACCOUNT_ERROR = /isn't an item|isn't a vault/;
+
 const fieldSchema = v.object({
   id: v.string(),
   label: v.optional(v.string()),
@@ -249,7 +253,9 @@ function withAdvice(error: unknown): unknown {
   if (error.stderr.includes("authorization timeout")) {
     advice =
       "No one approved the request in the 1Password app. A process with no person to approve it, such as an agent or a CI job, needs a 1Password service account in OP_SERVICE_ACCOUNT_TOKEN.";
-  } else if (ONE_ITEM_ERROR.test(error.stderr) && !signsInWithoutApp()) {
+  } else if (error.stderr.includes("More than one item matches")) {
+    advice = "Use the item's ID in the reference instead of its name.";
+  } else if (WRONG_ACCOUNT_ERROR.test(error.stderr) && !signsInWithoutApp()) {
     advice = process.env.OP_ACCOUNT
       ? `op looked in the account in OP_ACCOUNT, \`${process.env.OP_ACCOUNT}\`.`
       : "op looked in the account that you signed in to last. Set OP_ACCOUNT to choose another.";

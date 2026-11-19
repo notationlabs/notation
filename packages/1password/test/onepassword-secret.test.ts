@@ -28,6 +28,7 @@ import {
   OnePasswordError,
   OnePasswordSecret,
 } from "src/resources";
+import { opItemGet } from "src/op";
 
 type Call = {
   args: string[];
@@ -458,6 +459,26 @@ describe("OnePasswordSecret", () => {
       ]);
     });
 
+    it("says to use the item's ID when more than one item matches, and does not name the account", async () => {
+      await setItems({
+        ...appItems(),
+        "Prod/Twin": {
+          stderr:
+            '[ERROR] 2026/11/19 12:00:00 More than one item matches "Twin". Try again and specify the item by its ID.',
+        },
+      });
+
+      const result = await prefetch([
+        { id: "twin", reference: "op://Prod/Twin/x" },
+        { id: "database-url", reference: "op://Prod/Orders database/url" },
+      ]);
+
+      expect(result.failed.map((failure) => failure.id)).toEqual(["twin"]);
+      expect(result.failed[0]!.error.message).toBe(
+        'Can\'t fetch `op://Prod/Twin/x`. op failed with exit code 1: More than one item matches "Twin". Try again and specify the item by its ID. Use the item\'s ID in the reference instead of its name.',
+      );
+    });
+
     it("names OP_ACCOUNT when it is set", async () => {
       vi.stubEnv("OP_ACCOUNT", "work.1password.com");
 
@@ -865,6 +886,29 @@ describe("OnePasswordSecret", () => {
   });
 
   describe("errors", () => {
+    it("stops op after the time limit, and rejects with an error that concerns every item", async () => {
+      await setItems({
+        "Prod/Hung": {
+          item: item("Hung", {}, [{ label: "x", value: "hung value" }]),
+          delayMs: 5000,
+        },
+      });
+
+      const error = await opItemGet("Hung", "Prod", 200).catch(
+        (error: unknown) => error,
+      );
+
+      expect(error).toBeInstanceOf(OnePasswordError);
+      expect((error as OnePasswordError).message).toBe(
+        "op did not finish within 0.2 seconds, and was stopped.",
+      );
+      expect((error as OnePasswordError).stderr).not.toMatch(
+        /isn't an item|isn't a vault|More than one item matches/,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(await calls()).toEqual([]);
+    });
+
     it("fail with a fixed message for output that isn't JSON, and never hold a value", async () => {
       await setItems({
         "Prod/Broken": { stdout: `{"fields":[{"value":"${SENTINEL}"` },
