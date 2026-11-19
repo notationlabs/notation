@@ -221,13 +221,13 @@ export async function createPlan({
         () => emitStep,
         source,
         params,
-        {
+        async () => ({
           id: source.id,
           executionId,
           app,
           stage,
           ...prefetchedFor(prefetched, source),
-        },
+        }),
         record,
       ),
     );

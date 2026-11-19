@@ -24,16 +24,16 @@ import { openStateSession, sameGroup } from "./reconcile";
 import { durableEmitter, type DurableStepRunner } from "./step";
 import type { DeployContext } from "./types";
 
-function sourceContext(
+async function sourceContext(
   opts: DeployContext,
   source: BaseCredentialSource,
-): CredentialSourceContext {
+): Promise<CredentialSourceContext> {
   return {
     id: source.id,
     executionId: opts.executionId,
     app: opts.app,
     stage: opts.stage,
-    ...prefetchedFor(opts.prefetched, source),
+    ...prefetchedFor(await opts.prefetched(), source),
   };
 }
 
@@ -64,7 +64,7 @@ export async function* reconcileSource(
     (scope) => durableEmitter(scope, opts.emit),
     source,
     params,
-    sourceContext(opts, source),
+    () => sourceContext(opts, source),
     record,
   );
   source.setOutput(output);
@@ -127,7 +127,7 @@ export async function* loadSourceCredential(
   try {
     const value = await source.loadCredential(
       sourceState(source, source.output as Record<string, unknown>),
-      sourceContext(opts, source),
+      await sourceContext(opts, source),
     );
     if (value === undefined) {
       throw new Error(

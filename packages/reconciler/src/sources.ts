@@ -69,14 +69,15 @@ export async function readSource(
  * each message that `read` passed to `warn`, and decides what deploy does
  * with the source. See `decideSource`. The read runs in a step of `step`, so
  * that a resumed deploy gets the same revision. `emit` gives the emitter for
- * a scope of `step`.
+ * a scope of `step`. `getContext` is called only when the read runs, and
+ * not when the step is replayed from the journal.
  */
 export async function* readAndDecideSource(
   step: StepRunner,
   emit: (step: StepRunner) => EmitStep,
   source: BaseCredentialSource,
   params: Record<string, unknown>,
-  context: CredentialSourceContext,
+  getContext: () => Promise<CredentialSourceContext>,
   record: StateNode | undefined,
 ): AsyncGenerator<unknown, ReturnType<typeof decideSource>, unknown> {
   const event = { resource: source, emit: emit(step) };
@@ -88,7 +89,7 @@ export async function* readAndDecideSource(
         return (await readSource(
           source,
           params,
-          context,
+          await getContext(),
           record,
         )) as DurableObject;
       } catch (error) {

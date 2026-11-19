@@ -7,6 +7,7 @@ import {
 } from "@notation/resource";
 import { VersionConflict } from "@notation/state";
 import { ResourceCycleError } from "../cycles";
+import { SourcePrefetchError } from "../prefetch";
 import { ResourceTypeChangedError } from "../resource-type";
 import { registerErrorClass } from "./sdk";
 
@@ -23,3 +24,4 @@ registerErrorClass("ValueValidationError", ValueValidationError);
 registerErrorClass("SchemaStructureError", SchemaStructureError);
 registerErrorClass("ResourceTypeChangedError", ResourceTypeChangedError);
 registerErrorClass("ResourceCycleError", ResourceCycleError);
+registerErrorClass("SourcePrefetchError", SourcePrefetchError);

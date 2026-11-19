@@ -1,7 +1,9 @@
 import * as v from "valibot";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   credentialSourceResource,
   resource,
+  ResourceOperationPendingError,
   type BaseResource,
 } from "@notation/resource";
 import { clearSecretValues, recordSecretValue } from "@notation/utils";
@@ -352,7 +354,7 @@ describe("prefetch", () => {
     runtime.close();
   });
 
-  it("is called again when a deploy resumes, and the resume uses only what the new call fetched", async () => {
+  it("is called once, by the first load, when a deploy resumes, and the resume uses only what that call fetched", async () => {
     const outside = createOutside();
     setValues(outside);
     const types = defineResources(outside);
@@ -381,6 +383,97 @@ describe("prefetch", () => {
     runtime.close();
   });
 
+  it("is not called when a deploy resumes, until a read or a load runs", async () => {
+    const outside = createOutside();
+    setValues(outside);
+    const types = defineResources(outside);
+    // The sources first, so that the resume replays every read, and creates
+    // `plain` before it loads a value.
+    const declareSourcesFirst = () => {
+      const [plain, ...rest] = declare(types);
+      return [...rest.slice(0, 3), plain!, ...rest.slice(3)];
+    };
+    const runtime = createRuntime({
+      crashAfterStep: "notation:deploy:b1:source-read:read",
+    });
+    await expect(
+      runtime.deploy("first", declareSourcesFirst()),
+    ).rejects.toThrow("simulated process crash");
+    outside.calls.length = 0;
+    outside.received.length = 0;
+    outside.values.set("A1", "a1-new");
+
+    await runtime.nextProcess("first", declareSourcesFirst());
+
+    expect(outside.calls).toEqual([
+      "create plain=v",
+      "prefetch Alpha a1:A1,a2:A2",
+      "prefetch Beta b1:B1",
+      "load Alpha A1",
+      "create a1=a1-new",
+      "load Alpha A2",
+      "create a2=a2-value",
+      "load Beta B1",
+      "create b1=b1-value",
+    ]);
+    expect(outside.received[0]).toEqual({
+      call: "load A1",
+      prefetched: {
+        executionId: "first",
+        values: { A1: "a1-new", A2: "a2-value" },
+      },
+    });
+    runtime.close();
+  });
+
+  it("is not called by a wake after a retry delay that replays every read", async () => {
+    const outside = createOutside();
+    setValues(outside);
+    const types = defineResources(outside);
+    let attempts = 0;
+    const Pending = resource({
+      type: "test/prefetch/Pending",
+      provider: "test",
+    })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => {
+          attempts += 1;
+          outside.calls.push(`create pending ${attempts}`);
+          if (attempts === 1) {
+            throw new ResourceOperationPendingError("not ready", {
+              // Longer than a SQLite write, so that the deploy suspends.
+              retryAfterMs: 50,
+            });
+          }
+        },
+        delete: async () => undefined,
+      });
+    const declareWithPending = () => [
+      new types.Alpha("a1", { config: { key: "A1" } }),
+      new types.Beta("b1", { config: { key: "B1" } }),
+      new Pending("pending"),
+    ];
+    const runtime = createRuntime();
+
+    const suspended = await runtime.deploy("first", declareWithPending());
+    expect(suspended.status).toBe("suspended");
+    expect(outside.calls).toEqual([
+      "prefetch Alpha a1:A1",
+      "prefetch Beta b1:B1",
+      "read Alpha A1",
+      "read Beta B1",
+      "create pending 1",
+    ]);
+    outside.calls.length = 0;
+
+    await sleep(75);
+    await runtime.deploy("first", declareWithPending());
+
+    expect(outside.calls).toEqual(["create pending 2"]);
+    runtime.close();
+  });
+
   it("fails a resumed deploy when a source can no longer be fetched", async () => {
     const outside = createOutside();
     setValues(outside);
@@ -394,10 +487,44 @@ describe("prefetch", () => {
     outside.calls.length = 0;
     outside.failing = new Set(["A1"]);
 
-    await expect(runtime.nextProcess("first", declare(types))).rejects.toThrow(
+    const error = await runtime
+      .nextProcess("first", declare(types))
+      .catch((error: unknown) => error);
+
+    expect(SourcePrefetchError.is(error)).toBe(true);
+    expect((error as Error).message).toContain(
       "a1 (test/prefetch/Alpha): A1 is not set",
     );
     expect(outside.calls).toEqual([
+      "prefetch Alpha a1:A1,a2:A2",
+      "prefetch Beta b1:B1",
+    ]);
+    runtime.close();
+  });
+
+  it("fails the first read of a resumed deploy when a source can no longer be fetched", async () => {
+    const outside = createOutside();
+    setValues(outside);
+    const types = defineResources(outside);
+    const runtime = createRuntime({
+      crashAfterStep: "notation:recorded-outputs",
+    });
+    await expect(runtime.deploy("first", declare(types))).rejects.toThrow(
+      "simulated process crash",
+    );
+    expect(outside.calls).toEqual([]);
+    outside.failing = new Set(["B1"]);
+
+    const error = await runtime
+      .nextProcess("first", declare(types))
+      .catch((error: unknown) => error);
+
+    expect(SourcePrefetchError.is(error)).toBe(true);
+    expect((error as SourcePrefetchError).failed).toEqual([
+      { id: "b1", type: "test/prefetch/Beta", message: "B1 is not set" },
+    ]);
+    expect(outside.calls).toEqual([
+      "create plain=v",
       "prefetch Alpha a1:A1,a2:A2",
       "prefetch Beta b1:B1",
     ]);

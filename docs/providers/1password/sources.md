@@ -154,7 +154,7 @@ Notation fetches the `OnePasswordSecret` sources at the start of `plan` and `dep
 
 - **At a terminal**, you approve once. Later plans and deploys in the same terminal session run without a prompt until the approval expires.
 - **`notation watch`** fetches every item on each deploy, so each deploy takes at least 1.3 seconds longer. The deploys run in the terminal session of `notation watch`, so one approval covers them.
-- **A deploy that continues** fetches every item again, and so can show a prompt. This happens when a deploy is resumed, and when it wakes after a retry delay.
+- **A deploy that continues** after a resume or a retry delay fetches the items again only when it needs a value: when it reads a source that it did not read before, or loads the value for a resource that the deploy creates or updates, also one that it changed before the resume or the delay. It then fetches every item once, and so can show one prompt. A deploy that continues and needs no value fetches nothing. If the approval has expired, or the fetch fails, the deploy fails at that point, which can be after it has changed other resources.
 - **A deploy that waits for another deploy to finish** fetches the items only after the other deploy has finished. It shows no prompt while it waits.
 - **A source that depends on another resource** is not fetched at the start. This includes a source whose `reference` is built from another resource's output. Notation fetches its item when it reads the source, in the middle of the plan or deploy. If the approval has expired by then, the prompt appears at that point.
 
@@ -208,7 +208,7 @@ export const stripeKey = new OnePasswordSecret("stripe-key", {
 > [!WARNING]
 > These numbers are 1Password's published limits. It is not confirmed yet how 1Password counts the calls that `@notation/1password` makes.
 
-Every `plan` and every `deploy` fetches every item once, with one `op` call for each item. A job that runs `plan` and then `deploy` fetches each item twice. 1Password limits service accounts in two ways:
+Every `plan` and every `deploy` fetches every item once at the start, with one `op` call for each item. A job that runs `plan` and then `deploy` fetches each item twice. A deploy that continues after a resume or a retry delay can fetch every item once more, when it needs a value. For example, it does so when it wakes after a retry delay and an earlier part of the deploy created or updated a resource that takes a value from 1Password. 1Password limits service accounts in two ways:
 
 | Plan | Reads per token per hour | Requests per account per day |
 | :--- | :--- | :--- |

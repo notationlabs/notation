@@ -34,10 +34,11 @@ export type DeployContext = DurableDeployOptions & {
   /** The outputs that `~state` refs read, from state at the start. */
   recordedOutputs: RecordedOutputs;
   /**
-   * What each class's `prefetch` returned at the start of this delivery of
-   * deploy. Each delivery calls `prefetch` again.
+   * What each class's `prefetch` returned in this delivery of deploy. The
+   * first call in a delivery calls `prefetch`, and later calls return the
+   * same promise. Call it only where a `read` or `loadCredential` runs.
    */
-  prefetched: PrefetchedValues;
+  prefetched: () => Promise<PrefetchedValues>;
   /** The resources that the deploy has reconciled so far. */
   reconciled: Set<BaseResource>;
 };

@@ -15,7 +15,7 @@ import {
   keepsResource,
 } from "../plan";
 import { loadUnit, planKnownParams } from "../planner";
-import { prefetchSources } from "../prefetch";
+import { prefetchSources, type PrefetchedValues } from "../prefetch";
 import { readRecordedOutputs } from "../recorded-outputs";
 import { assertOverrides, findReplaceOverride } from "../overrides";
 import { workflowRegistry, type ResourceRegistry } from "../resource-registry";
@@ -59,20 +59,23 @@ export async function* deploy(
     }
     // Read once, inside the hold, so that every `~state` ref reads the
     // records as they were at the start of the deploy, and a resumed deploy
-    // reads the same ones.
-    const recordedOutputs = yield* step.run("notation:recorded-outputs", () =>
-      readRecordedOutputs(opts.resources, opts.state),
-    );
-    // Not a step: what `prefetch` returns is kept in memory only. Each
-    // delivery replays this function from the top, so a resume and a wake
-    // after a suspend, such as a retry delay, call it again. It runs after
-    // validation and inside the hold, so that a validation or override error
-    // comes before any prompt that `prefetch` shows, and a deploy that waits
-    // for the hold shows no prompt until it has the hold.
-    const deployOpts: DeployContext = {
-      ...opts,
-      recordedOutputs,
-      prefetched: await prefetchSources({
+    // reads the same ones. The step function runs only in the first delivery
+    // that gets the hold. A later delivery replays the step from the journal.
+    let firstDelivery = false;
+    const recordedOutputs = yield* step.run("notation:recorded-outputs", () => {
+      firstDelivery = true;
+      return readRecordedOutputs(opts.resources, opts.state);
+    });
+    // Not a step: what `prefetch` returns is kept in memory only. The first
+    // delivery calls it here, after validation and inside the hold, so that
+    // a validation or override error comes before any prompt, and a failed
+    // source stops the deploy before it changes anything. A later delivery,
+    // such as a resume or a wake after a retry delay, calls it only when a
+    // `read` or `loadCredential` runs, so that a delivery that replays every
+    // read and loads no value calls no `prefetch`.
+    let prefetching: Promise<PrefetchedValues> | undefined;
+    const prefetch = () =>
+      (prefetching ??= prefetchSources({
         resources: opts.resources,
         recordedOutputs,
         point: "deploy",
@@ -80,7 +83,12 @@ export async function* deploy(
         app: opts.app,
         stage: opts.stage,
         emit: opts.emit,
-      }),
+      }));
+    if (firstDelivery) await prefetch();
+    const deployOpts: DeployContext = {
+      ...opts,
+      recordedOutputs,
+      prefetched: prefetch,
       reconciled: new Set(),
     };
     // Reconcile in dependency order, so a resource only runs once its

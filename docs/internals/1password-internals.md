@@ -143,7 +143,7 @@ The default is weaker than it is for `InfisicalSecret`, because 1Password raises
 
 ### Loading the value
 
-`loadCredential` takes the entry from `context.prefetched`, so a deploy loads the same version that its `read` saw. Each delivery of the deploy workflow that gets the deployment hold calls `prefetch` again: a resume, or a wake after a retry delay. In a later delivery, `context.prefetched` holds what `prefetch` fetched at the start of that delivery, and the revision in state can come from an earlier one. `loadCredential` checks the entry against the revision:
+`loadCredential` takes the entry from `context.prefetched`, so a deploy loads the same version that its `read` saw. A later delivery of the deploy workflow, such as a resume or a wake after a retry delay, calls `prefetch` again the first time it runs a `read` or `loadCredential`. In a later delivery, `context.prefetched` holds what that call fetched, and the revision in state can come from an earlier delivery. `loadCredential` checks the entry against the revision:
 
 - **Another item ID.** The item was deleted, and another item with the same name was added. `loadCredential` throws `ItemReplacedError`, which asks the user to run deploy again.
 - **Another version.** `op` can't fetch the version that `read` saw, so `loadCredential` throws an error that ends "changed after deploy read it. Run deploy again."

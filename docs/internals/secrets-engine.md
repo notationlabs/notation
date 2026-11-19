@@ -85,22 +85,23 @@ A `SourcePrefetchError` names each failed source, its type and its message:
 | Command | Call site | Runs before |
 | :--- | :--- | :--- |
 | `plan` | `createPlan` (`packages/reconciler/src/planner.ts`), after `readRecordedOutputs` | The first `planResource` |
-| `deploy` | `deploy()` (`packages/reconciler/src/durable/deploy.ts`), inside `withDeploymentHold`, right after the `notation:recorded-outputs` step, with those recorded outputs | The first `reconcileResource` or `reconcileCycle` |
+| `deploy` | `deploy()` (`packages/reconciler/src/durable/deploy.ts`), inside `withDeploymentHold`, with the recorded outputs of the `notation:recorded-outputs` step. In the first delivery, right after that step. In a later delivery, at the first `read` or `loadCredential` that runs | The first `reconcileResource` or `reconcileCycle`, in the first delivery |
 | `destroy` | Not called | |
 
-**The call in `deploy()` is not a durable step.** The durable runtime runs `deploy()` from the top on every delivery of the workflow, and replays the steps that finished from the journal. The result of `prefetch` is only in memory, so each delivery calls `prefetch` again, and uses nothing that an earlier delivery fetched. A delivery ends when the deploy suspends, so this happens on a resume, and also on the wake after a suspend, such as a retry delay.
+**The call in `deploy()` is not a durable step.** The durable runtime runs `deploy()` from the top on every delivery of the workflow, and replays the steps that finished from the journal. The result of `prefetch` is only in memory, so a delivery uses nothing that an earlier delivery fetched. A delivery ends when the deploy suspends, so a deploy has more than one delivery when it is resumed, and when it wakes after a suspend, such as a retry delay. `deploy()` tells the first delivery from a later one by the `notation:recorded-outputs` step. Its function runs only in the first delivery that gets the deployment hold. A later delivery replays it from the journal.
 
-The call comes after `notation:validate` and after the deployment hold is acquired. So a validation or override error comes before any prompt that a `prefetch` shows, and a deploy that waits for the hold shows no prompt while it waits. Nothing has changed at that point.
+- **The first delivery** calls `prefetchSources` right after the `notation:recorded-outputs` step. This is after `notation:validate` and after the deployment hold is acquired. So a validation or override error comes before any prompt that a `prefetch` shows, and a deploy that waits for the hold shows no prompt while it waits. Nothing has changed at that point.
+- **A later delivery** calls `prefetchSources` at most once, and only when a source's `read` or `loadCredential` runs. `DeployContext.prefetched` is a function that starts the call the first time it is called, and returns the same promise after that. `sourceContext` calls it inside the `read` step, so a `read` that is replayed from the journal does not call it. `loadSourceCredential` calls it before `loadCredential`. A delivery that replays every `read` and loads no value calls no `prefetch`. A delivery that does need values fetches all the sources in one call for each class, so it shows at most one prompt.
 
-This has a cost for a later delivery. It replays the `read` of each source from the journal, and loads a value only for a consumer that is not written yet. `prefetch` still fetches every source, and a source that fails still fails the deploy, even when the delivery would not have loaded it. Such a failure can come after an earlier delivery changed resources. The engine can't tell a later delivery from the first before it replays the journal, so it uses one rule for all of them.
+`loadCredential` is not a step. A later delivery calls it for each consumer that it reaches and that it creates or updates, also when the consumer's operation is replayed from the journal, because the process does not hold the value. So a wake after a retry delay calls `prefetch` when an earlier delivery created or updated a consumer of a source.
 
-A plan, and the first delivery of a deploy, read every source anyway. So a source that fails in `prefetch` would have failed later, after other resources had changed. With `prefetch`, nothing has changed when it fails in a plan or in the first delivery.
+In a plan, and in the first delivery of a deploy, a source that fails in `prefetch` stops the command before it changes anything. Without `prefetch`, it would have failed in its `read`, after other resources had changed. In a later delivery, a failed `prefetch` throws from the `read` or `loadCredential` that started it, so the `SourcePrefetchError` can come after resources have changed. It lists every source that failed, also sources that the delivery does not read or load.
 
 ### Passing the result to `read` and `loadCredential`
 
 `prefetchSources` returns a `PrefetchedValues` map from each `prefetch` function to the `prefetched` value that it returned. The engine does not look inside the value:
 
-- The planner keeps the map for the plan. `deploy()` keeps it in `DeployContext.prefetched` (`packages/reconciler/src/durable/types.ts`).
+- The planner keeps the map for the plan. `deploy()` keeps a promise of it in `DeployContext.prefetched` (`packages/reconciler/src/durable/types.ts`).
 - `prefetchedFor(prefetched, source)` looks up the entry for the source's class. The planner and `sourceContext` (`packages/reconciler/src/durable/source.ts`) spread it into the context of `read` and `loadCredential` as `context.prefetched`.
 - `context.prefetched` is undefined when the class has no `prefetch`, or when no source of the class had known params.
 - The engine never writes the value to the journal or to state. It drops it when the plan or deploy ends.

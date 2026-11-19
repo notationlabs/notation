@@ -88,7 +88,7 @@ export type CredentialSourceContext<Prefetched = unknown> = {
 
 `executionId` remains constant across resumes of a single deploy and is regenerated for each `plan`.
 
-`prefetched` is what the class's `prefetch` returned in this plan or deploy. It is undefined when the class has no `prefetch`, or when no source of the class had known params. Each delivery of the deploy workflow that gets the deployment hold calls `prefetch` again: a resume, or a wake after a retry delay. So in a later delivery, `prefetched` holds what was fetched at the start of that delivery, not what an earlier delivery fetched.
+`prefetched` is what the class's `prefetch` returned in this plan or deploy. It is undefined when the class has no `prefetch`, or when no source of the class had known params. A later delivery of the deploy workflow, such as a resume or a wake after a retry delay, calls `prefetch` again the first time it runs a `read` or `loadCredential`. So in a later delivery, `prefetched` holds what that call fetched, not what an earlier delivery fetched.
 
 ### `CredentialSourceReadContext`
 
@@ -134,12 +134,12 @@ export type CredentialSourcePrefetchResult<Prefetched = unknown> = {
 };
 ```
 
-Plan and deploy call `prefetch` once for each class, with every source of the class that depends on no other resource and whose params are known. A source that depends on another resource is not passed, even when that resource's outputs are in state, because plan or deploy can replace that resource. Deploy calls `prefetch` after its validation and after it gets the deployment hold. Each delivery of the deploy workflow that gets the hold calls `prefetch` again: a resume, or a wake after a retry delay. `destroy` does not call it.
+Plan and deploy call `prefetch` once for each class, with every source of the class that depends on no other resource and whose params are known. A source that depends on another resource is not passed, even when that resource's outputs are in state, because plan or deploy can replace that resource. Deploy calls `prefetch` after its validation and after it gets the deployment hold. A later delivery of the deploy workflow, such as a resume or a wake after a retry delay, does not call it at the start. It calls `prefetch` once, the first time it runs a `read` or `loadCredential`, and not at all when it replays every `read` from the journal and loads no value. `destroy` does not call it.
 
 `prefetch` returns two things:
 
 - **`prefetched`** – Any value that the class's `read` and `loadCredential` need. The engine does not look inside it. It passes it to every `read` and `loadCredential` of the class as `context.prefetched`, keeps it in memory, and drops it when the plan or deploy ends. It never writes it to the journal or to state.
-- **`failed`** – The sources that `prefetch` could not fetch, each with its error. When `failed` is not empty, plan and deploy throw one `SourcePrefetchError` that lists every failed source with its scrubbed message. In a plan, or in the first delivery of a deploy, nothing has changed at that point.
+- **`failed`** – The sources that `prefetch` could not fetch, each with its error. When `failed` is not empty, plan and deploy throw one `SourcePrefetchError` that lists every failed source with its scrubbed message. In a plan, or in the first delivery of a deploy, nothing has changed at that point. In a later delivery, the error comes from the `read` or `loadCredential` that started the call, and resources can have changed before it.
 
 A source that is in neither `failed` nor `prefetched` is fetched by its own `read`. `read` and `loadCredential` must therefore handle a missing `context.prefetched`, and a `prefetched` value without the source in it, for example a source that depends on another resource.
 
@@ -268,7 +268,7 @@ Custom credential sources for versioned stores should follow the same pattern by
 
 ### `SourcePrefetchError`
 
-Exported from `@notation/reconciler`. Thrown by `plan` and `deploy` when a class's `prefetch` returns sources in `failed`. It is thrown before any resource changes:
+Exported from `@notation/reconciler`. Thrown by `plan` and `deploy` when a class's `prefetch` returns sources in `failed`. A plan, and the first delivery of a deploy, throw it before any resource changes. A later delivery of a deploy throws it from the first `read` or `loadCredential` that runs, which can come after resources have changed:
 
 ```ts [@notation/reconciler]
 export type FailedSource = {
