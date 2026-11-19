@@ -123,6 +123,12 @@ export function formatPrettyEvent(
         style("yellow", "!") +
         ` ${formatTarget(style, event.resourceId, event.resourceType)} ${event.message}`
       );
+    case "reconciler.source.notice":
+      return (
+        style("dim", "…") +
+        ` ${event.message}` +
+        style("dim", ` (${event.resourceType})`)
+      );
     default: {
       const _exhaustive: never = event;
       return _exhaustive;

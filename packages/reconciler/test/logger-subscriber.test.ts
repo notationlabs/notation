@@ -237,4 +237,15 @@ describe("formatPrettyEvent", () => {
       }),
     ).toBe("! router-kv cloudflare/kv/namespace the value was empty");
   });
+
+  it("prints a notice of a source's prefetch", () => {
+    expect(
+      formatPrettyEvent({
+        level: "info",
+        event: "reconciler.source.notice",
+        resourceType: "1password/secrets/OnePasswordSecret",
+        message: "Waiting for 1Password.",
+      }),
+    ).toBe("… Waiting for 1Password. (1password/secrets/OnePasswordSecret)");
+  });
 });

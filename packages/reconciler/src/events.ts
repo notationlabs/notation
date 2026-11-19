@@ -131,6 +131,15 @@ export type SourceWarningEvent = {
   message: string;
 };
 
+/** A message that a source's `prefetch` passed to `notify`. */
+export type SourceNoticeEvent = {
+  level: "info";
+  event: "reconciler.source.notice";
+  /** The class of the sources that `prefetch` fetches. */
+  resourceType: ResourceType;
+  message: string;
+};
+
 /** A provider package named in state could not be loaded. */
 export type ProviderLoadFailedEvent = {
   level: "warn";
@@ -146,6 +155,7 @@ export type ReconcilerEvent =
   | HoldWaitingEvent
   | OrphanDeletionSkippedEvent
   | ProviderLoadFailedEvent
+  | SourceNoticeEvent
   | SourceWarningEvent;
 
 export type ReconcilerEventEmitter = (

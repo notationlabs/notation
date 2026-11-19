@@ -7,6 +7,7 @@ import type { ReleasePackage } from "pok-plugins";
 const build = "pnpm exec turbo run build";
 
 const framework: ReleasePackage[] = [
+  { file: "packages/1password/package.json", build },
   { file: "packages/aws/package.json", build },
   { file: "packages/cli/package.json", build },
   { file: "packages/cloudflare/package.json", build },
@@ -32,7 +33,10 @@ export default defineConfig({
       // and publishing.
       changesets: true,
       packages: {
-        framework: { label: "@notation/* framework packages", packages: framework },
+        framework: {
+          label: "@notation/* framework packages",
+          packages: framework,
+        },
         // create-notation versions independently (0.2.x vs the framework's
         // 0.12.x), so it gets its own group, tag, and commit template.
         "create-notation": {

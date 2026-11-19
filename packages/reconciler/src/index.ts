@@ -11,4 +11,5 @@ export * from "./resource-type";
 export { ResourceCycleError } from "./cycles";
 export * from "./overrides";
 export * from "./unobtainable-credential";
+export { SourcePrefetchError, type FailedSource } from "./prefetch";
 export * from "./reported-error";

@@ -207,6 +207,7 @@ export const deploy = {
             { label: "AWS Internals", slug: "internals/aws-internals" },
             { label: "Cloudflare Internals", slug: "internals/cloudflare-internals" },
             { label: "Infisical Internals", slug: "internals/infisical-internals" },
+            { label: "1Password Internals", slug: "internals/1password-internals" },
           ],
         },
       ],
@@ -281,7 +282,10 @@ export const deploy = {
         {
           heading: "Secret Providers",
           icon: "database",
-          links: [{ label: "Infisical", slug: "providers/infisical/sources" }],
+          links: [
+            { label: "Infisical", slug: "providers/infisical/sources" },
+            { label: "1Password", slug: "providers/1password/sources" },
+          ],
         },
       ],
     },
