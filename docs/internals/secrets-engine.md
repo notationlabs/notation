@@ -56,6 +56,62 @@ After applying an action, `findCredentialsNotReceived` inspects `given` (excludi
 - **Non-rotatable credentials** – Calls `deferUnobtainable` with `reason: "not-held"` so the error surfaces only if `revealCredentials` runs.
 - **Rotatable credentials** – Loops `attempt = 0, 1, ...` calling `rotateStep` until `holdsCredential(version)` is true, skipping journaled attempts without an in-memory value. Once held, it updates the producer record, refreshes sibling consumers (`refresh:<id>`, `driftDetection: false`), and updates markers in `params`, `unnamedParams`, and `action.patch` via `refreshCredentialMarkers`.
 
+## Source Prefetching
+
+Plan and deploy read sources one at a time, in dependency order. So without help, the first read of a source can come halfway through a deploy, after other resources have changed. A source class can define the optional `prefetch` operation to fetch what all of its sources need at the start instead. For example, `OnePasswordSecret` uses it so that the 1Password desktop app shows at most one approval prompt, right after the command starts. See [1Password Internals](./1password-internals.md#fetching-items).
+
+`prefetchSources` (`packages/reconciler/src/prefetch.ts`) runs `prefetch` in four steps:
+
+1. **Group the sources.** It walks the resources in deploy order, and groups the sources by their `prefetch` function. Every source of a class has the same function, so each group is one class.
+2. **Plan the params.** For each source, it plans the params with `planKnownParams` from the outputs in state, as `validateKnownParams` does. A source whose params hold an output that is not deployed yet is left out. Its own `read` fetches it later. Afterwards, `prefetchSources` puts back each resource's output, so the plan or deploy starts as it would without this call.
+3. **Call each group.** It calls each group's `prefetch` once, with `{ id, params }` for every source in the group, and with `executionId`, `app`, `stage` and `notify`.
+4. **Collect the failures.** It scrubs the message of each source in `failed` with `scrubSecretValues`, and after the last group throws one `SourcePrefetchError` that lists them all.
+
+A `prefetch` that throws stops the calls of the groups after it. `prefetchSources` scrubs the error with `scrubError` and rethrows it. A class throws in this way for a failure that concerns all of its sources, such as a missing `op` binary.
+
+A `SourcePrefetchError` names each failed source, its type and its message:
+
+```txt
+2 sources could not be fetched. Nothing has changed.
+  stripe-key (1password/secrets/OnePasswordSecret): <message>
+  database-url (1password/secrets/OnePasswordSecret): <message>
+```
+
+`@notation/reconciler` exports `SourcePrefetchError` and the `FailedSource` type.
+
+### When plan and deploy call it
+
+| Command | Call site | Runs before |
+| :--- | :--- | :--- |
+| `plan` | `createPlan` (`packages/reconciler/src/planner.ts`), after `readRecordedOutputs` | The first `planResource` |
+| `deploy` | `deploy()` (`packages/reconciler/src/durable/deploy.ts`), first statement after `assertDependenciesPresent` | The `notation:validate` step and the deployment hold |
+| `destroy` | Not called | |
+
+**The call in `deploy()` is not a durable step.** A resumed deploy replays its steps from the journal, but the result of `prefetch` is only in memory. So a resume calls `prefetch` again, and uses nothing that the failed attempt fetched.
+
+This has a cost for a resume. A resumed deploy replays the `read` of each source from the journal, and loads a value only for a consumer that is not written yet. `prefetch` still fetches every source, and a source that fails still fails the resume, even when the resume would not have loaded it. The engine can't tell a resume from a first run before it replays the journal, so it uses one rule for both.
+
+A plan, and a deploy that is not a resume, read every source anyway. So a source that fails in `prefetch` would have failed later, after other resources had changed. With `prefetch`, nothing has changed when it fails.
+
+### Passing the result to `read` and `loadCredential`
+
+`prefetchSources` returns a `PrefetchedValues` map from each `prefetch` function to the `prefetched` value that it returned. The engine does not look inside the value:
+
+- The planner keeps the map for the plan. `deploy()` keeps it in `DeployContext.prefetched` (`packages/reconciler/src/durable/types.ts`).
+- `prefetchedFor(prefetched, source)` looks up the entry for the source's class. The planner and `sourceContext` (`packages/reconciler/src/durable/source.ts`) spread it into the context of `read` and `loadCredential` as `context.prefetched`.
+- `context.prefetched` is undefined when the class has no `prefetch`, or when no source of the class had known params.
+- The engine never writes the value to the journal or to state. It drops it when the plan or deploy ends.
+
+The value is kept apart from `held`. `held` is keyed by credential version, and a source's credential version is a hash of its `revision`, which `read` computes later. At prefetch time there is no key. The engine still puts a value in `held` only when a consumer needs it.
+
+### Notices
+
+`context.notify(message)` emits a `reconciler.source.notice` event (`SourceNoticeEvent` in `packages/reconciler/src/events.ts`) with `level: "info"`, the class's `resourceType` and the message. `notify` returns nothing, so `prefetchSources` awaits the emits after the `prefetch` call ends. Pretty output (`formatPrettyEvent` in `packages/reconciler/src/logger-subscriber.ts`) shows the event as:
+
+```txt
+… Waiting for 1Password. Approve the request in the 1Password app. (1password/secrets/OnePasswordSecret)
+```
+
 ## Source Versioning
 
 `readAndDecideSource` (`packages/reconciler/src/sources.ts`) runs `source.readSource` inside `step.run("read", ...)`. It scrubs errors with `scrubError`, emits `reconciler.source.warning` for each `warn()` message, and passes the validated result to `decideSource`.

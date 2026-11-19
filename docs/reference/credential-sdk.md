@@ -1,10 +1,10 @@
 # Credential SDK
 
-`@notation/resource`, `@notation/std/track`, `@notation/core`, and `@notation/infisical/resources` provide the builder APIs, hashing utilities, redaction wrapper, error classes, and scrubbing helpers used to author and consume credential sources. See [Credential Sources](../authoring/credential-sources.md) for a practical authoring guide.
+`@notation/resource`, `@notation/std/track`, `@notation/core`, `@notation/reconciler`, and `@notation/infisical/resources` provide the builder APIs, hashing utilities, redaction wrapper, error classes, and scrubbing helpers used to author and consume credential sources. See [Credential Sources](../authoring/credential-sources.md) for a practical authoring guide.
 
 ## Credential source builder
 
-Define an external secret source class with `credentialSourceResource<ApiSchema>(meta)` from `@notation/resource` followed by `.defineSchema(schema)` and `.defineOperations({ read, loadCredential })`.
+Define an external secret source class with `credentialSourceResource<ApiSchema>(meta)` from `@notation/resource` followed by `.defineSchema(schema)` and `.defineOperations({ prefetch, read, loadCredential })`. `prefetch` is optional.
 
 ### `credentialSourceResource`
 
@@ -64,7 +64,13 @@ Declaring any `"credential"` property other than `value` throws synchronously in
 
 ## Source operations
 
-`.defineOperations({ read, loadCredential })` separates metadata inspection from plaintext secret loading (see [Secrets Engine](../internals/secrets-engine.md)).
+`.defineOperations({ prefetch, read, loadCredential })` separates metadata inspection from plaintext secret loading (see [Secrets Engine](../internals/secrets-engine.md)). `defineOperations` takes one type parameter, `Prefetched`, which is the type of the value that `prefetch` returns. It defaults to `undefined`:
+
+```ts [@notation/resource]
+defineOperations: <Prefetched = undefined>(
+  opts: CredentialSourceOperations<InferResourceTypes<ResolveSchema<S>>, Prefetched>,
+) => CredentialSourceClass<InferResourceTypes<ResolveSchema<S>>>;
+```
 
 ### `CredentialSourceContext`
 
@@ -82,6 +88,8 @@ export type CredentialSourceContext<Prefetched = unknown> = {
 
 `executionId` remains constant across resumes of a single deploy and is regenerated for each `plan`.
 
+`prefetched` is what the class's `prefetch` returned in this plan or deploy. It is undefined when the class has no `prefetch`, or when no source of the class had known params. A resumed deploy calls `prefetch` again, so after a resume `prefetched` holds what was fetched at the start of the resume, not what the first attempt fetched.
+
 ### `CredentialSourceReadContext`
 
 Passed as the second argument to `read`:
@@ -98,6 +106,76 @@ export type CredentialSourceReadContext<
 
 `state` holds previously recorded params and computed outputs (excluding `hidden` params and credentials), or `undefined` when no state record exists. Call `warn(message)` to display a warning for the source during `plan` and `deploy`.
 
+### `prefetch`
+
+An optional operation that fetches what every source of the class needs, before plan or deploy plans or changes any resource. Use it when a source's backend should be called once at the start, rather than once for each source as the engine reaches it. For example, `OnePasswordSecret` from `@notation/1password` uses it so that the 1Password desktop app shows one approval prompt at the start of a deploy.
+
+```ts [@notation/resource]
+prefetch?: (
+  sources: PrefetchedSource<T["params"]>[],
+  context: CredentialSourcePrefetchContext,
+) => Promise<CredentialSourcePrefetchResult<Prefetched>>;
+
+export type PrefetchedSource<Params = any> = {
+  id: string;
+  params: Params;
+};
+
+export type CredentialSourcePrefetchContext = {
+  executionId: string;
+  app: string;
+  stage: string;
+  notify(message: string): void;
+};
+
+export type CredentialSourcePrefetchResult<Prefetched = unknown> = {
+  prefetched: Prefetched;
+  failed: { id: string; error: Error }[];
+};
+```
+
+Plan and deploy call `prefetch` once for each class, with every source of the class whose params are known. A source whose params hold an output that is not deployed yet is not passed. A resumed deploy calls `prefetch` again. `destroy` does not call it.
+
+`prefetch` returns two things:
+
+- **`prefetched`** – Any value that the class's `read` and `loadCredential` need. The engine does not look inside it. It passes it to every `read` and `loadCredential` of the class as `context.prefetched`, keeps it in memory, and drops it when the plan or deploy ends. It never writes it to the journal or to state.
+- **`failed`** – The sources that `prefetch` could not fetch, each with its error. When `failed` is not empty, plan and deploy throw one `SourcePrefetchError` that lists every failed source with its scrubbed message. Nothing has changed at that point.
+
+A source that is in neither `failed` nor `prefetched` is fetched by its own `read`. `read` and `loadCredential` must therefore handle a missing `context.prefetched`, and a `prefetched` value without the source in it, for example a source whose params were not known at the start.
+
+Throw from `prefetch` for a failure that concerns every source of the class, such as a missing CLI or an invalid token. The engine scrubs the error and stops the plan or deploy.
+
+Call `context.notify(message)` to show a message in the output of plan and deploy, for example while `prefetch` waits for the user. Each call emits a `reconciler.source.notice` event.
+
+`prefetched` holds plaintext values in memory for the whole plan or deploy, so call `recordSecretValue` on every value that `prefetch` fetches.
+
+A minimal `prefetch` that fetches each source once, and that `read` uses:
+
+```ts [packages/acme/src/resources/acme-secret.ts]
+.defineOperations<Map<string, AcmeSecret>>({
+  prefetch: async (sources) => {
+    const prefetched = new Map<string, AcmeSecret>();
+    const failed: { id: string; error: Error }[] = [];
+    for (const source of sources) {
+      try {
+        const secret = await getSecret(source.params.key);
+        recordSecretValue(secret.value);
+        prefetched.set(source.params.key, secret);
+      } catch (error) {
+        failed.push({ id: source.id, error: error as Error });
+      }
+    }
+    return { prefetched, failed };
+  },
+  read: async (params, context) => {
+    const secret =
+      context.prefetched?.get(params.key) ?? (await getSecret(params.key)); // ← fall back for unfetched sources
+    return { revision: `version:${secret.id}:${secret.version}` };
+  },
+  // ...
+});
+```
+
 ### `read`
 
 Called during `plan` and `deploy` to compute `revision` and any extra `"computed"` outputs without returning plaintext secrets:
@@ -105,7 +183,7 @@ Called during `plan` and `deploy` to compute `revision` and any extra `"computed
 ```ts [@notation/resource]
 read: (
   params: T["params"],
-  context: CredentialSourceReadContext<T["state"]>,
+  context: CredentialSourceReadContext<T["state"], Prefetched>,
 ) => Promise<CredentialSourceReadResult<T>>;
 ```
 
@@ -118,7 +196,7 @@ Called during `deploy` only when a downstream consumer creates, updates, or repl
 ```ts [@notation/resource]
 loadCredential: (
   state: T["state"],
-  context: CredentialSourceContext,
+  context: CredentialSourceContext<Prefetched>,
 ) => Promise<T["credentials"]["value"]>;
 ```
 
@@ -174,7 +252,7 @@ export function trackRevision(
 
 ## Credential errors
 
-Two specialized error classes handle external secret replacement and missing rotation paths.
+Three error classes handle external secret replacement, sources that `prefetch` could not fetch, and missing rotation paths.
 
 ### `SecretReplacedError`
 
@@ -186,7 +264,34 @@ export class SecretReplacedError extends Error {
 }
 ```
 
-Custom credential sources for versioned stores should follow the same pattern by pinning an immutable secret ID alongside the version number in `revision` and throwing when the ID changes.
+Custom credential sources for versioned stores should follow the same pattern by pinning an immutable secret ID alongside the version number in `revision` and throwing when the ID changes. `ItemReplacedError` from `@notation/1password/resources` follows it for 1Password items.
+
+### `SourcePrefetchError`
+
+Exported from `@notation/reconciler`. Thrown by `plan` and `deploy` when a class's `prefetch` returns sources in `failed`. It is thrown before any resource changes:
+
+```ts [@notation/reconciler]
+export type FailedSource = {
+  id: string;
+  type: ResourceType;
+  message: string;
+};
+
+export class SourcePrefetchError extends Error {
+  readonly _tag = "SourcePrefetchError" as const;
+  readonly failed: readonly FailedSource[];
+  constructor(failed: readonly FailedSource[]);
+  static is(error: unknown): error is SourcePrefetchError;
+}
+```
+
+`message` is the failed source's error message, passed through `scrubSecretValues`. The error message lists one line for each failed source:
+
+```txt
+2 sources could not be fetched. Nothing has changed.
+  stripe-key (1password/secrets/OnePasswordSecret): <message>
+  database-url (1password/secrets/OnePasswordSecret): <message>
+```
 
 ### `UnobtainableCredentialError`
 
