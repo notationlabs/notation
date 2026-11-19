@@ -202,6 +202,31 @@ importers:
         specifier: ^22.20.5
         version: 22.20.5
 
+  packages/1password:
+    dependencies:
+      '@notation/resource':
+        specifier: workspace:*
+        version: link:../resource
+      '@notation/std':
+        specifier: workspace:*
+        version: link:../std
+      '@notation/utils':
+        specifier: workspace:*
+        version: link:../utils
+      valibot:
+        specifier: ^1.5.0
+        version: 1.5.0(typescript@7.0.2)
+    devDependencies:
+      '@notation/core':
+        specifier: workspace:*
+        version: link:../core
+      '@notation/reconciler':
+        specifier: workspace:*
+        version: link:../reconciler
+      '@types/node':
+        specifier: ^22.20.5
+        version: 22.20.5
+
   packages/aws:
     dependencies:
       '@aws-sdk/client-apigatewayv2':
