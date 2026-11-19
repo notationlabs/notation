@@ -19,23 +19,26 @@ export { KVJsonError, readKVJson } from "./kv-json";
 
 /**
  * Declares nothing at runtime. The Worker reads its bindings from `env`.
- * `url` is a getter that throws, for a read that the build can't see, such as
- * one in a helper that the Worker passes it to. It isn't enumerable, so a
- * spread doesn't read it.
+ * Each output, such as `url`, is a getter that throws, for a read that the
+ * build can't see, such as one in a helper that the Worker passes it to. It
+ * isn't enumerable, so a spread doesn't read it.
  */
 export function $worker<
   const Id extends string,
   B extends Bindings = {},
   E = undefined,
 >(config: WorkerDeclarationConfig<Id, B, E>): Worker<ResolvedValues<B>, E> {
-  const declaration = Object.defineProperty({ id: config.id }, "url", {
-    enumerable: false,
-    get() {
-      throw new Error(
-        `Worker code read url, an output of $worker({ id: ${JSON.stringify(config.id)} }). An output is known only at deploy, so Worker code can't read it. Bind it to the Worker that needs it, and read it from env.`,
-      );
-    },
-  });
+  const declaration = { id: config.id };
+  for (const output of ["url", "scriptName"]) {
+    Object.defineProperty(declaration, output, {
+      enumerable: false,
+      get() {
+        throw new Error(
+          `Worker code read ${output}, an output of $worker({ id: ${JSON.stringify(config.id)} }). An output is known only at deploy, so Worker code can't read it. Bind it to the Worker that needs it, and read it from env.`,
+        );
+      },
+    });
+  }
   return declaration as unknown as Worker<ResolvedValues<B>, E>;
 }
 

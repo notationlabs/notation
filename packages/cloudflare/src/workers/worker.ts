@@ -90,6 +90,23 @@ export type WorkerDeclarationConfig<
    * check that the entry exports the class.
    */
   entrypoint?: E;
+  /**
+   * Workers Logs, which keeps the Worker's logs for search in the dashboard.
+   * `headSamplingRate` is the share of requests that are logged, from 0 to
+   * 1, and defaults to 1. Removing the option turns Workers Logs off.
+   */
+  observability?: { enabled: boolean; headSamplingRate?: number };
+  /**
+   * Sends the Worker's trace events to the Logpush jobs of the account that
+   * have the dataset `workers_trace_events`.
+   */
+  logpush?: boolean;
+  /**
+   * The Workers that receive this Worker's tail events, each declared with
+   * `$worker` or `worker()`. Each one must export a `tail` handler. It is
+   * called after all infra modules have loaded, as `bindings` is.
+   */
+  tailConsumers?: () => Worker<any, any>[];
 };
 
 /** The options of `worker()`: the options of `$worker`, and `code`. */
@@ -120,6 +137,16 @@ export type WorkerUrl<U extends boolean> = [U] extends [false]
        */
       readonly url: OutputRef<string>;
     };
+
+/** The outputs of every Worker. */
+export type WorkerOutputs = {
+  /**
+   * The name that deploy gives the Worker in Cloudflare, such as
+   * `<app>--<stage>--<id>-<instance>`. Pass it to `wrangler tail` to stream
+   * the Worker's logs.
+   */
+  readonly scriptName: OutputRef<string>;
+};
 
 /** The module that a Worker uploads: a file, or code declared elsewhere. */
 export type WorkerGroupCode =
@@ -155,6 +182,8 @@ export type WorkerGroupConfig = WorkerGroupCode & {
   /** The containers of the hosted namespaces. */
   containers?: WorkerGroupContainer[];
   url: boolean;
+  observability?: cloudflare.workers.ScriptObservability;
+  logpush?: boolean;
 };
 
 /** The image and the container application of a hosted namespace. */
@@ -215,6 +244,8 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
           DurableObjectNamespaces: config.namespaces,
           UnprotectedDurableObjects: config.unprotectedNamespaces,
           BoundDurableObjects: config.boundNamespaces,
+          Observability: config.observability,
+          Logpush: config.logpush,
         },
         dependencies: { code: this.code },
       }),
@@ -331,7 +362,7 @@ const declaredWorkers = perCollection(
  * Declares a Cloudflare Worker. The module's default export is the handler.
  * `bindings` is called after all infra modules have loaded, so it can refer
  * to a Worker whose module imports this one.
- * @declaration shared: id, bindings; runtime: entrypoint; entryOption: entrypoint; keys: bindings; entry: default; platform: workerd; outputs: url
+ * @declaration shared: id, bindings; runtime: entrypoint; entryOption: entrypoint; keys: bindings; entry: default; platform: workerd; outputs: url, scriptName
  */
 export function $worker<
   const Id extends string,
@@ -340,14 +371,15 @@ export function $worker<
   const U extends boolean = true,
 >(
   config: WorkerDeclarationConfig<Id, B, E> & { url?: U },
-): Worker<ResolvedValues<B>, E> & WorkerUrl<U> {
+): Worker<ResolvedValues<B>, E> & WorkerUrl<U> & WorkerOutputs {
   assertWorkerId("$worker", config.id);
   assertCompatibilityDate(`$worker({ id: "${config.id}" })`, config);
   const declaration = { id: config.id } as unknown as Worker<
     ResolvedValues<B>,
     E
   > &
-    WorkerUrl<U>;
+    WorkerUrl<U> &
+    WorkerOutputs;
   registerWorker(config, {
     declaration,
     describe: () => {
@@ -392,7 +424,7 @@ export function worker<
   const U extends boolean = true,
 >(
   config: WorkerConfig<Id, B, E> & { url?: U },
-): Worker<ResolvedValues<B>, E> & WorkerUrl<U> {
+): Worker<ResolvedValues<B>, E> & WorkerUrl<U> & WorkerOutputs {
   assertWorkerId("worker()", config.id);
   const label = `worker({ id: "${config.id}" })`;
   assertCompatibilityDate(label, config);
@@ -401,7 +433,8 @@ export function worker<
     ResolvedValues<B>,
     E
   > &
-    WorkerUrl<U>;
+    WorkerUrl<U> &
+    WorkerOutputs;
   if (!isBundle(code)) {
     if (code?.type !== "file" || typeof code.path !== "string" || !code.path) {
       throw new Error(
@@ -537,6 +570,13 @@ function registerWorker(
           ? resolved.containers
           : undefined,
         url: config.url ?? true,
+        observability: config.observability && {
+          enabled: config.observability.enabled,
+          ...(config.observability.headSamplingRate !== undefined && {
+            head_sampling_rate: config.observability.headSamplingRate,
+          }),
+        },
+        logpush: config.logpush,
       });
       // Each service binding is a contribution, so that deploy can create
       // one of two Workers that bind each other first, without its binding.
@@ -547,6 +587,15 @@ function registerWorker(
       // a Worker can bind its own URL, or two Workers each other's.
       if (resolved.contributedText.length > 0) {
         script.contribute({ Bindings: resolved.contributedText });
+      }
+      // Each tail consumer is a contribution too, so that a tail consumer can
+      // bind the Worker that it receives events from.
+      for (const consumer of tailConsumersOf(entry, config)) {
+        consumer.whenBuilt((bound) =>
+          script.contribute({
+            TailConsumers: [{ service: bound.script.outputRef("ScriptName") }],
+          }),
+        );
       }
       for (const { name, worker } of resolved.services) {
         worker.whenBuilt((bound) =>
@@ -622,10 +671,56 @@ function registerWorker(
       }));
     },
   });
+  let scriptName: OutputRef<string> | undefined;
+  Object.defineProperty(source.declaration, "scriptName", {
+    get: () => {
+      const current = declaredWorkers();
+      if (!current) {
+        throw new Error(
+          `scriptName was read on ${entry.describe()} while no resource graph is being collected. Read it in an infra module or in a bindings function.`,
+        );
+      }
+      if (!current.includes(entry)) {
+        throw new Error(
+          `scriptName was read on ${entry.describe()}, which was declared in another resource graph. Read the scriptName of a Worker that is declared in the resource graph being collected.`,
+        );
+      }
+      // The ref's type is inferred from the script's `outputRef`, which
+      // gives the union of every param's type.
+      return (scriptName ??= deferredOutputRef({
+        resourceId: workerResourceId(config.id),
+        key: "ScriptName",
+        resolve: () => entry.build().script,
+      }) as OutputRef<string>);
+    },
+  });
   if (workers) {
     workers.push(entry);
     onEvaluationEnd(() => entry.build());
   }
+}
+
+/** The Workers from the `tailConsumers` option, without repeats. */
+function tailConsumersOf(
+  self: Entry,
+  config: WorkerDeclarationConfig<string, Bindings, unknown>,
+): Entry[] {
+  const consumers: Entry[] = [];
+  for (const value of config.tailConsumers?.() ?? []) {
+    const consumer = registeredWorker(value);
+    if (!consumer) {
+      throw new Error(
+        `${self.describe()} lists a value in tailConsumers that is not a Worker. List Workers declared with $worker or worker().`,
+      );
+    }
+    if (consumer === self) {
+      throw new Error(
+        `${self.describe()} lists itself in tailConsumers. A Worker can't receive its own tail events. List another Worker.`,
+      );
+    }
+    if (!consumers.includes(consumer)) consumers.push(consumer);
+  }
+  return consumers;
 }
 
 /**
