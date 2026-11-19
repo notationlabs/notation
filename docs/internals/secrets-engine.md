@@ -62,17 +62,19 @@ Plan and deploy read sources one at a time, in dependency order. So without help
 
 `prefetchSources` (`packages/reconciler/src/prefetch.ts`) runs `prefetch` in four steps:
 
-1. **Group the sources.** It walks the resources in deploy order, and groups the sources by their `prefetch` function. Every source of a class has the same function, so each group is one class.
-2. **Plan the params.** For each source, it plans the params with `planKnownParams` from the outputs in state, as `validateKnownParams` does. A source whose params hold an output that is not deployed yet is left out. Its own `read` fetches it later. Afterwards, `prefetchSources` puts back each resource's output, so the plan or deploy starts as it would without this call.
+1. **Load the outputs.** It loads the output of every resource from state with `loadOutput`.
+2. **Plan the params.** For each source that has a `prefetch`, it plans the params with `planKnownParams`, as `validateKnownParams` does, and groups the source by its `prefetch` function. Every source of a class has the same function, so each group is one class. A source whose params hold an output that is not deployed yet is left out. Its own `read` fetches it later. A source whose params hold an output that is in state is passed with that output.
 3. **Call each group.** It calls each group's `prefetch` once, with `{ id, params }` for every source in the group, and with `executionId`, `app`, `stage` and `notify`.
 4. **Collect the failures.** It scrubs the message of each source in `failed` with `scrubSecretValues`, and after the last group throws one `SourcePrefetchError` that lists them all.
+
+`prefetchSources` leaves the loaded outputs in place. Plan and deploy load each resource's output from state again before they plan or reconcile it, and they reach a resource's dependencies before it, so the outputs from step 1 do not change a decision.
 
 A `prefetch` that throws stops the calls of the groups after it. `prefetchSources` scrubs the error with `scrubError` and rethrows it. A class throws in this way for a failure that concerns all of its sources, such as a missing `op` binary.
 
 A `SourcePrefetchError` names each failed source, its type and its message:
 
 ```txt
-2 sources could not be fetched. Nothing has changed.
+2 sources could not be fetched.
   stripe-key (1password/secrets/OnePasswordSecret): <message>
   database-url (1password/secrets/OnePasswordSecret): <message>
 ```
@@ -87,11 +89,11 @@ A `SourcePrefetchError` names each failed source, its type and its message:
 | `deploy` | `deploy()` (`packages/reconciler/src/durable/deploy.ts`), first statement after `assertDependenciesPresent` | The `notation:validate` step and the deployment hold |
 | `destroy` | Not called | |
 
-**The call in `deploy()` is not a durable step.** A resumed deploy replays its steps from the journal, but the result of `prefetch` is only in memory. So a resume calls `prefetch` again, and uses nothing that the failed attempt fetched.
+**The call in `deploy()` is not a durable step.** The durable runtime runs `deploy()` from the top on every delivery of the workflow, and replays the steps that finished from the journal. The result of `prefetch` is only in memory, so each delivery calls `prefetch` again, and uses nothing that an earlier delivery fetched. A delivery ends when the deploy suspends, so this happens on a resume, and also on the wake after a suspend, such as the wait for the deployment hold or a retry delay.
 
-This has a cost for a resume. A resumed deploy replays the `read` of each source from the journal, and loads a value only for a consumer that is not written yet. `prefetch` still fetches every source, and a source that fails still fails the resume, even when the resume would not have loaded it. The engine can't tell a resume from a first run before it replays the journal, so it uses one rule for both.
+This has a cost for a later delivery. It replays the `read` of each source from the journal, and loads a value only for a consumer that is not written yet. `prefetch` still fetches every source, and a source that fails still fails the deploy, even when the delivery would not have loaded it. Such a failure can come after an earlier delivery changed resources. The engine can't tell a later delivery from the first before it replays the journal, so it uses one rule for all of them.
 
-A plan, and a deploy that is not a resume, read every source anyway. So a source that fails in `prefetch` would have failed later, after other resources had changed. With `prefetch`, nothing has changed when it fails.
+A plan, and the first delivery of a deploy, read every source anyway. So a source that fails in `prefetch` would have failed later, after other resources had changed. With `prefetch`, nothing has changed when it fails in a plan or in the first delivery.
 
 ### Passing the result to `read` and `loadCredential`
 
@@ -106,7 +108,7 @@ The value is kept apart from `held`. `held` is keyed by credential version, and 
 
 ### Notices
 
-`context.notify(message)` emits a `reconciler.source.notice` event (`SourceNoticeEvent` in `packages/reconciler/src/events.ts`) with `level: "info"`, the class's `resourceType` and the message. `notify` returns nothing, so `prefetchSources` awaits the emits after the `prefetch` call ends. Pretty output (`formatPrettyEvent` in `packages/reconciler/src/logger-subscriber.ts`) shows the event as:
+`context.notify(message)` emits a `reconciler.source.notice` event (`SourceNoticeEvent` in `packages/reconciler/src/events.ts`) with `level: "info"`, the class's `resourceType` and the message. `prefetchSources` does not await the emit, and ignores an emit that fails. The emitters in use, the pretty and NDJSON emitters of the CLI and the logger subscriber, write the event before they return. Pretty output (`formatPrettyEvent` in `packages/reconciler/src/logger-subscriber.ts`) shows the event as:
 
 ```txt
 … Waiting for 1Password. Approve the request in the 1Password app. (1password/secrets/OnePasswordSecret)

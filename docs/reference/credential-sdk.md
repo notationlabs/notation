@@ -88,7 +88,7 @@ export type CredentialSourceContext<Prefetched = unknown> = {
 
 `executionId` remains constant across resumes of a single deploy and is regenerated for each `plan`.
 
-`prefetched` is what the class's `prefetch` returned in this plan or deploy. It is undefined when the class has no `prefetch`, or when no source of the class had known params. A resumed deploy calls `prefetch` again, so after a resume `prefetched` holds what was fetched at the start of the resume, not what the first attempt fetched.
+`prefetched` is what the class's `prefetch` returned in this plan or deploy. It is undefined when the class has no `prefetch`, or when no source of the class had known params. Each delivery of the deploy workflow calls `prefetch` again: a resume, or a wake after the deployment hold or a retry delay. So in a later delivery, `prefetched` holds what was fetched at the start of that delivery, not what an earlier delivery fetched.
 
 ### `CredentialSourceReadContext`
 
@@ -134,12 +134,12 @@ export type CredentialSourcePrefetchResult<Prefetched = unknown> = {
 };
 ```
 
-Plan and deploy call `prefetch` once for each class, with every source of the class whose params are known. A source whose params hold an output that is not deployed yet is not passed. A resumed deploy calls `prefetch` again. `destroy` does not call it.
+Plan and deploy call `prefetch` once for each class, with every source of the class whose params are known. A source whose params hold an output that is not deployed yet is not passed. Each delivery of the deploy workflow calls `prefetch` again: a resume, or a wake after the deployment hold or a retry delay. `destroy` does not call it.
 
 `prefetch` returns two things:
 
 - **`prefetched`** – Any value that the class's `read` and `loadCredential` need. The engine does not look inside it. It passes it to every `read` and `loadCredential` of the class as `context.prefetched`, keeps it in memory, and drops it when the plan or deploy ends. It never writes it to the journal or to state.
-- **`failed`** – The sources that `prefetch` could not fetch, each with its error. When `failed` is not empty, plan and deploy throw one `SourcePrefetchError` that lists every failed source with its scrubbed message. Nothing has changed at that point.
+- **`failed`** – The sources that `prefetch` could not fetch, each with its error. When `failed` is not empty, plan and deploy throw one `SourcePrefetchError` that lists every failed source with its scrubbed message. In a plan, or in the first delivery of a deploy, nothing has changed at that point.
 
 A source that is in neither `failed` nor `prefetched` is fetched by its own `read`. `read` and `loadCredential` must therefore handle a missing `context.prefetched`, and a `prefetched` value without the source in it, for example a source whose params were not known at the start.
 
@@ -288,7 +288,7 @@ export class SourcePrefetchError extends Error {
 `message` is the failed source's error message, passed through `scrubSecretValues`. The error message lists one line for each failed source:
 
 ```txt
-2 sources could not be fetched. Nothing has changed.
+2 sources could not be fetched.
   stripe-key (1password/secrets/OnePasswordSecret): <message>
   database-url (1password/secrets/OnePasswordSecret): <message>
 ```

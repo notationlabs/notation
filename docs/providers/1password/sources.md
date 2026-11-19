@@ -104,7 +104,7 @@ Notation keeps a `revision` for each source in state, and updates the resources 
 | `"hmac"` | A keyed HMAC-SHA256 hash of the field's value | The field's value changes |
 | `"scrypt"` | A salted scrypt hash of the field's value | The field's value changes |
 
-**Use `track: "hmac"` for any item that people edit.** 1Password keeps one version for the whole item, not one for each field. Without `track`, a change to another field, to the title or to the tags of the item raises the version, and Notation updates every consumer with the same value. A change to the item in the middle of a deploy also fails a resumed deploy. See [Errors](#errors).
+**Use `track: "hmac"` for any item that people edit.** 1Password keeps one version for the whole item, not one for each field. Without `track`, a change to another field, to the title or to the tags of the item raises the version, and Notation updates every consumer with the same value. A change to the item in the middle of a deploy can also fail the deploy when it continues after a resume or a retry delay. See [Errors](#errors).
 
 `"hmac"` needs the same `NOTATION_TRACK_KEY` on every machine and CI runner that runs `plan` or `deploy`:
 
@@ -136,7 +136,7 @@ If you are signed in to two accounts, for example a personal one and a work one,
 export OP_ACCOUNT="acme.1password.com"
 ```
 
-Without `OP_ACCOUNT`, `op` can look up a reference with names in the wrong account. When `op` can't find a vault or an item, the error says which account `op` used.
+Without `OP_ACCOUNT`, `op` can look up a reference with names in the wrong account. When `op` signs in with the desktop app, and can't find a vault or an item, or finds more than one item with the name, the error says which account `op` used.
 
 All sources in one `plan` or `deploy` read from one account. Sources in two accounts need two deploys, or references with IDs and a Connect server.
 
@@ -150,12 +150,12 @@ Notation fetches every `OnePasswordSecret` at the start of `plan` and `deploy`, 
 … Waiting for 1Password. Approve the request in the 1Password app. (1password/secrets/OnePasswordSecret)
 ```
 
-`op` waits up to 60 seconds, and then fails with `authorization timeout`. Nothing has changed at that point.
+`op` waits up to 60 seconds, and then fails with `authorization timeout`. In a plan, or at the start of a deploy, nothing has changed at that point.
 
 - **At a terminal**, you approve once. Later plans and deploys in the same terminal session run without a prompt until the approval expires.
 - **`notation watch`** fetches every item on each deploy, so each deploy takes at least 1.3 seconds longer. The deploys run in the terminal session of `notation watch`, so one approval covers them.
-- **A resumed deploy** fetches every item again, and so can show a prompt at its start.
-- **A source whose `reference` is built from another resource's output** is not fetched at the start. Notation fetches it when it reads the source, in the middle of the deploy. If the approval has expired by then, the prompt appears during the deploy.
+- **A deploy that continues** fetches every item again, and so can show a prompt. This happens when a deploy is resumed, and when it wakes after it waited for another deploy to finish or for a retry delay.
+- **A source whose `reference` is built from another resource's output** is fetched at the start only when that output is already in state. When the output is not deployed yet, Notation fetches the item when it reads the source, in the middle of the deploy. If the approval has expired by then, the prompt appears during the deploy.
 
 ### Agents
 
@@ -185,7 +185,7 @@ jobs:
 
 The references in `infra/` stay the same. With a token, `op` never asks the desktop app, so there is no prompt.
 
-A service account reads only the vaults that you gave it. It can't read a `Personal`, `Private` or `Employee` vault, or the default `Shared` vault. **A reference that works on your machine can therefore fail in CI.** The deploy fails before it changes anything, and the error lists every source that could not be fetched.
+A service account reads only the vaults that you gave it. It can't read a `Personal`, `Private` or `Employee` vault, or the default `Shared` vault. **A reference that works on your machine can therefore fail in CI.** The deploy fails at its start, before it changes anything, and the error lists every source that could not be fetched.
 
 A reference names one vault, so a source reads the same item on your machine and in CI only if you and the service account can both read that vault. For example, a team that deploys `prod` only from CI can give the `Prod` vault only to the service account. A developer who runs `notation plan --stage prod` on their machine then gets an error. To use a different vault for each stage, choose the reference by stage in `infra/`:
 
@@ -261,10 +261,10 @@ This names each secret twice, once in `.env.op` and once in `infra/`. A resumed 
 
 ### Errors
 
-A `plan` or `deploy` fails before it changes anything when a source can't be fetched. The error lists every such source:
+A `plan` or `deploy` fails at its start when a source can't be fetched. The error lists every such source:
 
 ```txt
-2 sources could not be fetched. Nothing has changed.
+2 sources could not be fetched.
   stripe-key (1password/secrets/OnePasswordSecret): <message>
   database-url (1password/secrets/OnePasswordSecret): <message>
 ```
@@ -272,18 +272,18 @@ A `plan` or `deploy` fails before it changes anything when a source can't be fet
 Other errors:
 
 - **`op` is not installed.** The error is "The 1Password CLI, op, is required, and it isn't on PATH", followed by a link to the install guide.
-- **`authorization timeout`.** Nobody approved the prompt within 60 seconds. The error adds that a process with no person to approve the prompt, such as an agent or a CI job, needs a service account.
+- **`authorization timeout`.** Nobody approved the prompt within 60 seconds. The error adds that a process with no person to approve the prompt, such as an agent or a CI job, needs a 1Password service account in `OP_SERVICE_ACCOUNT_TOKEN`.
 - **The item is archived.** The source fails. `op` still finds an archived item by its ID, so without this check a reference with IDs would keep deploying it.
 - **The value is empty.** The source fails.
-- **The item changed during a deploy.** Without `track`, a resumed deploy fails if the item has a new version, with a message that ends "changed after deploy read it. Run deploy again." `op` can't fetch a past version of an item, so the resume can't load the value that the first attempt read. Run `deploy` again.
-- **`ItemReplacedError`.** The item was deleted, and another item with the same name was added, during a deploy. Run `deploy` again.
-- **`OnePasswordError`.** Any other failed `op` call, with the message `op exited with code <code>: <stderr>`. It has `exitCode` and `stderr`. Secret values are scrubbed from `stderr`.
-- **Output that Notation can't read.** If `op` prints output that is not the expected JSON, the error is "1Password returned output that notation can't read". The output itself is never included, because it contains values.
+- **The item changed during a deploy.** Without `track`, a deploy that continues after a resume or a retry delay fails if the item has a new version, with a message that ends "changed after deploy read it. Run deploy again." `op` can't fetch a past version of an item, so the deploy can't load the value that it read before. Run `deploy` again.
+- **`ItemReplacedError`.** The item was deleted, and another item with the same name was added, during a deploy. The message ends "was deleted and another item with the same name was added after deploy read it. Run deploy again."
+- **`OnePasswordError`.** Any other failed `op` call, with the message `op failed with exit code <code>: <message>`. `<message>` is what `op` printed on stderr, without the `[ERROR]` prefix and the timestamp at the start of each line. It has `exitCode` and `stderr`, which holds the text that `op` printed, with secret values scrubbed.
+- **Output that Notation can't read.** If `op` prints output that is not the expected JSON, the error is "1Password returned output that notation can't read." The output itself is never included, because it contains values.
 
 `@notation/1password/resources` exports `OnePasswordError` and `ItemReplacedError`.
 
 ### Limits
 
 - **Item and vault names are visible in the process list.** They are arguments of `op`, so other users of the machine can see them. No value is ever an argument.
-- **Fetched values stay in memory** until the `plan` or `deploy` ends. These are the values of the fields that sources asked for.
+- **Fetched values stay in memory** until the `plan` or `deploy` ends. These are the values of the fields that sources name.
 - **The desktop app prompt is not tested on Linux.** 1Password's docs say it behaves as on macOS.

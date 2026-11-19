@@ -42,12 +42,12 @@ The package also never runs `op item list`. `op item get` resolves names, and re
 
 `OnePasswordSecret.prefetch` receives every `OnePasswordSecret` whose params are known, and fetches their items in four steps:
 
-1. Make one entry for each item, from the item and the vault in the reference. Two references to the same item share an entry.
-2. Run `op item get` for the first entry alone. If the call has not ended after 2 seconds, call `context.notify("Waiting for 1Password. Approve the request in the 1Password app.")`.
-3. Once the first call has ended without a failure that concerns every entry, run one call for each other entry, at most eight at a time.
-4. Return a map from each entry to its item in `prefetched`, and the sources of failed entries in `failed`.
+1. Group the sources by the item and the vault in their reference, so that each item is fetched once. Two references to the same item share one call.
+2. Run `op item get` for the first item alone. If the call has not ended after 2 seconds, call `context.notify("Waiting for 1Password. Approve the request in the 1Password app.")`.
+3. Once the first call has ended without a failure that concerns every item, run one call for each other item, at most eight at a time.
+4. For each source, find its field in the item. Put `{ id, version, value }` in `prefetched` under the text of the reference, or put the source in `failed`.
 
-`read` and `loadCredential` then take the item from `context.prefetched`, and make no `op` call. A source whose `reference` is built from another resource's output is not passed to `prefetch`. Its `read` fetches the item alone, and its `loadCredential` fetches it again.
+`read` and `loadCredential` look up `context.prefetched.get(reference)`. When it holds the reference, they make no `op` call. When it does not, they fetch the item alone. For example, `prefetch` gets no source whose `reference` is built from an output that is not deployed yet. Its `read` fetches the item alone, and its `loadCredential` fetches it again. A reference built from an output that is already in state is passed to `prefetch` with the output from state.
 
 ### Why the first call runs alone
 
@@ -73,25 +73,29 @@ So the first call gets the approval, and the calls after it need none. With a se
 
 One single call takes about 1.3 s. The package runs one call alone and then single calls in parallel, so it shows one prompt, and adds about 1.3 s to the time of the parallel calls.
 
-`op` fetches the items of a batch one after another, so a batch is slow. Batches would also need a real pipe on stdin, which Node gives only through `sh` on macOS and Linux, a parser for concatenated JSON documents, and a way to find the failed entry from stderr.
+`op` fetches the items of a batch one after another, so a batch is slow. Batches would also need a real pipe on stdin, which Node gives only through `sh` on macOS and Linux, a parser for concatenated JSON documents, and a way to find the failed item from stderr.
 
 The limit of eight calls at a time is a constant in `src/items.ts`, so that the number of `op` processes stays bounded. It is not part of the API, and can change in a patch release.
 
 ### Failed calls
 
-A failed call exits with code 1, and `op` prints a message on stderr. The package reads stderr to decide whether the failure concerns one entry or every entry:
+A failed call exits with code 1, and `op` prints a message on stderr. The package reads stderr to decide whether the failure concerns one item or every item. One regular expression in `src/items.ts`, `ONE_ITEM_ERROR`, holds the three messages of the first rows:
 
 | stderr contains | Failure of | `prefetch` does |
 | :--- | :--- | :--- |
-| `isn't an item` | One entry | Puts each source of the entry in `failed`, with its reference and `op`'s message, and fetches the other entries |
-| `More than one item matches` | One entry | The same |
-| Anything else, such as `authorization timeout` or `error initializing client` | Every entry | Starts no more calls, and throws |
+| `isn't an item` | One item | Puts each source of the item in `failed`, with its reference and `op`'s message, and fetches the other items |
+| `isn't a vault` | One item | The same |
+| `More than one item matches` | One item | The same |
+| Anything else, such as `authorization timeout` or `error initializing client` | Every item | Starts no more calls, and throws |
 
-A one-entry failure on the first call still lets the other calls run, because `op` had signed in before it printed the message.
+A one-item failure on the first call still lets the other calls run, because `op` had signed in before it printed the message.
 
-For `authorization timeout`, the error adds that a process with no person to approve the prompt, such as an agent or a CI job, needs a service account.
+The package adds advice to two kinds of error:
 
-**A message that the package does not know counts as a failure of every entry.** If a later `op` changes one of the two messages, a wrong reference stops `prefetch` with that one error, and the user does not see the other failed sources until the next run. The message that `op` prints for a vault that a service account can't read is not known yet, so it also counts as a failure of every entry.
+- For `authorization timeout`, the error adds "No one approved the request in the 1Password app. A process with no person to approve it, such as an agent or a CI job, needs a 1Password service account in OP_SERVICE_ACCOUNT_TOKEN."
+- For a one-item failure, when neither `OP_SERVICE_ACCOUNT_TOKEN` nor `OP_CONNECT_HOST` is set, the error names the account that `op` looked in: "op looked in the account in OP_ACCOUNT, `<account>`.", or "op looked in the account that you signed in to last. Set OP_ACCOUNT to choose another."
+
+**A message that the package does not know counts as a failure of every item.** If a later `op` changes one of the three messages, a wrong reference stops `prefetch` with that one error, and the user does not see the other failed sources until the next run. The message that `op` prints for a vault that a service account can't read is not known yet. If it does not contain `isn't a vault`, it counts as a failure of every item.
 
 ## The output of `op item get`
 
@@ -105,11 +109,11 @@ These facts were checked with `op` 2.32.0 on macOS:
 
 ### Field matching
 
-The package finds the field in the item. Each part of the reference can be a name or an ID, and an ID matches `/^[a-z0-9]{26}$/`. The field matches by its ID or by its label:
+The package finds the field in the item. Each part of the reference can be a name or an ID. A 1Password ID is 26 lower-case letters and digits, but the package does not check the form. A field matches by its ID or by its label, and so does a section:
 
 - With a section in the reference, only fields in that section match.
 - Without a section, exactly one field of the item must match.
-- When no field matches, or more than one does, the error lists the `reference` of each field of the item, as `op` prints it. It lists no values.
+- When no field matches, the error starts "No field of the item matches `<reference>`." When more than one does, it starts "More than one field of the item matches `<reference>`. Add the section to the reference, or use the field's ID." Both then list the `reference` of each field of the item, as `op` prints it, or say "The item has no fields." They list no values.
 
 A file attached to an item does not appear in the output of `op item get`, so a reference to a file fails as a missing field. For a reference that `op read` resolves, the package returns the same value or fails.
 
@@ -123,7 +127,7 @@ A file attached to an item does not appear in the output of `op item get`, so a 
 
 ## Revisions
 
-`read` takes the item from `context.prefetched`, or fetches it, and finds the field:
+`read` takes the entry of its reference from `context.prefetched`, or fetches the item alone and finds the field:
 
 | `track` | Revision |
 | :--- | :--- |
@@ -136,7 +140,7 @@ The default is weaker than it is for `InfisicalSecret`, because 1Password raises
 
 ### Loading the value
 
-`loadCredential` takes the item from `context.prefetched`, so a deploy loads the same version that its `read` saw. In a resumed deploy, `context.prefetched` holds what `prefetch` fetched at the start of the resume, and the revision in state comes from the first attempt. `loadCredential` checks the item against the revision:
+`loadCredential` takes the entry from `context.prefetched`, so a deploy loads the same version that its `read` saw. Each delivery of the deploy workflow calls `prefetch` again: a resume, or a wake after the deployment hold or a retry delay. In a later delivery, `context.prefetched` holds what `prefetch` fetched at the start of that delivery, and the revision in state can come from an earlier one. `loadCredential` checks the entry against the revision:
 
 - **Another item ID.** The item was deleted, and another item with the same name was added. `loadCredential` throws `ItemReplacedError`, which asks the user to run deploy again.
 - **Another version.** `op` can't fetch the version that `read` saw, so `loadCredential` throws an error that ends "changed after deploy read it. Run deploy again."
@@ -146,17 +150,17 @@ The default is weaker than it is for `InfisicalSecret`, because 1Password raises
 
 `op item get` prints every value of the item on stdout, not only the requested field. The package handles stdout and stderr as follows:
 
-- **Decoding.** The package parses stdout as one JSON document, and validates it with valibot. It replaces a parse or validation error with the fixed message "1Password returned output that notation can't read". The message of a `JSON.parse` error contains part of the input, and the input contains values.
-- **Recorded values.** The package passes the requested field's value to `recordSecretValue`, whatever the field's type, because a connection URL is often in a text field. It also records every other `CONCEALED` value of the item with eight characters or more. It does not record a shorter one, such as a PIN, because the scrubber replaces every occurrence of a recorded value, and a four-digit value would hide ordinary text in the output.
-- **Kept values.** After recording, the package keeps only the values of the fields that a source asked for. These values stay in `prefetched` in memory until the plan or deploy ends.
-- **Failed calls.** The package discards the stdout of a failed call. The error message is `op exited with code <code>: <stderr>`, or `op was stopped by <signal>. <stderr>`.
-- **stderr.** The package passes stderr through `scrubSecretValues`, and includes it in the error, because messages such as `isn't an item` tell the user what to do. stdout is never included in an error.
+- **Decoding.** The package parses stdout as one JSON document, and validates it with valibot. It replaces a parse or validation error with the fixed message "1Password returned output that notation can't read." The message of a `JSON.parse` error contains part of the input, and the input contains values.
+- **Recorded values.** The package passes the value of each field that a source names to `recordSecretValue`, whatever the field's type, because a connection URL is often in a text field. It also records every `CONCEALED` value of the item with eight characters or more. It does not record a shorter one, such as a PIN, because the scrubber replaces every occurrence of a recorded value, and a four-digit value would hide ordinary text in the output.
+- **Kept values.** `prefetched` holds only the value of each field that a source names, with the item's ID and version. These values stay in memory until the plan or deploy ends.
+- **Failed calls.** The package discards the stdout of a failed call. The error message is `op failed with exit code <code>: <text>`, or `op was stopped by <signal>. <text>`. `<text>` is stderr without the `[ERROR] <date> <time> ` prefix at the start of each line.
+- **stderr.** The package passes stderr through `scrubSecretValues`, and includes it in the error, because messages such as `isn't an item` tell the user what to do. The `stderr` property of `OnePasswordError` keeps the scrubbed text with the prefixes. stdout is never included in an error.
 - **Checks.** An empty value fails, as for `InfisicalSecret`. An item with `"state": "ARCHIVED"` fails, because `op` still finds an archived item by its ID.
 
 `@notation/1password/resources` exports `OnePasswordError` and `ItemReplacedError`. `OnePasswordError` has `exitCode` (`number | null`, `null` when a signal stopped `op`) and `stderr`, which is scrubbed.
 
 ## Not yet tested
 
-- **Service accounts.** Only an invalid `OP_SERVICE_ACCOUNT_TOKEN` has been tested: `op` fails with `error initializing client`, and does not use the desktop app. A test with a real service account and at least 10 items will set the rate limit numbers in the docs, add the message for an unreadable vault to the one-entry messages if it concerns one entry, and lower the limit of eight parallel calls if 1Password throttles them.
-- **A denied prompt.** It should fail as a failure of every entry.
+- **Service accounts.** Only an invalid `OP_SERVICE_ACCOUNT_TOKEN` has been tested: `op` fails with `error initializing client`, and does not use the desktop app. A test with a real service account and at least 10 items will set the rate limit numbers in the docs, add the message for an unreadable vault to `ONE_ITEM_ERROR` if it concerns one item, and lower the limit of eight parallel calls if 1Password throttles them.
+- **A denied prompt.** It should fail as a failure of every item.
 - **Windows and Linux.** 1Password's docs say that sub-shells on Windows are approved one by one, and that the prompt on Linux behaves as on macOS.
