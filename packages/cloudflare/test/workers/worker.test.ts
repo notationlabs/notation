@@ -1305,7 +1305,7 @@ describe("logs", () => {
     expect(group(graph, "plain").script.config.Logpush).toBeUndefined();
   });
 
-  it("leaves the sampling rate out when it is unset", async () => {
+  it("sends Cloudflare's default sampling rate when it is unset", async () => {
     const graph = await collect(() => {
       inWorker(
         $worker({
@@ -1315,10 +1315,22 @@ describe("logs", () => {
         }),
         "runtime/api.ts",
       );
+      inWorker(
+        $worker({
+          id: "off",
+          compatibilityDate,
+          observability: { enabled: false, headSamplingRate: 0.5 },
+        }),
+        "runtime/off.ts",
+      );
     });
 
     expect(group(graph, "api").script.config.Observability).toEqual({
       enabled: true,
+      head_sampling_rate: 1,
+    });
+    expect(group(graph, "off").script.config.Observability).toEqual({
+      enabled: false,
     });
   });
 

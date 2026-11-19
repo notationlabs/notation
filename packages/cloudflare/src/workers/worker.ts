@@ -93,7 +93,7 @@ export type WorkerDeclarationConfig<
   /**
    * Workers Logs, which keeps the Worker's logs for search in the dashboard.
    * `headSamplingRate` is the share of requests that are logged, from 0 to
-   * 1, and defaults to 1. Removing the option turns Workers Logs off.
+   * 1, and defaults to 1. Leaving the option out turns Workers Logs off.
    */
   observability?: { enabled: boolean; headSamplingRate?: number };
   /**
@@ -123,10 +123,18 @@ export type WorkerConfig<
 };
 
 /**
- * The `url` of a Worker, unless its `url` option is `false`. A `boolean`
- * that isn't a literal gives `url`, and a read throws when it is `false`.
+ * The outputs of a Worker: `scriptName`, and `url` unless its `url` option is
+ * `false`. A `boolean` that isn't a literal gives `url`, and a read throws
+ * when it is `false`.
  */
-export type WorkerUrl<U extends boolean> = [U] extends [false]
+export type WorkerUrl<U extends boolean> = {
+  /**
+   * The name that deploy gives the Worker in Cloudflare, such as
+   * `<app>--<stage>--<id>-<instance>`. Pass it to `wrangler tail` to stream
+   * the Worker's logs.
+   */
+  readonly scriptName: OutputRef<string>;
+} & ([U] extends [false]
   ? {}
   : {
       /**
@@ -136,17 +144,7 @@ export type WorkerUrl<U extends boolean> = [U] extends [false]
        * it from `env`.
        */
       readonly url: OutputRef<string>;
-    };
-
-/** The outputs of every Worker. */
-export type WorkerOutputs = {
-  /**
-   * The name that deploy gives the Worker in Cloudflare, such as
-   * `<app>--<stage>--<id>-<instance>`. Pass it to `wrangler tail` to stream
-   * the Worker's logs.
-   */
-  readonly scriptName: OutputRef<string>;
-};
+    });
 
 /** The module that a Worker uploads: a file, or code declared elsewhere. */
 export type WorkerGroupCode =
@@ -371,15 +369,14 @@ export function $worker<
   const U extends boolean = true,
 >(
   config: WorkerDeclarationConfig<Id, B, E> & { url?: U },
-): Worker<ResolvedValues<B>, E> & WorkerUrl<U> & WorkerOutputs {
+): Worker<ResolvedValues<B>, E> & WorkerUrl<U> {
   assertWorkerId("$worker", config.id);
   assertCompatibilityDate(`$worker({ id: "${config.id}" })`, config);
   const declaration = { id: config.id } as unknown as Worker<
     ResolvedValues<B>,
     E
   > &
-    WorkerUrl<U> &
-    WorkerOutputs;
+    WorkerUrl<U>;
   registerWorker(config, {
     declaration,
     describe: () => {
@@ -424,7 +421,7 @@ export function worker<
   const U extends boolean = true,
 >(
   config: WorkerConfig<Id, B, E> & { url?: U },
-): Worker<ResolvedValues<B>, E> & WorkerUrl<U> & WorkerOutputs {
+): Worker<ResolvedValues<B>, E> & WorkerUrl<U> {
   assertWorkerId("worker()", config.id);
   const label = `worker({ id: "${config.id}" })`;
   assertCompatibilityDate(label, config);
@@ -433,8 +430,7 @@ export function worker<
     ResolvedValues<B>,
     E
   > &
-    WorkerUrl<U> &
-    WorkerOutputs;
+    WorkerUrl<U>;
   if (!isBundle(code)) {
     if (code?.type !== "file" || typeof code.path !== "string" || !code.path) {
       throw new Error(
@@ -570,12 +566,12 @@ function registerWorker(
           ? resolved.containers
           : undefined,
         url: config.url ?? true,
-        observability: config.observability && {
-          enabled: config.observability.enabled,
-          ...(config.observability.headSamplingRate !== undefined && {
-            head_sampling_rate: config.observability.headSamplingRate,
-          }),
-        },
+        observability: config.observability?.enabled
+          ? {
+              enabled: true,
+              head_sampling_rate: config.observability.headSamplingRate ?? 1,
+            }
+          : config.observability && { enabled: false },
         logpush: config.logpush,
       });
       // Each service binding is a contribution, so that deploy can create
@@ -642,62 +638,65 @@ function registerWorker(
   const workers = declaredWorkers();
   // The subdomain is built with the Worker, once every module has loaded, so
   // `url` is a deferred ref. It is not enumerable, as the registration isn't.
-  let url: OutputRef<string> | undefined;
-  Object.defineProperty(source.declaration, "url", {
-    get: () => {
-      if (config.url === false) {
-        throw new Error(
-          `url was read on ${entry.describe()}, which sets url: false, so it has no workers.dev URL. Remove url: false, or bind the Worker as a service.`,
-        );
-      }
-      // Checked at the read, as addBindings() checks at its call.
-      const current = declaredWorkers();
-      if (!current) {
-        throw new Error(
-          `url was read on ${entry.describe()} while no resource graph is being collected. Read it in an infra module or in a bindings function.`,
-        );
-      }
-      if (!current.includes(entry)) {
-        throw new Error(
-          `url was read on ${entry.describe()}, which was declared in another resource graph. Read the url of a Worker that is declared in the resource graph being collected.`,
-        );
-      }
-      return (url ??= deferredOutputRef({
-        resourceId: subdomainResourceId(config.id),
-        key: "Url",
-        // Not called during the Worker's own build: `group` isn't set until
-        // the build returns, so the group would be built twice.
-        resolve: () => entry.build().subdomain,
-      }));
-    },
+  defineOutput(entry, "url", () => {
+    if (config.url === false) {
+      throw new Error(
+        `url was read on ${entry.describe()}, which sets url: false, so it has no workers.dev URL. Remove url: false, or bind the Worker as a service.`,
+      );
+    }
+    return deferredOutputRef({
+      resourceId: subdomainResourceId(config.id),
+      key: "Url",
+      // Not called during the Worker's own build: `group` isn't set until
+      // the build returns, so the group would be built twice.
+      resolve: () => entry.build().subdomain,
+    });
   });
-  let scriptName: OutputRef<string> | undefined;
-  Object.defineProperty(source.declaration, "scriptName", {
-    get: () => {
-      const current = declaredWorkers();
-      if (!current) {
-        throw new Error(
-          `scriptName was read on ${entry.describe()} while no resource graph is being collected. Read it in an infra module or in a bindings function.`,
-        );
-      }
-      if (!current.includes(entry)) {
-        throw new Error(
-          `scriptName was read on ${entry.describe()}, which was declared in another resource graph. Read the scriptName of a Worker that is declared in the resource graph being collected.`,
-        );
-      }
-      // The ref's type is inferred from the script's `outputRef`, which
-      // gives the union of every param's type.
-      return (scriptName ??= deferredOutputRef({
+  // The ref's type is inferred from the script's `outputRef`, which gives the
+  // union of every param's type.
+  defineOutput(
+    entry,
+    "scriptName",
+    () =>
+      deferredOutputRef({
         resourceId: workerResourceId(config.id),
         key: "ScriptName",
         resolve: () => entry.build().script,
-      }) as OutputRef<string>);
-    },
-  });
+      }) as OutputRef<string>,
+  );
   if (workers) {
     workers.push(entry);
     onEvaluationEnd(() => entry.build());
   }
+}
+
+/**
+ * Defines an output of a Worker as a getter on its declaration. The getter
+ * makes the ref at the first read, and checks at each read that the Worker's
+ * resource graph is being collected, as addBindings() checks at its call.
+ */
+function defineOutput(
+  entry: Entry,
+  name: string,
+  makeRef: () => OutputRef<string>,
+): void {
+  let ref: OutputRef<string> | undefined;
+  Object.defineProperty(entry.declaration, name, {
+    get: () => {
+      const current = declaredWorkers();
+      if (!current) {
+        throw new Error(
+          `${name} was read on ${entry.describe()} while no resource graph is being collected. Read it in an infra module or in a bindings function.`,
+        );
+      }
+      if (!current.includes(entry)) {
+        throw new Error(
+          `${name} was read on ${entry.describe()}, which was declared in another resource graph. Read the ${name} of a Worker that is declared in the resource graph being collected.`,
+        );
+      }
+      return (ref ??= makeRef());
+    },
+  });
 }
 
 /** The Workers from the `tailConsumers` option, without repeats. */

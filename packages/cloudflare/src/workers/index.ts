@@ -14,7 +14,6 @@ export {
   type WorkerDeclarationConfig,
   type WorkerGroupCode,
   type WorkerGroupConfig,
-  type WorkerOutputs,
 } from "./worker";
 export { entrypointType } from "./entrypoint";
 export { json } from "./json";

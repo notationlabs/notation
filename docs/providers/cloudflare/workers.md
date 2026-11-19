@@ -237,6 +237,8 @@ A Worker's `console.log` output and uncaught exceptions can go to three places. 
 | `logpush` | The account's Logpush jobs for the `workers_trace_events` dataset | A Logpush job |
 | `tailConsumers` | The `tail` handler of other Workers that you declare | Nothing |
 
+Each `deploy` sets all three settings from config, and turns off an option that config leaves out.
+
 ### Workers Logs
 
 Set `observability` to turn on Workers Logs for the `orders` Worker from the first example:
@@ -292,22 +294,11 @@ export const ordersWorker = $worker({
 
 `tailConsumers` is a function for the same reason as `bindings`: Notation calls it after all infra modules have loaded, so `log-sink` can bind `orders` as a service while `orders` lists `log-sink`. Each tail consumer is a [contribution](../../core/outputs-and-contributions.md), as each service binding is, so these two Workers form no dependency cycle.
 
-### Settings changed outside Notation
-
-Notation reads the three settings back on each `plan` and `deploy`, but only the settings that the Worker's config sets:
-
-- **A set option** – A change made in the dashboard shows as drift, and `deploy` sets the value from config again.
-- **An unset option** – Notation doesn't read or send the setting, so a change made in the dashboard stays.
-- **A removed option** – The next `deploy` turns the setting off: `observability` becomes `{ enabled: false }`, `logpush` becomes `false`, and `tailConsumers` becomes empty.
-
 ### Tail a deployed Worker
 
 `wrangler tail` streams the live logs of a deployed Worker, and it needs the Worker's name in Cloudflare. Deploy names the Worker `<app>--<stage>--<id>-<instance>`, where `<instance>` is 8 random hex characters, so you can't work out the name from config.
 
-Find the name in one of two places:
-
-- **The Cloudflare dashboard** – The Workers list shows the Worker under a name that starts with `<app>--<stage>--<id>-`, such as `shop--prod--orders-`.
-- **`scriptName`** – Each Worker has a `scriptName` output, an `OutputRef<string>` that deploy fills in. Place it in the config of another resource as you would `url`, such as in a `kvJson()` document that an ops script reads.
+Find the name in the Cloudflare dashboard. The Workers list shows the Worker under a name that starts with `<app>--<stage>--<id>-`, such as `shop--prod--orders-`.
 
 Then pass the name to `wrangler tail`, with the account in `CLOUDFLARE_ACCOUNT_ID`:
 
@@ -315,7 +306,7 @@ Then pass the name to `wrangler tail`, with the account in `CLOUDFLARE_ACCOUNT_I
 npx wrangler tail shop--prod--orders-1a2b3c4d --format pretty
 ```
 
-Worker code can't read `scriptName`, for the same reason that it can't read `url`: the value is known only at deploy.
+Each Worker also has a `scriptName` output, an `OutputRef<string>` that deploy fills in. Pass it into the config of another resource as you would `url`. Worker code can't read `scriptName`, for the same reason that it can't read `url`: the value is known only at deploy.
 
 ## Runtime constraints
 

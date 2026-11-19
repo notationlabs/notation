@@ -122,6 +122,9 @@ describe("WorkerScript", () => {
         bindings: params.Bindings,
         keep_bindings: ["secret_text"],
         exports: { Counter: { type: "durable-object", storage: "sqlite" } },
+        observability: { enabled: false },
+        logpush: false,
+        tail_consumers: [],
       },
       module: { type: "application/javascript+module", text: code },
     });
@@ -1284,31 +1287,7 @@ describe("WorkerScript log settings", () => {
     });
   });
 
-  it("leaves the settings out of an upload whose params don't set them", async () => {
-    mockFetch(untilUploaded());
-
-    await script.create(params);
-
-    const { metadata } = await uploadedMetadata(requests()[1]!);
-    expect(metadata).not.toHaveProperty("observability");
-    expect(metadata).not.toHaveProperty("logpush");
-    expect(metadata).not.toHaveProperty("tail_consumers");
-  });
-
-  it("turns off each setting that state has and the params no longer set", async () => {
-    mockFetch(() => ok({}));
-
-    await script.update!(key, {} as any, params, logs);
-
-    const { metadata } = await uploadedMetadata(requests()[0]!);
-    expect(metadata).toMatchObject({
-      observability: { enabled: false },
-      logpush: false,
-      tail_consumers: [],
-    });
-  });
-
-  it("reads the settings that the params set, in the shape of the params", async () => {
+  it("reads the settings that the params set", async () => {
     mockFetch(() =>
       ok({
         compatibility_date: "2026-10-12",
@@ -1325,50 +1304,60 @@ describe("WorkerScript log settings", () => {
       }),
     );
 
-    const read = await script.read!(key, undefined, {
-      ...logs,
-      TailConsumers: [
-        { service: "app--dev--tail" },
-        { service: "app--dev--metrics" },
-      ],
-    });
+    const read = await script.read!(key, undefined, logs);
 
     expect(read).toMatchObject({
       Observability: { enabled: true, head_sampling_rate: 0.5 },
       Logpush: false,
       TailConsumers: [
-        { service: "app--dev--tail" },
         { service: "app--dev--audit" },
+        { service: "app--dev--tail" },
       ],
     });
   });
 
-  it("reads Workers Logs as off, and the sampling rate as Cloudflare's default, when the settings leave them out", async () => {
+  it("reads the tail consumers in the order of the params when Cloudflare has the same services", async () => {
+    mockFetch(() =>
+      ok({
+        tail_consumers: [
+          { service: "app--dev--tail" },
+          { service: "app--dev--audit" },
+        ],
+      }),
+    );
+    const consumers = [
+      { service: "app--dev--audit" },
+      { service: "app--dev--tail" },
+    ];
+
+    const read = await script.read!(key, undefined, {
+      ...params,
+      TailConsumers: consumers,
+    });
+
+    expect(read).toMatchObject({ TailConsumers: consumers });
+  });
+
+  it("reads Workers Logs as off when the settings leave it out", async () => {
     mockFetch(() => ok({ compatibility_date: "2026-10-12" }));
 
     const read = await script.read!(key, undefined, logs);
 
     expect(read).toMatchObject({
-      Observability: { enabled: false, head_sampling_rate: 1 },
+      Observability: { enabled: false },
       Logpush: false,
       TailConsumers: [],
     });
   });
 
-  it("leaves the sampling rate out of the read when the params leave it out", async () => {
-    mockFetch(() =>
-      ok({ observability: { enabled: true, head_sampling_rate: 1 } }),
-    );
+  it("reads the sampling rate as Cloudflare's default when Workers Logs is on and the settings leave it out", async () => {
+    mockFetch(() => ok({ observability: { enabled: true } }));
 
-    const read = await script.read!(key, undefined, {
-      ...params,
-      Observability: { enabled: true },
+    const read = await script.read!(key, undefined, logs);
+
+    expect(read).toMatchObject({
+      Observability: { enabled: true, head_sampling_rate: 1 },
     });
-
-    expect(read).toMatchObject({ Observability: { enabled: true } });
-    expect(
-      (read as { Observability?: object }).Observability,
-    ).not.toHaveProperty("head_sampling_rate");
   });
 
   it("reads no log settings when the params set none", async () => {
