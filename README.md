@@ -13,48 +13,28 @@
   <a href="https://discord.gg/mGzDWShPzm"><img alt="Discord" src="https://img.shields.io/discord/1154880135678406676"></a>
 </h1>
 
-### JavaScript-native developer toolkit for cloud-native deployments
-
-Notation is an experimental serverless toolkit designed for JavaScript's culture and ecosystem.
+Notation Deploy lets you ship infrastructure and application code as one TypeScript project. 
 
 [Website](https://notation.dev)<sup>↗</sup>&nbsp;•&nbsp;
 [Quick Start](#quick-start)<sup>↓</sup>&nbsp;•&nbsp;
 [Slow Start](https://notation.dev/docs)<sup>↗</sup>&nbsp;•&nbsp;
 [Examples](https://github.com/notation-dev/notation/tree/main/examples)&nbsp;•&nbsp;
 
-<br />
-
 ## Features
 
-### Infrastructure compiler
-
-Generates cloud implementation details from intuitive-to-write code.
-
-Using inference and best practices, compiles policy documents, ARN strings, IAM roles, permissions etc.
-
-<br />
-
-### Hot infra replacement
-
-Deploys both production and ephemeral dev stacks.
-
-Built from the ground up and designed for fast iteration cycles, hot infra replacement updates live dev stacks while you code.
-
-### End-to-end types
-
-Brings together popular serverless technologies in a unified type space.
-
-Provides well-designed types for every resource, and ensures compatibility between infrastructure and runtime modules.
+- **End-to-end types**: request schemas, bindings, environment variables and secrets declared in infrastructure code are typed in runtime handlers.
+- **Dual compilation**: one build pass evaluates the infrastructure graph; another bundles each function without deploy-time SDKs.
+- **Safe deployments**: `notation plan` checks for drift against live cloud APIs, and interrupted deploys resume from the last checkpoint.
+- **Watch mode**: `notation watch` rebuilds and redeploys a dev stage as you edit.
+- **Providers**: AWS (Lambda, API Gateway, SQS, EventBridge) and Cloudflare (Workers, Durable Objects, Containers, KV, R2).
 
 ## Quick Start
-
-Notation requires Node.js 22 or later.
 
 ```sh
 npm create notation@alpha my-app
 ```
 
-See also: [Getting Started Guide](https://notation.dev/docs/guide)<sup>↗</sup>
+See also: [Getting Started Guide](https://notation.dev/docs)<sup>↗</sup>
 
 ## Demo
 
