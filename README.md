@@ -18,6 +18,7 @@ Notation Deploy lets you ship infrastructure and application code as one TypeScr
 [Website](https://notation.dev)<sup>↗</sup>&nbsp;•&nbsp;
 [Quick Start](#quick-start)<sup>↓</sup>&nbsp;•&nbsp;
 [Slow Start](https://notation.dev/docs)<sup>↗</sup>&nbsp;•&nbsp;
+[Features](#features)<sup>↓</sup>&nbsp;•&nbsp;
 [Examples](https://github.com/notation-dev/notation/tree/main/examples)&nbsp;•&nbsp;
 
 ## Features
@@ -25,8 +26,9 @@ Notation Deploy lets you ship infrastructure and application code as one TypeScr
 - **End-to-end types**: request schemas, bindings, environment variables and secrets declared in infrastructure code are typed in runtime handlers.
 - **Dual compilation**: one build pass evaluates the infrastructure graph; another bundles each function without deploy-time SDKs.
 - **Safe deployments**: `notation plan` checks for drift against live cloud APIs, and interrupted deploys resume from the last checkpoint.
+- **Secrets**: credentials from environment variables, `.env` files or Infisical are wired into resources without plaintext values reaching state, plans or logs.
 - **Watch mode**: `notation watch` rebuilds and redeploys a dev stage as you edit.
-- **Providers**: AWS (Lambda, API Gateway, SQS, EventBridge) and Cloudflare (Workers, Durable Objects, Containers, KV, R2).
+- **Providers**: AWS (e.g. Lambda, API Gateway, SQS, EventBridge) and Cloudflare (e.g. Workers, Durable Objects, Containers, KV, R2).
 
 ## Quick Start
 
