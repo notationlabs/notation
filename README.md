@@ -19,10 +19,8 @@ Notation is an experimental serverless toolkit designed for JavaScript's culture
 
 [Website](https://notation.dev)<sup>↗</sup>&nbsp;•&nbsp;
 [Quick Start](#quick-start)<sup>↓</sup>&nbsp;•&nbsp;
-[Slow Start](https://notation.dev/docs/guide)<sup>↗</sup>&nbsp;•&nbsp;
+[Slow Start](https://notation.dev/docs)<sup>↗</sup>&nbsp;•&nbsp;
 [Examples](https://github.com/notation-dev/notation/tree/main/examples)&nbsp;•&nbsp;
-[Discord](https://discord.gg/mGzDWShPzm)<sup>↗</sup>&nbsp;•&nbsp;
-[Twitter](https://twitter.com/notation_dev)<sup>↗</sup>
 
 <br />
 
@@ -34,8 +32,6 @@ Generates cloud implementation details from intuitive-to-write code.
 
 Using inference and best practices, compiles policy documents, ARN strings, IAM roles, permissions etc.
 
-<img alt="Notation infra graph" src=".github/assets/code-infra-graph.png">
-
 <br />
 
 ### Hot infra replacement
@@ -44,15 +40,11 @@ Deploys both production and ephemeral dev stacks.
 
 Built from the ground up and designed for fast iteration cycles, hot infra replacement updates live dev stacks while you code.
 
-https://github.com/notation-dev/notation/assets/1670902/fd8c955f-8aa9-4800-813a-ea96c2b398cc
-
 ### End-to-end types
 
 Brings together popular serverless technologies in a unified type space.
 
 Provides well-designed types for every resource, and ensures compatibility between infrastructure and runtime modules.
-
-<img alt="Notation TS error" src=".github/assets/code-error.png">
 
 ## Quick Start
 
@@ -79,12 +71,6 @@ A walkthrough of the key features of Notation.
   suggest new features, or help us improve the docs
 - **[Discord](https://discord.gg/mGzDWShPzm)<sup>↗</sup>**: ask for advice, share your projects,
   discuss contributions
-
-## Questions and Feedback
-
-Feel free to book a call to discuss Notation. We'd love to hear your feedback or answer any questions you have.
-
-<a href="https://cal.com/djgrant/notation-chat"><img alt="Book us with Cal.com" src="https://cal.com/book-with-cal-dark.svg" /></a>
 
 ## License
 
