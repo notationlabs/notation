@@ -16,17 +16,6 @@ Declare a source in `infra/` and wire `.credentials.value` directly into a consu
 
 ::code-group
 
-```ts [infra/secrets.ts]
-import { sources } from "@notation/std/resources";
-
-export const stripeKey = new sources.Env("stripe-key", {
-  config: {
-    key: "STRIPE_KEY",
-    track: "hmac",
-  },
-});
-```
-
 ```ts [runtime/checkout.ts]
 import { $lambda, type LambdaHandler } from "@notation/aws/lambda";
 import { stripeKey } from "../infra/secrets";
@@ -42,6 +31,17 @@ export const handler: LambdaHandler<typeof checkout> = async () => {
   const { STRIPE_KEY } = checkout.env();
   return { statusCode: 200, body: STRIPE_KEY ? "configured" : "missing" };
 };
+```
+
+```ts [infra/secrets.ts]
+import { sources } from "@notation/std/resources";
+
+export const stripeKey = new sources.Env("stripe-key", {
+  config: {
+    key: "STRIPE_KEY",
+    track: "hmac",
+  },
+});
 ```
 
 ::

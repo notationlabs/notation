@@ -12,16 +12,6 @@ Binding a `KVNamespace` automatically adds a deployment dependency and types the
 
 ::code-group
 
-```ts [infra/config.ts]
-import { kv } from "@notation/cloudflare/resources";
-
-export const ordersKv = new kv.KVNamespace("orders-kv", {
-  config: {
-    Title: "orders-config",
-  },
-});
-```
-
 ```ts [runtime/orders-api.ts]
 import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
 import { ordersKv } from "../infra/config";
@@ -47,6 +37,16 @@ export default {
 } satisfies WorkerHandler<typeof worker>;
 ```
 
+```ts [infra/config.ts]
+import { kv } from "@notation/cloudflare/resources";
+
+export const ordersKv = new kv.KVNamespace("orders-kv", {
+  config: {
+    Title: "orders-config",
+  },
+});
+```
+
 ::
 
 Include an app or stage qualifier in `Title` when sharing an account across stages, because Notation refuses to adopt an existing namespace with the same title. You can also attach a namespace externally with `addBindings(worker, { ORDERS_KV: ordersKv })`, though externally added bindings are not reflected in `WorkerEnv<typeof worker>`.
@@ -59,20 +59,44 @@ Define the schema in `shared/`, declare the document in `infra/config.ts`, contr
 
 ::code-group
 
-```ts [shared/orders.ts]
-import * as v from "valibot";
+```ts [runtime/orders-api.ts]
+import {
+  $worker,
+  KVJsonError,
+  readKVJson,
+  type WorkerHandler,
+} from "@notation/cloudflare/workers";
+import { ordersKv } from "../infra/config";
+import { ORDERS_CONFIG_KEY, OrdersConfig } from "../shared/orders";
 
-export const ORDERS_CONFIG_KEY = "orders-config";
-
-export const OrdersConfig = v.object({
-  features: v.record(v.string(), v.boolean()),
-  webhooks: v.object({
-    enabled: v.boolean(),
-    endpointPath: v.string(),
-  }),
-  namespaceId: v.optional(v.string()),
-  namespaceTag: v.optional(v.string()),
+export const worker = $worker({
+  id: "orders-api",
+  compatibilityDate: "2026-10-12",
+  bindings: () => ({ ORDERS_KV: ordersKv }),
 });
+
+export default {
+  async fetch(_request, env) {
+    try {
+      const config = await readKVJson(
+        env.ORDERS_KV,
+        ORDERS_CONFIG_KEY,
+        OrdersConfig,
+        { cacheTtl: 300 },
+      );
+      if (!config) return new Response("config not ready", { status: 404 });
+      return Response.json(config);
+    } catch (error) {
+      if (error instanceof KVJsonError) {
+        return Response.json(
+          { key: error.key, issues: error.issues },
+          { status: 500 },
+        );
+      }
+      throw error;
+    }
+  },
+} satisfies WorkerHandler<typeof worker>;
 ```
 
 ```ts [infra/config.ts]
@@ -118,44 +142,20 @@ import "./config";
 import "./webhooks";
 ```
 
-```ts [runtime/orders-api.ts]
-import {
-  $worker,
-  KVJsonError,
-  readKVJson,
-  type WorkerHandler,
-} from "@notation/cloudflare/workers";
-import { ordersKv } from "../infra/config";
-import { ORDERS_CONFIG_KEY, OrdersConfig } from "../shared/orders";
+```ts [shared/orders.ts]
+import * as v from "valibot";
 
-export const worker = $worker({
-  id: "orders-api",
-  compatibilityDate: "2026-10-12",
-  bindings: () => ({ ORDERS_KV: ordersKv }),
+export const ORDERS_CONFIG_KEY = "orders-config";
+
+export const OrdersConfig = v.object({
+  features: v.record(v.string(), v.boolean()),
+  webhooks: v.object({
+    enabled: v.boolean(),
+    endpointPath: v.string(),
+  }),
+  namespaceId: v.optional(v.string()),
+  namespaceTag: v.optional(v.string()),
 });
-
-export default {
-  async fetch(_request, env) {
-    try {
-      const config = await readKVJson(
-        env.ORDERS_KV,
-        ORDERS_CONFIG_KEY,
-        OrdersConfig,
-        { cacheTtl: 300 },
-      );
-      if (!config) return new Response("config not ready", { status: 404 });
-      return Response.json(config);
-    } catch (error) {
-      if (error instanceof KVJsonError) {
-        return Response.json(
-          { key: error.key, issues: error.issues },
-          { status: 500 },
-        );
-      }
-      throw error;
-    }
-  },
-} satisfies WorkerHandler<typeof worker>;
 ```
 
 ::

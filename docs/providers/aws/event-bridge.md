@@ -14,21 +14,6 @@ Wire a custom event bus, a publisher Lambda that sends `OrderPlaced` events, and
 
 ::code-group
 
-```ts [shared/schema.ts]
-import * as v from "valibot";
-
-export const OrderPlaced = v.object({
-  orderId: v.string(),
-  total: v.number(),
-});
-```
-
-```ts [infra/orders.ts]
-import { eventBus } from "@notation/aws/event-bridge";
-
-export const ordersBus = eventBus({ id: "orders" });
-```
-
 ```ts [runtime/create-order.ts]
 import { EventBridgeClient, PutEventsCommand } from "@aws-sdk/client-eventbridge";
 import { $lambda, type LambdaHandler } from "@notation/aws/lambda";
@@ -79,6 +64,21 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 };
 ```
 
+```ts [infra/orders.ts]
+import { eventBus } from "@notation/aws/event-bridge";
+
+export const ordersBus = eventBus({ id: "orders" });
+```
+
+```ts [shared/schema.ts]
+import * as v from "valibot";
+
+export const OrderPlaced = v.object({
+  orderId: v.string(),
+  total: v.number(),
+});
+```
+
 ::
 
 `ordersBus.name` and `ordersBus.arn` are deploy-time output refs (see [Outputs & Contributions](../../core/outputs-and-contributions.md)), and `eventBridge.bind(ordersBus).defineRule()` provisions the rule and invoke permission automatically.
@@ -118,15 +118,6 @@ Use `eventBridge.schema()` in a runtime module with `rule()` in `infra/` to atta
 
 ::code-group
 
-```ts [shared/schema.ts]
-import * as v from "valibot";
-
-export const OrderShipped = v.object({
-  orderId: v.string(),
-  carrier: v.string(),
-});
-```
-
 ```ts [runtime/record-shipment.ts]
 import { $lambda, eventBridge, type LambdaHandler } from "@notation/aws/lambda";
 import { OrderShipped } from "../shared/schema";
@@ -153,6 +144,15 @@ rule({
   bus: ordersBus,
   pattern: { source: ["shop"], "detail-type": ["OrderShipped"] },
   target: () => recordShipment,
+});
+```
+
+```ts [shared/schema.ts]
+import * as v from "valibot";
+
+export const OrderShipped = v.object({
+  orderId: v.string(),
+  carrier: v.string(),
 });
 ```
 

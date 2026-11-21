@@ -42,26 +42,6 @@ Inspect the generated files side by side:
 
 ::code-group
 
-```ts [notation.config.ts]
-import { defineConfig } from "@notation/core/config";
-
-export default defineConfig({
-  app: "notation-starter",
-  entry: "infra/api.ts",
-  defaultStage: "dev",
-});
-```
-
-```ts [infra/api.ts]
-import { api, router } from "@notation/aws/api-gateway";
-import { lambda as todos } from "runtime/todos";
-
-const todoApi = api({ id: "todo-api" });
-const todoRouter = router(todoApi);
-
-todoRouter.get("/todos", () => todos);
-```
-
 ```ts [runtime/todos.ts]
 import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
 import { api } from "./utils";
@@ -87,6 +67,26 @@ export const api = {
     return res.json() as Promise<T>;
   },
 };
+```
+
+```ts [infra/api.ts]
+import { api, router } from "@notation/aws/api-gateway";
+import { lambda as todos } from "runtime/todos";
+
+const todoApi = api({ id: "todo-api" });
+const todoRouter = router(todoApi);
+
+todoRouter.get("/todos", () => todos);
+```
+
+```ts [notation.config.ts]
+import { defineConfig } from "@notation/core/config";
+
+export default defineConfig({
+  app: "notation-starter",
+  entry: "infra/api.ts",
+  defaultStage: "dev",
+});
 ```
 
 ```json [package.json]

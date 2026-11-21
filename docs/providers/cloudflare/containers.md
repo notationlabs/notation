@@ -10,14 +10,6 @@ Pair a `Dockerfile`, a `$durableObject` class that starts and proxies `this.ctx.
 
 ::code-group
 
-```dockerfile [containers/order-runner/Dockerfile]
-FROM node:22-alpine
-WORKDIR /app
-COPY server.mjs .
-EXPOSE 8080
-CMD ["node", "server.mjs"]
-```
-
 ```ts [runtime/order-runner.ts]
 import { DurableObject } from "cloudflare:workers";
 import { $durableObject } from "@notation/cloudflare/workers";
@@ -59,6 +51,14 @@ export default {
     return env.ORDER_RUNNERS.getByName("default").fetch(request);
   },
 } satisfies WorkerHandler<typeof api>;
+```
+
+```dockerfile [containers/order-runner/Dockerfile]
+FROM node:22-alpine
+WORKDIR /app
+COPY server.mjs .
+EXPOSE 8080
+CMD ["node", "server.mjs"]
 ```
 
 ::

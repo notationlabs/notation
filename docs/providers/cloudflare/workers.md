@@ -10,34 +10,6 @@ Declare a Worker in a `runtime/` module with `$worker` and export a `default` ha
 
 ::code-group
 
-```ts [infra/orders.ts]
-import { kv, r2, secretsStore } from "@notation/cloudflare/resources";
-import { sources } from "@notation/std/resources";
-
-export const orderCache = new kv.KVNamespace("order-cache", {
-  config: { Title: "orders-cache" },
-});
-
-export const receiptsBucket = new r2.R2Bucket("receipts", {
-  config: { BucketName: "orders-receipts", Jurisdiction: "default", StorageClass: "Standard" },
-});
-
-export const stripeKey = new sources.Env("stripe-key", {
-  config: { key: "STRIPE_SECRET_KEY" },
-}).credentials.value;
-
-const store = new secretsStore.SecretsStore("account-store");
-
-export const webhookSecret = new secretsStore.SecretsStoreSecret("webhook-signing-secret", {
-  config: {
-    Value: new sources.Env("webhook-secret", {
-      config: { key: "WEBHOOK_SIGNING_SECRET" },
-    }).credentials.value,
-  },
-  dependencies: { store },
-});
-```
-
 ```ts [runtime/orders.ts]
 import { $worker, json, type WorkerHandler } from "@notation/cloudflare/workers";
 import { orderCache, receiptsBucket, stripeKey, webhookSecret } from "../infra/orders";
@@ -66,6 +38,34 @@ export default {
     });
   },
 } satisfies WorkerHandler<typeof ordersWorker>;
+```
+
+```ts [infra/orders.ts]
+import { kv, r2, secretsStore } from "@notation/cloudflare/resources";
+import { sources } from "@notation/std/resources";
+
+export const orderCache = new kv.KVNamespace("order-cache", {
+  config: { Title: "orders-cache" },
+});
+
+export const receiptsBucket = new r2.R2Bucket("receipts", {
+  config: { BucketName: "orders-receipts", Jurisdiction: "default", StorageClass: "Standard" },
+});
+
+export const stripeKey = new sources.Env("stripe-key", {
+  config: { key: "STRIPE_SECRET_KEY" },
+}).credentials.value;
+
+const store = new secretsStore.SecretsStore("account-store");
+
+export const webhookSecret = new secretsStore.SecretsStoreSecret("webhook-signing-secret", {
+  config: {
+    Value: new sources.Env("webhook-secret", {
+      config: { key: "WEBHOOK_SIGNING_SECRET" },
+    }).credentials.value,
+  },
+  dependencies: { store },
+});
 ```
 
 ::

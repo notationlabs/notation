@@ -40,35 +40,6 @@ Deploy `orders-app` with an R2 bucket, a KV namespace, and a colocated `$worker`
 
 ::code-group
 
-```ts [notation.config.ts]
-import { defineConfig } from "@notation/core/config";
-
-export default defineConfig({
-  app: "orders-app",
-  entry: "infra/storage.ts",
-  defaultStage: "dev",
-});
-```
-
-```ts [infra/storage.ts]
-import { deployment } from "@notation/core";
-import { kv, r2 } from "@notation/cloudflare/resources";
-
-const { app, stage } = deployment();
-
-export const receiptsBucket = new r2.R2Bucket("bucket:receipts", {
-  config: {
-    BucketName: `${app}--${stage}--orders-receipts`,
-    Jurisdiction: "default",
-    StorageClass: "Standard",
-  },
-});
-
-export const ordersCache = new kv.KVNamespace("kv:orders", {
-  config: { Title: `${app}--${stage}--orders-cache` },
-});
-```
-
 ```ts [runtime/orders.ts]
 import { $worker, json, type WorkerHandler } from "@notation/cloudflare/workers";
 import { ordersCache, receiptsBucket } from "../infra/storage";
@@ -91,6 +62,35 @@ export default {
     return Response.json({ orderId, cached, hasReceipt: receipt !== null, maxItems: env.CONFIG.maxItems });
   },
 } satisfies WorkerHandler<typeof ordersWorker>;
+```
+
+```ts [infra/storage.ts]
+import { deployment } from "@notation/core";
+import { kv, r2 } from "@notation/cloudflare/resources";
+
+const { app, stage } = deployment();
+
+export const receiptsBucket = new r2.R2Bucket("bucket:receipts", {
+  config: {
+    BucketName: `${app}--${stage}--orders-receipts`,
+    Jurisdiction: "default",
+    StorageClass: "Standard",
+  },
+});
+
+export const ordersCache = new kv.KVNamespace("kv:orders", {
+  config: { Title: `${app}--${stage}--orders-cache` },
+});
+```
+
+```ts [notation.config.ts]
+import { defineConfig } from "@notation/core/config";
+
+export default defineConfig({
+  app: "orders-app",
+  entry: "infra/storage.ts",
+  defaultStage: "dev",
+});
 ```
 
 ::

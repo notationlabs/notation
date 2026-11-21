@@ -10,6 +10,23 @@ Wire a dead-letter queue ARN between two SQS queues and pass the queue URL into 
 
 ::code-group
 
+```ts [runtime/create-order.ts]
+import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
+import { orderQueue } from "../infra/orders";
+
+export const createOrder = $lambda({
+  id: "create-order",
+  event: () => apiGateway.schema(orderQueue.schema),
+  env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
+  policy: () => [orderQueue.grant(["SendMessage"])],
+});
+
+export const handler: LambdaHandler<typeof createOrder> = async () => {
+  const { ORDER_QUEUE_URL } = createOrder.env();
+  return { statusCode: 202, body: JSON.stringify({ queueUrl: ORDER_QUEUE_URL }) };
+};
+```
+
 ```ts [infra/orders.ts]
 import * as v from "valibot";
 import { queue } from "@notation/aws/sqs";
@@ -26,23 +43,6 @@ export const orderQueue = queue({
   schema: Order,
   deadLetterQueue: { queue: orderDeadLetterQueue, maxReceiveCount: 3 },
 });
-```
-
-```ts [runtime/create-order.ts]
-import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
-import { orderQueue } from "../infra/orders";
-
-export const createOrder = $lambda({
-  id: "create-order",
-  event: () => apiGateway.schema(orderQueue.schema),
-  env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
-  policy: () => [orderQueue.grant(["SendMessage"])],
-});
-
-export const handler: LambdaHandler<typeof createOrder> = async () => {
-  const { ORDER_QUEUE_URL } = createOrder.env();
-  return { statusCode: 202, body: JSON.stringify({ queueUrl: ORDER_QUEUE_URL }) };
-};
 ```
 
 ::

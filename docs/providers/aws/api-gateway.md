@@ -8,15 +8,6 @@ Define a shared payload schema, a `$lambda` HTTP handler, and an API Gateway rou
 
 ::code-group
 
-```ts [shared/orders.ts]
-import * as v from "valibot";
-
-export const NewOrder = v.object({
-  orderId: v.string(),
-  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
-});
-```
-
 ```ts [runtime/create-order.ts]
 import { $lambda, apiGateway, DecodeError, type LambdaHandler } from "@notation/aws/lambda";
 import { NewOrder } from "../shared/orders";
@@ -45,6 +36,15 @@ export const ordersApi = api({ id: "orders-api" });
 router(ordersApi).post("/orders", () => createOrder);
 ```
 
+```ts [shared/orders.ts]
+import * as v from "valibot";
+
+export const NewOrder = v.object({
+  orderId: v.string(),
+  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
+});
+```
+
 ::
 
 Each `api()` call provisions an HTTP API (`ProtocolType: "HTTP"`) with an auto-deploying `$default` stage serving from the root URL. Handlers can return either a structured HTTP response (`{ statusCode, headers?, body?, cookies?, isBase64Encoded? }`) or a JSON-serializable object returned with status `200`.
@@ -54,15 +54,6 @@ Each `api()` call provisions an HTTP API (`ProtocolType: "HTTP"`) with an auto-d
 Route multiple HTTP paths on `router(ordersApi)` to one `$lambda` handler and dispatch on `event.routeKey`:
 
 ::code-group
-
-```ts [shared/orders.ts]
-import * as v from "valibot";
-
-export const NewOrder = v.object({
-  orderId: v.string(),
-  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
-});
-```
 
 ```ts [runtime/orders.ts]
 import { $lambda, apiGateway, DecodeError, type LambdaHandler } from "@notation/aws/lambda";
@@ -102,6 +93,15 @@ ordersRouter.get("/orders/{id}", () => orders);
 ordersRouter.post("/orders", () => orders);
 ```
 
+```ts [shared/orders.ts]
+import * as v from "valibot";
+
+export const NewOrder = v.object({
+  orderId: v.string(),
+  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
+});
+```
+
 ::
 
 When one `$lambda` serves both bodyless `GET` and JSON `POST` routes, call `decode(event)` only in the `POST` branch. Paths support parameter templates like `"/orders/{id}"` and greedy segments like `"/orders/{proxy+}"` via `event.pathParameters`, leaving path and query parameters as raw string maps.
@@ -111,12 +111,6 @@ When one `$lambda` serves both bodyless `GET` and JSON `POST` routes, call `deco
 Use `apiGateway.bind(api).defineRoute()` inside `$lambda` when a runtime module owns a single route alongside its handler:
 
 ::code-group
-
-```ts [infra/api.ts]
-import { api } from "@notation/aws/api-gateway";
-
-export const ordersApi = api({ id: "orders-api" });
-```
 
 ```ts [runtime/get-order.ts]
 import { $lambda, apiGateway, DecodeError, type LambdaHandler } from "@notation/aws/lambda";
@@ -143,6 +137,12 @@ export const handler: LambdaHandler<typeof getOrder> = async (event) => {
 };
 ```
 
+```ts [infra/api.ts]
+import { api } from "@notation/aws/api-gateway";
+
+export const ordersApi = api({ id: "orders-api" });
+```
+
 ::
 
 Pass `schema: null` on routes that must reject non-empty request bodies. Self-bound `defineRoute()` targets cannot also be wired through `router()`.
@@ -153,15 +153,24 @@ Use `jwtAuthorizer()` to validate bearer tokens in `$request.header.Authorizatio
 
 ::code-group
 
-```ts [shared/jwt.ts]
-import * as v from "valibot";
+```ts [runtime/customer-orders.ts]
+import { $lambda, apiGateway, DecodeError, type LambdaHandler } from "@notation/aws/lambda";
+import { OrderClaims } from "../shared/jwt";
 
-// API Gateway passes every JWT claim value as a string.
-export const OrderClaims = v.object({
-  sub: v.string(),
-  exp: v.pipe(v.string(), v.transform(Number)),
-  scope: v.string(),
+export const customerOrders = $lambda({
+  id: "customer-orders",
+  event: () => apiGateway.schema(null).authSchema(OrderClaims),
 });
+
+export const handler: LambdaHandler<typeof customerOrders> = async (event) => {
+  try {
+    const { claims } = await customerOrders.decode(event);
+    return { customerId: claims.sub, expiresAt: claims.exp };
+  } catch (error) {
+    if (!(error instanceof DecodeError)) throw error;
+    return { statusCode: error.part === "claims" ? 403 : 400, body: error.message };
+  }
+};
 ```
 
 ```ts [infra/api.ts]
@@ -183,24 +192,15 @@ export const ordersAuth = jwtAuthorizer({
 router(ordersApi).withAuthorizer(ordersAuth).get("/orders", () => customerOrders);
 ```
 
-```ts [runtime/customer-orders.ts]
-import { $lambda, apiGateway, DecodeError, type LambdaHandler } from "@notation/aws/lambda";
-import { OrderClaims } from "../shared/jwt";
+```ts [shared/jwt.ts]
+import * as v from "valibot";
 
-export const customerOrders = $lambda({
-  id: "customer-orders",
-  event: () => apiGateway.schema(null).authSchema(OrderClaims),
+// API Gateway passes every JWT claim value as a string.
+export const OrderClaims = v.object({
+  sub: v.string(),
+  exp: v.pipe(v.string(), v.transform(Number)),
+  scope: v.string(),
 });
-
-export const handler: LambdaHandler<typeof customerOrders> = async (event) => {
-  try {
-    const { claims } = await customerOrders.decode(event);
-    return { customerId: claims.sub, expiresAt: claims.exp };
-  } catch (error) {
-    if (!(error instanceof DecodeError)) throw error;
-    return { statusCode: error.part === "claims" ? 403 : 400, body: error.message };
-  }
-};
 ```
 
 ::

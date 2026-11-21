@@ -16,20 +16,6 @@ Declare `InfisicalSecret` from `@notation/infisical/resources` in an infrastruct
 
 ::code-group
 
-```ts [infra/secrets.ts]
-import { deployment } from "@notation/core";
-import { InfisicalSecret } from "@notation/infisical/resources";
-
-export const stripeKey = new InfisicalSecret("stripe-key", {
-  config: {
-    projectId: process.env.INFISICAL_PROJECT_ID!,
-    environment: deployment().stage,
-    path: "/orders",
-    key: "STRIPE_KEY",
-  },
-});
-```
-
 ```ts [runtime/create-order.ts]
 import {
   $lambda,
@@ -76,6 +62,20 @@ export default {
 } satisfies WorkerHandler<typeof ordersWorker>;
 ```
 
+```ts [infra/secrets.ts]
+import { deployment } from "@notation/core";
+import { InfisicalSecret } from "@notation/infisical/resources";
+
+export const stripeKey = new InfisicalSecret("stripe-key", {
+  config: {
+    projectId: process.env.INFISICAL_PROJECT_ID!,
+    environment: deployment().stage,
+    path: "/orders",
+    key: "STRIPE_KEY",
+  },
+});
+```
+
 ::
 
 `deployment().stage` maps each Notation stage to an Infisical environment slug, and `.credentials.value` binds directly into AWS [`$lambda`](../aws/lambda.md) `env` or Cloudflare [`$worker`](../cloudflare/workers.md) `bindings`.
@@ -85,6 +85,26 @@ export default {
 When multiple Workers need the same shared secret, pass `InfisicalSecret.credentials.value` into Cloudflare [`SecretsStoreSecret`](../cloudflare/secrets.md) and bind the store secret to each Worker:
 
 ::code-group
+
+```ts [runtime/webhooks.ts]
+import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
+import { webhookSecret } from "../infra/secrets";
+
+export const webhooksWorker = $worker({
+  id: "webhooks",
+  compatibilityDate: "2026-10-12",
+  bindings: () => ({
+    WEBHOOK_SECRET: webhookSecret,
+  }),
+});
+
+export default {
+  async fetch(_request, env) {
+    const signingKey = await env.WEBHOOK_SECRET.get();
+    return Response.json({ configured: Boolean(signingKey) });
+  },
+} satisfies WorkerHandler<typeof webhooksWorker>;
+```
 
 ```ts [infra/secrets.ts]
 import { deployment } from "@notation/core";
@@ -109,26 +129,6 @@ export const webhookSecret = new secretsStore.SecretsStoreSecret(
     dependencies: { store },
   },
 );
-```
-
-```ts [runtime/webhooks.ts]
-import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
-import { webhookSecret } from "../infra/secrets";
-
-export const webhooksWorker = $worker({
-  id: "webhooks",
-  compatibilityDate: "2026-10-12",
-  bindings: () => ({
-    WEBHOOK_SECRET: webhookSecret,
-  }),
-});
-
-export default {
-  async fetch(_request, env) {
-    const signingKey = await env.WEBHOOK_SECRET.get();
-    return Response.json({ configured: Boolean(signingKey) });
-  },
-} satisfies WorkerHandler<typeof webhooksWorker>;
 ```
 
 ::

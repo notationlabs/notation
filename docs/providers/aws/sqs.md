@@ -8,36 +8,6 @@ Wire a producer Lambda, a primary queue backed by a dead-letter queue, and a con
 
 ::code-group
 
-```ts [shared/schema.ts]
-import * as v from "valibot";
-
-export const Order = v.object({
-  orderId: v.string(),
-  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
-});
-
-export const DeadLetter = v.unknown();
-```
-
-```ts [infra/orders.ts]
-import { queue } from "@notation/aws/sqs";
-import { DeadLetter, Order } from "../shared/schema";
-
-export const orderDeadLetterQueue = queue({
-  id: "orders-dlq",
-  schema: DeadLetter,
-});
-
-export const orderQueue = queue({
-  id: "orders",
-  schema: Order,
-  deadLetterQueue: {
-    queue: orderDeadLetterQueue,
-    maxReceiveCount: 3,
-  },
-});
-```
-
 ```ts [runtime/create-order.ts]
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { $lambda, type LambdaHandler } from "@notation/aws/lambda";
@@ -76,6 +46,36 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
     console.log("processing order", order.orderId, order.quantity);
   }
 };
+```
+
+```ts [infra/orders.ts]
+import { queue } from "@notation/aws/sqs";
+import { DeadLetter, Order } from "../shared/schema";
+
+export const orderDeadLetterQueue = queue({
+  id: "orders-dlq",
+  schema: DeadLetter,
+});
+
+export const orderQueue = queue({
+  id: "orders",
+  schema: Order,
+  deadLetterQueue: {
+    queue: orderDeadLetterQueue,
+    maxReceiveCount: 3,
+  },
+});
+```
+
+```ts [shared/schema.ts]
+import * as v from "valibot";
+
+export const Order = v.object({
+  orderId: v.string(),
+  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
+});
+
+export const DeadLetter = v.unknown();
 ```
 
 ::

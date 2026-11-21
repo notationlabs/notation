@@ -8,15 +8,6 @@ Pair a shared schema with a `$lambda` runtime module that accepts HTTP orders an
 
 ::code-group
 
-```ts [shared/schema.ts]
-import * as v from "valibot";
-
-export const NewOrder = v.object({
-  orderId: v.string(),
-  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
-});
-```
-
 ```ts [runtime/create-order.ts]
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { $lambda, apiGateway, DecodeError, type LambdaHandler } from "@notation/aws/lambda";
@@ -61,6 +52,15 @@ const ordersApi = api({ id: "orders-api" });
 router(ordersApi).post("/orders", () => createOrder);
 ```
 
+```ts [shared/schema.ts]
+import * as v from "valibot";
+
+export const NewOrder = v.object({
+  orderId: v.string(),
+  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
+});
+```
+
 ::
 
 Every module calling `$lambda` must export a function named `handler` and use a unique `id`. Notation evaluates `$lambda` at deploy time to provision the function and role, while bundling `handler` with typed `decode()` and `env()` helpers (see [Declarations](../../core/declarations.md)).
@@ -70,15 +70,6 @@ Every module calling `$lambda` must export a function named `handler` and use a 
 Chain `.authSchema(claims?)` onto `apiGateway.schema(body)` for routes guarded by `jwtAuthorizer()` (or pass `auth` to `apiGateway.bind(api).defineRoute()`):
 
 ::code-group
-
-```ts [shared/jwt.ts]
-import * as v from "valibot";
-
-export const JWTClaims = v.object({
-  sub: v.string(),
-  iss: v.string(),
-});
-```
 
 ```ts [runtime/profile.ts]
 import { $lambda, apiGateway, DecodeError, type LambdaHandler } from "@notation/aws/lambda";
@@ -115,6 +106,15 @@ const auth = jwtAuthorizer({
 });
 
 router(ordersApi).withAuthorizer(auth).get("/profile", () => profile);
+```
+
+```ts [shared/jwt.ts]
+import * as v from "valibot";
+
+export const JWTClaims = v.object({
+  sub: v.string(),
+  iss: v.string(),
+});
 ```
 
 ::

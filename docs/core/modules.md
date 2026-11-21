@@ -6,25 +6,6 @@ This AWS example pairs a shared schema, an SQS queue, and a `$lambda` consumer a
 
 ::code-group
 
-```ts [shared/schema.ts]
-import * as v from "valibot";
-
-export const Order = v.object({
-  orderId: v.string(),
-  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
-});
-```
-
-```ts [infra/orders.ts]
-import { queue } from "@notation/aws/sqs";
-import { Order } from "../shared/schema";
-
-export const orderQueue = queue({
-  id: "orders",
-  schema: Order,
-});
-```
-
 ```ts [runtime/orders.ts]
 import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 import { orderQueue } from "../infra/orders";
@@ -41,6 +22,25 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
     console.log("order", order.orderId, lambda.env().ORDER_QUEUE_URL);
   }
 };
+```
+
+```ts [infra/orders.ts]
+import { queue } from "@notation/aws/sqs";
+import { Order } from "../shared/schema";
+
+export const orderQueue = queue({
+  id: "orders",
+  schema: Order,
+});
+```
+
+```ts [shared/schema.ts]
+import * as v from "valibot";
+
+export const Order = v.object({
+  orderId: v.string(),
+  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
+});
 ```
 
 ::

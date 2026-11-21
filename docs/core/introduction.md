@@ -12,15 +12,6 @@ With `@notation/aws`, you declare a Lambda function and its request schema next 
 
 ::code-group
 
-```ts [shared/schemas.ts]
-import * as v from "valibot";
-
-export const CreateOrder = v.object({
-  orderId: v.string(),
-  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
-});
-```
-
 ```ts [runtime/create-order.ts]
 import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
 import { CreateOrder } from "../shared/schemas";
@@ -45,6 +36,15 @@ const ordersApi = api({ id: "orders-api" });
 router(ordersApi).post("/orders", () => createOrder);
 ```
 
+```ts [shared/schemas.ts]
+import * as v from "valibot";
+
+export const CreateOrder = v.object({
+  orderId: v.string(),
+  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
+});
+```
+
 ```ts [notation.config.ts]
 import { defineConfig } from "@notation/core/config";
 
@@ -65,14 +65,6 @@ With `@notation/cloudflare`, `$worker` declares bindings next to the Worker hand
 
 ::code-group
 
-```ts [infra/storage.ts]
-import { kv } from "@notation/cloudflare/resources";
-
-export const orderCache = new kv.KVNamespace("order-cache", {
-  config: { Title: "orders-cache" },
-});
-```
-
 ```ts [runtime/orders-worker.ts]
 import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
 import { orderCache } from "../infra/storage";
@@ -90,6 +82,14 @@ export default {
     return Response.json({ ok: true, orderId });
   },
 } satisfies WorkerHandler<typeof ordersWorker>;
+```
+
+```ts [infra/storage.ts]
+import { kv } from "@notation/cloudflare/resources";
+
+export const orderCache = new kv.KVNamespace("order-cache", {
+  config: { Title: "orders-cache" },
+});
 ```
 
 ::

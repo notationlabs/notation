@@ -16,6 +16,32 @@ Declare a direct Worker secret, a shared `SecretsStoreSecret`, and an `AccountTo
 
 ::code-group
 
+```ts [runtime/api.ts]
+import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
+import { deployToken, stripeKey, webhookSecret } from "../infra/secrets";
+
+export const api = $worker({
+  id: "api",
+  compatibilityDate: "2026-10-12",
+  bindings: () => ({
+    STRIPE_KEY: stripeKey.credentials.value,
+    WEBHOOK_SECRET: webhookSecret,
+    DEPLOY_TOKEN: deployToken.credentials.Value,
+  }),
+});
+
+export default {
+  async fetch(_request, env) {
+    const sharedSecret = await env.WEBHOOK_SECRET.get();
+    return Response.json({
+      hasStripeKey: Boolean(env.STRIPE_KEY),
+      hasSharedSecret: Boolean(sharedSecret),
+      hasDeployToken: Boolean(env.DEPLOY_TOKEN),
+    });
+  },
+} satisfies WorkerHandler<typeof api>;
+```
+
 ```ts [infra/secrets.ts]
 import { secretsStore, tokens } from "@notation/cloudflare/resources";
 import { sources } from "@notation/std/resources";
@@ -48,32 +74,6 @@ export const deployToken = new tokens.AccountToken("deploy-token", {
     ],
   },
 });
-```
-
-```ts [runtime/api.ts]
-import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
-import { deployToken, stripeKey, webhookSecret } from "../infra/secrets";
-
-export const api = $worker({
-  id: "api",
-  compatibilityDate: "2026-10-12",
-  bindings: () => ({
-    STRIPE_KEY: stripeKey.credentials.value,
-    WEBHOOK_SECRET: webhookSecret,
-    DEPLOY_TOKEN: deployToken.credentials.Value,
-  }),
-});
-
-export default {
-  async fetch(_request, env) {
-    const sharedSecret = await env.WEBHOOK_SECRET.get();
-    return Response.json({
-      hasStripeKey: Boolean(env.STRIPE_KEY),
-      hasSharedSecret: Boolean(sharedSecret),
-      hasDeployToken: Boolean(env.DEPLOY_TOKEN),
-    });
-  },
-} satisfies WorkerHandler<typeof api>;
 ```
 
 ::

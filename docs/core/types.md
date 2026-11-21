@@ -8,15 +8,6 @@ Define a [Standard Schema v1](https://standardschema.dev) validator once in `sha
 
 ::code-group
 
-```ts [shared/orders.ts]
-import * as v from "valibot";
-
-export const CreateOrder = v.object({
-  orderId: v.string(),
-  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
-});
-```
-
 ```ts [runtime/create-order.ts]
 import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
 import { CreateOrder } from "../shared/orders";
@@ -41,6 +32,15 @@ import { createOrder } from "../runtime/create-order";
 
 const ordersApi = api({ id: "orders-api" });
 router(ordersApi).post("/orders", () => createOrder);
+```
+
+```ts [shared/orders.ts]
+import * as v from "valibot";
+
+export const CreateOrder = v.object({
+  orderId: v.string(),
+  quantity: v.pipe(v.number(), v.integer(), v.minValue(1)),
+});
 ```
 
 ::
@@ -106,14 +106,6 @@ On Cloudflare, `$worker` propagates `bindings()` types directly onto `env`, and 
 
 ::code-group
 
-```ts [shared/flags.ts]
-import * as v from "valibot";
-
-export const OrderFlags = v.object({
-  expressCheckout: v.boolean(),
-});
-```
-
 ```ts [runtime/orders-api.ts]
 import {
   $worker,
@@ -135,6 +127,14 @@ export default {
     return Response.json({ expressCheckout: flags?.expressCheckout ?? false });
   },
 } satisfies WorkerHandler<typeof ordersApi>;
+```
+
+```ts [shared/flags.ts]
+import * as v from "valibot";
+
+export const OrderFlags = v.object({
+  expressCheckout: v.boolean(),
+});
 ```
 
 ::
