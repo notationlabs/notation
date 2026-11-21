@@ -6,7 +6,7 @@ Notation Deploy is a TypeScript framework for defining and deploying cloud infra
 
 A Notation project separates files into **runtime** modules for colocated compute, **infra** modules for supporting cloud resources, and **shared** modules for schemas and pure helpers.
 
-### AWS API
+### Example: AWS API Gateway
 
 With `@notation/aws`, you declare a Lambda function and its request schema next to the handler, then mount it onto an HTTP API:
 
@@ -59,7 +59,7 @@ export default defineConfig({
 
 Because both sides reference `CreateOrder`, `router().post()` verifies at compile time that `createOrder` expects an API Gateway event, while `createOrder.decode(event)` validates incoming JSON at runtime.
 
-### Cloudflare Worker
+### Example: Cloudflare Worker
 
 With `@notation/cloudflare`, `$worker` declares bindings next to the Worker handler and propagates their runtime types straight into `env`:
 
