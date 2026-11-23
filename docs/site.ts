@@ -149,6 +149,7 @@ export const deploy = {
     {
       label: "Internals",
       slug: "internals",
+      private: true,
       sections: [
         {
           heading: "Overview",

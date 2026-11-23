@@ -109,9 +109,6 @@ A coding agent usually runs each command in a new terminal session, so each comm
 
 ## CI with a service account
 
-> [!WARNING]
-> The service account setup has not been checked with a real service account yet.
-
 Create a 1Password service account, give it the vaults that your references name, and set `OP_SERVICE_ACCOUNT_TOKEN` in the job:
 
 ```yaml [.github/workflows/deploy.yml]
