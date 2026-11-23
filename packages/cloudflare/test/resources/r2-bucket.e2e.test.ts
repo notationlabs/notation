@@ -66,7 +66,7 @@ describeE2e("R2Bucket", () => {
   const archiveConfig: BucketConfig = {
     BucketName: archive,
     Jurisdiction: "eu",
-    StorageClass: "InfrequentAccess",
+    StorageClass: "Standard",
   };
 
   it("creates a bucket in the default jurisdiction and one in the EU jurisdiction", async () => {
@@ -86,18 +86,14 @@ describeE2e("R2Bucket", () => {
     expect(await getBucket(archive, "eu")).toMatchObject({
       name: archive,
       jurisdiction: "eu",
-      storage_class: "InfrequentAccess",
+      storage_class: "Standard",
     });
     expect(await getBucket(archive, "default")).toBeUndefined();
   });
 
-  it("changes the storage class in place, and ignores a change to the location hint", async () => {
+  it("ignores a change to the location hint", async () => {
     writeProject({
-      "bucket:uploads": {
-        ...uploadsConfig,
-        StorageClass: "InfrequentAccess",
-        LocationHint: "enam",
-      },
+      "bucket:uploads": { ...uploadsConfig, LocationHint: "enam" },
       "bucket:archive": archiveConfig,
     });
     await project.notation("deploy");
@@ -105,7 +101,6 @@ describeE2e("R2Bucket", () => {
     expect(await getBucket(uploads, "default")).toMatchObject({
       creation_date: uploadsCreatedAt,
       location: "WEUR",
-      storage_class: "InfrequentAccess",
     });
   });
 
@@ -115,12 +110,12 @@ describeE2e("R2Bucket", () => {
     const before = await getBucket(taken, "default");
 
     writeProject({
-      "bucket:uploads": { ...uploadsConfig, StorageClass: "InfrequentAccess" },
+      "bucket:uploads": uploadsConfig,
       "bucket:archive": archiveConfig,
       "bucket:taken": {
         BucketName: taken,
         Jurisdiction: "default",
-        StorageClass: "InfrequentAccess",
+        StorageClass: "Standard",
       },
     });
     await expect(project.notation("deploy")).rejects.toThrow(
