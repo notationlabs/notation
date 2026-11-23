@@ -11,7 +11,7 @@ type BucketConfig = {
 // An InfrequentAccess bucket has a monthly minimum charge, so the test that
 // uses one runs only when this variable is set.
 const testInfrequentAccess = Boolean(
-  process.env.NOTATION_E2E_INFREQUENT_ACCESS,
+  process.env.NOTATION_E2E_CLOUDFLARE_R2_INFREQUENT_ACCESS,
 );
 
 type CloudflareBucket = {

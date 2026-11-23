@@ -21,7 +21,7 @@
         "CLOUDFLARE_ACCOUNT_ID",
         "AWS_REGION",
         "NOTATION_E2E_DOCKER",
-        "NOTATION_E2E_INFREQUENT_ACCESS"
+        "NOTATION_E2E_CLOUDFLARE_R2_INFREQUENT_ACCESS"
       ],
       "passThroughEnv": [
         "CLOUDFLARE_API_TOKEN",
@@ -40,7 +40,7 @@
         "CLOUDFLARE_ACCOUNT_ID",
         "AWS_REGION",
         "NOTATION_E2E_DOCKER",
-        "NOTATION_E2E_INFREQUENT_ACCESS"
+        "NOTATION_E2E_CLOUDFLARE_R2_INFREQUENT_ACCESS"
       ],
       "passThroughEnv": [
         "CLOUDFLARE_API_TOKEN",
