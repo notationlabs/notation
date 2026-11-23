@@ -60,6 +60,13 @@ const getMeta = (resource: DashboardResource & { output: any }) => {
       </div>
     );
   }
+  if (resource.type === "cloudflare/workers/WorkerScript") {
+    return (
+      <div className="text-sm">
+        Script name: <code>{resource.output.ScriptName}</code>
+      </div>
+    );
+  }
 };
 
 // A create-first replace keeps the replaced instance in the record until

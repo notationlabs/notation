@@ -227,6 +227,89 @@ addBindings(orders, { WEBHOOKS: webhookWorker });
 
 `WorkerEnv<typeof worker>` excludes bindings added with `addBindings()`, so handlers reading those keys must narrow `env` explicitly.
 
+## Logs
+
+A Worker's `console.log` output and uncaught exceptions can go to three places. Each one is an option of `$worker` and `worker()`:
+
+| Option | Where the logs go | What you set up outside Notation |
+| :--- | :--- | :--- |
+| `observability` | Workers Logs, searchable in the Cloudflare dashboard | Nothing |
+| `logpush` | The account's Logpush jobs for the `workers_trace_events` dataset | A Logpush job |
+| `tailConsumers` | The `tail` handler of other Workers that you declare | Nothing |
+
+Each `deploy` sets all three settings from config, and turns off an option that config leaves out. A setting changed in the Cloudflare dashboard shows as drift in the plan, and `deploy` sets it back.
+
+The first `deploy` after you upgrade to a version of `@notation/cloudflare` with these options turns off Workers Logs, Logpush and tail consumers that were set in the Cloudflare dashboard or by `wrangler`. Add each setting that you want to keep to config before that deploy. A Worker in a gradual rollout must finish the rollout before that deploy.
+
+### Workers Logs
+
+Set `observability` to turn on Workers Logs for the `orders` Worker from the first example:
+
+```ts [runtime/orders.ts]
+export const ordersWorker = $worker({
+  id: "orders",
+  compatibilityDate: "2026-10-12",
+  observability: { enabled: true, headSamplingRate: 0.1 }, // ← logs 10% of requests
+  bindings: () => ({ CACHE: orderCache }),
+});
+```
+
+`headSamplingRate` is the share of requests that Cloudflare logs, from `0` to `1`, and Cloudflare's default is `1`. Set it only with `enabled: true`. Notation throws when `headSamplingRate` is outside `0` to `1`, or is set with `enabled: false`. The logs appear on the Worker's **Observability** tab in the Cloudflare dashboard.
+
+### Logpush
+
+Set `logpush: true` to send the Worker's trace events to Logpush. Notation turns the setting on for the Worker, but it doesn't create the Logpush job. Create a job for the `workers_trace_events` dataset in the dashboard or through the Cloudflare API.
+
+### Tail Workers
+
+A Tail Worker receives the logs, exceptions and outcome of each invocation of another Worker. Cloudflare drops the events when a consumer has no `tail` handler, so declare the Tail Worker with one:
+
+```ts [runtime/log-sink.ts]
+import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
+
+export const logSink = $worker({
+  id: "log-sink",
+  compatibilityDate: "2026-10-12",
+  url: false,
+});
+
+export default {
+  async tail(events) {
+    for (const event of events) {
+      console.log(event.scriptName, event.outcome, event.logs.length);
+    }
+  },
+} satisfies WorkerHandler<typeof logSink>;
+```
+
+Then list the Tail Worker in `tailConsumers` on the Worker that produces the events:
+
+```ts [runtime/orders.ts]
+import { logSink } from "./log-sink";
+
+export const ordersWorker = $worker({
+  id: "orders",
+  compatibilityDate: "2026-10-12",
+  tailConsumers: () => [logSink], // ← a function, like bindings
+});
+```
+
+`tailConsumers` is a function for the same reason as `bindings`: Notation calls it after all infra modules have loaded, so `log-sink` can bind `orders` as a service while `orders` lists `log-sink`. Each tail consumer is a [contribution](../../core/outputs-and-contributions.md), as each service binding is, so these two Workers form no dependency cycle.
+
+### Tail a deployed Worker
+
+`wrangler tail` streams the live logs of a deployed Worker, and it needs the Worker's name in Cloudflare. Deploy names the Worker `<app>--<stage>--<id>-<instance>`, where `<instance>` is 8 random hex characters, so you can't work out the name from config. When that name is longer than 54 characters, Notation shortens it, as [Physical names](../../core/physical-names.md) describes.
+
+Find the name with [`notation dashboard`](../../cli/dashboard.md). Select the Worker's `WorkerScript` resource, and the detail pane shows the script name. You can also find the name in the Cloudflare dashboard. For a name under 54 characters, the Workers list shows the Worker under a name that starts with `<app>--<stage>--<id>-`, such as `shop--prod--orders-`.
+
+Then pass the name to `wrangler tail`, with the account in `CLOUDFLARE_ACCOUNT_ID`:
+
+```sh [Terminal]
+npx wrangler tail shop--prod--orders-1a2b3c4d --format pretty
+```
+
+Each Worker also has a `scriptName` output, an `OutputRef<string>` that deploy fills in. Pass it into the config of another resource as you would `url`. Worker code can't read `scriptName`, for the same reason that it can't read `url`: the value is known only at deploy.
+
 ## Runtime constraints
 
 Worker modules run in `workerd` rather than Node.js and must follow three rules:
@@ -249,8 +332,13 @@ Worker modules run in `workerd` rather than Node.js and must follow three rules:
 | `bindings` | Optional thunk returning a plain object literal of bindings |
 | `url` | Optional `boolean` enabling `workers.dev` and `.url`, default `true` |
 | `entrypoint` | Optional `WorkerEntrypoint` subclass typing service bindings as `Service<E>` |
+| `observability` | Optional `{ enabled: boolean; headSamplingRate?: number }` for Workers Logs |
+| `logpush` | Optional `boolean` that sends trace events to the account's Logpush jobs |
+| `tailConsumers` | Optional thunk returning the Workers that receive this Worker's tail events |
 
 `id` accepts `1` to `63` characters matching `[a-z0-9-]` with no leading or trailing hyphen; changing `id` replaces the Worker, and the physical `ScriptName` `<app>--<stage>--<id>-<instance>` is capped at 54 characters. `"nodejs_compat"` is always included in `compatibilityFlags`.
+
+A Worker declared with `$worker` or `worker()` has two outputs: `url` (unless `url: false`) and `scriptName`. Both are `OutputRef<string>`, and both throw when Worker code reads them.
 
 `bindings` must return an object literal with no object spread `...` or computed keys and is evaluated after all infra modules load. Setting literal `url: false` removes `.url` from the TypeScript type and throws on access, while a non-literal `boolean` keeps `.url` in the type and throws at evaluation when `false`. `entrypoint` must be declared in the same module before `$worker` and exported as `default`.
 

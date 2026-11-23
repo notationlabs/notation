@@ -124,6 +124,22 @@ importers:
         specifier: ^22.20.5
         version: 22.20.5
 
+  examples/cloudflare-worker:
+    dependencies:
+      '@notation/cli':
+        specifier: workspace:*
+        version: link:../../packages/cli
+      '@notation/cloudflare':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare
+      '@notation/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: 5.20261012.1
+        version: 5.20261012.1
+
   examples/event-bridge:
     dependencies:
       '@notation/aws':

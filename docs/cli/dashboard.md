@@ -82,7 +82,7 @@ On initial load, the UI selects the first API Gateway resource or falls back to 
 
 ## Resource details
 
-The right pane shows the selected resource's `id`, `type`, and any retired instances. AWS API Gateway resources also render **Open in AWS console→** and a clickable endpoint URL link.
+The right pane shows the selected resource's `id`, `type`, and any retired instances. AWS API Gateway resources also render **Open in AWS console→** and a clickable endpoint URL link. Cloudflare `WorkerScript` resources also show the Worker's script name.
 
 ## Retired instances
 
