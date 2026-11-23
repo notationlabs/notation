@@ -50,9 +50,9 @@ Both commands run a turbo task for each package that has end-to-end tests.
 turbo skips a package whose tests passed before with the same inputs, and
 prints the logs of that run. The inputs are the package's files, the files of
 the packages it depends on, `vitest.e2e.config.ts`, `CLOUDFLARE_ACCOUNT_ID`,
-`AWS_REGION` and whether the Docker daemon is running. turbo can't see a change
-at a provider, such as a change to its API. To run every package, set
-`TURBO_FORCE=true`:
+`AWS_REGION`, `NOTATION_E2E_INFREQUENT_ACCESS` and whether the Docker daemon
+is running. turbo can't see a change at a provider, such as a change to its
+API. To run every package, set `TURBO_FORCE=true`:
 
 ```
 TURBO_FORCE=true pok test e2e
@@ -67,6 +67,10 @@ pnpm exec vitest run --config vitest.e2e.config.ts packages/cloudflare/test/reso
 
 The Cloudflare `ContainerImage` test and the container test of `$durableObject`
 build an image with Docker, and are skipped unless the Docker daemon is running.
+
+The `R2Bucket` test of a change to the storage class is skipped unless
+`NOTATION_E2E_INFREQUENT_ACCESS` is set. It creates an InfrequentAccess bucket,
+which has a monthly minimum charge.
 
 The accounts need:
 

@@ -8,6 +8,12 @@ type BucketConfig = {
   LocationHint?: "weur" | "enam";
 };
 
+// An InfrequentAccess bucket has a monthly minimum charge, so the test that
+// uses one runs only when this variable is set.
+const testInfrequentAccess = Boolean(
+  process.env.NOTATION_E2E_INFREQUENT_ACCESS,
+);
+
 type CloudflareBucket = {
   name: string;
   creation_date: string;
@@ -103,6 +109,25 @@ describeE2e("R2Bucket", () => {
       location: "WEUR",
     });
   });
+
+  it.runIf(testInfrequentAccess)(
+    "changes the storage class in place",
+    async () => {
+      writeProject({
+        "bucket:uploads": {
+          ...uploadsConfig,
+          StorageClass: "InfrequentAccess",
+        },
+        "bucket:archive": archiveConfig,
+      });
+      await project.notation("deploy");
+
+      expect(await getBucket(uploads, "default")).toMatchObject({
+        creation_date: uploadsCreatedAt,
+        storage_class: "InfrequentAccess",
+      });
+    },
+  );
 
   it("fails to deploy a bucket whose name another bucket has, and leaves that bucket", async () => {
     const existing = await api("POST", "/r2/buckets", { name: taken });

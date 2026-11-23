@@ -17,7 +17,12 @@
     "test:e2e": {
       "dependsOn": ["build", "^build", "transit"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.e2e.config.ts"],
-      "env": ["CLOUDFLARE_ACCOUNT_ID", "AWS_REGION", "NOTATION_E2E_DOCKER"],
+      "env": [
+        "CLOUDFLARE_ACCOUNT_ID",
+        "AWS_REGION",
+        "NOTATION_E2E_DOCKER",
+        "NOTATION_E2E_INFREQUENT_ACCESS"
+      ],
       "passThroughEnv": [
         "CLOUDFLARE_API_TOKEN",
         "AWS_ACCESS_KEY_ID",
@@ -31,7 +36,12 @@
     "test:e2e-slow": {
       "dependsOn": ["build", "^build", "transit"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.e2e.config.ts"],
-      "env": ["CLOUDFLARE_ACCOUNT_ID", "AWS_REGION", "NOTATION_E2E_DOCKER"],
+      "env": [
+        "CLOUDFLARE_ACCOUNT_ID",
+        "AWS_REGION",
+        "NOTATION_E2E_DOCKER",
+        "NOTATION_E2E_INFREQUENT_ACCESS"
+      ],
       "passThroughEnv": [
         "CLOUDFLARE_API_TOKEN",
         "AWS_ACCESS_KEY_ID",
