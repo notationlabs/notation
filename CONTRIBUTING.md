@@ -36,7 +36,8 @@ variables from the environment:
 | ---------------------------------------------------------- | ---------------------------------------------------------- |
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`            | The Cloudflare tests                                       |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` | The AWS tests, and the Cloudflare `ContainerRegistry` test |
-| `ECR_PULL_ACCESS_KEY_ID`, `ECR_PULL_SECRET_ACCESS_KEY`     | The Cloudflare `ContainerRegistry` test                    |
+| `NOTATION_E2E_CLOUDFLARE_ECR_PULL_ACCESS_KEY_ID`           | The Cloudflare `ContainerRegistry` test                    |
+| `NOTATION_E2E_CLOUDFLARE_ECR_PULL_SECRET_ACCESS_KEY`       | The Cloudflare `ContainerRegistry` test                    |
 
 A Cloudflare test is skipped when its variables are missing. An AWS test fails.
 
