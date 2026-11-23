@@ -62,6 +62,7 @@ import {
   type Overrides,
 } from "./overrides";
 import { readAndDecideSource } from "./sources";
+import { prefetchSources, prefetchedFor } from "./prefetch";
 import {
   mintedCredentials,
   rotatesForCreate,
@@ -155,6 +156,15 @@ export async function createPlan({
         })
       : overrides;
   const recordedOutputs = await readRecordedOutputs(resources, state);
+  const prefetched = await prefetchSources({
+    resources,
+    recordedOutputs,
+    point: "plan",
+    executionId,
+    app,
+    stage,
+    emit,
+  });
   // The credentials that deploy cannot get. Plan goes on as if `--credential`
   // passed each, and fails after the last resource with all of them.
   const unobtainable: UnobtainableCredential[] = [];
@@ -211,7 +221,13 @@ export async function createPlan({
         () => emitStep,
         source,
         params,
-        { id: source.id, executionId, app, stage },
+        async () => ({
+          id: source.id,
+          executionId,
+          app,
+          stage,
+          ...prefetchedFor(prefetched, source),
+        }),
         record,
       ),
     );

@@ -15,6 +15,7 @@ import {
   keepsResource,
 } from "../plan";
 import { loadUnit, planKnownParams } from "../planner";
+import { prefetchSources, type PrefetchedValues } from "../prefetch";
 import { readRecordedOutputs } from "../recorded-outputs";
 import { assertOverrides, findReplaceOverride } from "../overrides";
 import { workflowRegistry, type ResourceRegistry } from "../resource-registry";
@@ -59,11 +60,36 @@ export async function* deploy(
     // Read once, inside the hold, so that every `~state` ref reads the
     // records as they were at the start of the deploy, and a resumed deploy
     // reads the same ones.
+    const recordedOutputs = yield* step.run("notation:recorded-outputs", () =>
+      readRecordedOutputs(opts.resources, opts.state),
+    );
+    // What `prefetch` returns is kept in memory only.
+    let prefetching: Promise<PrefetchedValues> | undefined;
+    // Keeps a rejection on purpose, because the deploy fails anyway.
+    const getPrefetched = () =>
+      (prefetching ??= prefetchSources({
+        resources: opts.resources,
+        recordedOutputs,
+        point: "deploy",
+        executionId: opts.executionId,
+        app: opts.app,
+        stage: opts.stage,
+        emit: opts.emit,
+      }));
+    // A step, so that `prefetch` runs here in each delivery until it has
+    // once succeeded. It comes after validation and inside the hold, so that
+    // a validation or override error comes before any prompt, and a failed
+    // source stops the deploy before it changes anything. A later delivery
+    // replays this step, and calls `prefetch` only when a `read` or
+    // `loadCredential` runs.
+    yield* step.run("notation:prefetch", async () => {
+      await getPrefetched();
+      return null;
+    });
     const deployOpts: DeployContext = {
       ...opts,
-      recordedOutputs: yield* step.run("notation:recorded-outputs", () =>
-        readRecordedOutputs(opts.resources, opts.state),
-      ),
+      recordedOutputs,
+      getPrefetched,
       reconciled: new Set(),
     };
     // Reconcile in dependency order, so a resource only runs once its

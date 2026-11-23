@@ -159,6 +159,7 @@ export function createRuntime(
 
   return {
     state,
+    stores: sqliteRuntime.stores,
     events,
     deploy,
     destroy(executionId: string, declared: BaseResource[]) {
