@@ -25,13 +25,14 @@ const IMAGE_DIGEST =
 
 const region = process.env.AWS_REGION!;
 // The AWS_* user creates the repository and pushes the image. Cloudflare
-// pulls it with the ECR_PULL_* user, which can only pull.
+// pulls it with the NOTATION_E2E_CLOUDFLARE_ECR_PULL_* user, which can only
+// pull.
 const hasAwsCredentials = Boolean(
   process.env.AWS_ACCESS_KEY_ID &&
   process.env.AWS_SECRET_ACCESS_KEY &&
   region &&
-  process.env.ECR_PULL_ACCESS_KEY_ID &&
-  process.env.ECR_PULL_SECRET_ACCESS_KEY,
+  process.env.NOTATION_E2E_CLOUDFLARE_ECR_PULL_ACCESS_KEY_ID &&
+  process.env.NOTATION_E2E_CLOUDFLARE_ECR_PULL_SECRET_ACCESS_KEY,
 );
 
 const workerModule = `
@@ -90,7 +91,7 @@ const infraModule = (settings: {
       Domain: ${JSON.stringify(settings.domain)},
       Kind: "ECR",
       Auth: {
-        public_credential: process.env.ECR_PULL_ACCESS_KEY_ID!,
+        public_credential: process.env.NOTATION_E2E_CLOUDFLARE_ECR_PULL_ACCESS_KEY_ID!,
         private_credential: {
           store_id: ${JSON.stringify(settings.storeId)},
           secret_name: ${JSON.stringify(settings.secretName)},
@@ -224,7 +225,7 @@ describeWithAws("ContainerRegistry", () => {
       [
         {
           name: secretName,
-          value: process.env.ECR_PULL_SECRET_ACCESS_KEY,
+          value: process.env.NOTATION_E2E_CLOUDFLARE_ECR_PULL_SECRET_ACCESS_KEY,
           scopes: ["containers"],
           comment:
             "The secret access key of the ECR pull user for an end-to-end test",

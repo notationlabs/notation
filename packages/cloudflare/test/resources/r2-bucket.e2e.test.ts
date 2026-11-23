@@ -8,6 +8,12 @@ type BucketConfig = {
   LocationHint?: "weur" | "enam";
 };
 
+// An InfrequentAccess bucket has a monthly minimum charge, so the test that
+// uses one runs only when this variable is set.
+const testInfrequentAccess = Boolean(
+  process.env.NOTATION_E2E_CLOUDFLARE_R2_INFREQUENT_ACCESS,
+);
+
 type CloudflareBucket = {
   name: string;
   creation_date: string;
@@ -66,7 +72,7 @@ describeE2e("R2Bucket", () => {
   const archiveConfig: BucketConfig = {
     BucketName: archive,
     Jurisdiction: "eu",
-    StorageClass: "InfrequentAccess",
+    StorageClass: "Standard",
   };
 
   it("creates a bucket in the default jurisdiction and one in the EU jurisdiction", async () => {
@@ -86,18 +92,14 @@ describeE2e("R2Bucket", () => {
     expect(await getBucket(archive, "eu")).toMatchObject({
       name: archive,
       jurisdiction: "eu",
-      storage_class: "InfrequentAccess",
+      storage_class: "Standard",
     });
     expect(await getBucket(archive, "default")).toBeUndefined();
   });
 
-  it("changes the storage class in place, and ignores a change to the location hint", async () => {
+  it("ignores a change to the location hint", async () => {
     writeProject({
-      "bucket:uploads": {
-        ...uploadsConfig,
-        StorageClass: "InfrequentAccess",
-        LocationHint: "enam",
-      },
+      "bucket:uploads": { ...uploadsConfig, LocationHint: "enam" },
       "bucket:archive": archiveConfig,
     });
     await project.notation("deploy");
@@ -105,9 +107,27 @@ describeE2e("R2Bucket", () => {
     expect(await getBucket(uploads, "default")).toMatchObject({
       creation_date: uploadsCreatedAt,
       location: "WEUR",
-      storage_class: "InfrequentAccess",
     });
   });
+
+  it.runIf(testInfrequentAccess)(
+    "changes the storage class in place",
+    async () => {
+      writeProject({
+        "bucket:uploads": {
+          ...uploadsConfig,
+          StorageClass: "InfrequentAccess",
+        },
+        "bucket:archive": archiveConfig,
+      });
+      await project.notation("deploy");
+
+      expect(await getBucket(uploads, "default")).toMatchObject({
+        creation_date: uploadsCreatedAt,
+        storage_class: "InfrequentAccess",
+      });
+    },
+  );
 
   it("fails to deploy a bucket whose name another bucket has, and leaves that bucket", async () => {
     const existing = await api("POST", "/r2/buckets", { name: taken });
@@ -115,12 +135,12 @@ describeE2e("R2Bucket", () => {
     const before = await getBucket(taken, "default");
 
     writeProject({
-      "bucket:uploads": { ...uploadsConfig, StorageClass: "InfrequentAccess" },
+      "bucket:uploads": uploadsConfig,
       "bucket:archive": archiveConfig,
       "bucket:taken": {
         BucketName: taken,
         Jurisdiction: "default",
-        StorageClass: "InfrequentAccess",
+        StorageClass: "Standard",
       },
     });
     await expect(project.notation("deploy")).rejects.toThrow(

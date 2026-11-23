@@ -17,13 +17,18 @@
     "test:e2e": {
       "dependsOn": ["build", "^build", "transit"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.e2e.config.ts"],
-      "env": ["CLOUDFLARE_ACCOUNT_ID", "AWS_REGION", "NOTATION_E2E_DOCKER"],
+      "env": [
+        "CLOUDFLARE_ACCOUNT_ID",
+        "AWS_REGION",
+        "NOTATION_E2E_DOCKER",
+        "NOTATION_E2E_CLOUDFLARE_R2_INFREQUENT_ACCESS"
+      ],
       "passThroughEnv": [
         "CLOUDFLARE_API_TOKEN",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
-        "ECR_PULL_ACCESS_KEY_ID",
-        "ECR_PULL_SECRET_ACCESS_KEY",
+        "NOTATION_E2E_CLOUDFLARE_ECR_PULL_ACCESS_KEY_ID",
+        "NOTATION_E2E_CLOUDFLARE_ECR_PULL_SECRET_ACCESS_KEY",
         "DOCKER_HOST"
       ],
       "outputs": []
@@ -31,13 +36,18 @@
     "test:e2e-slow": {
       "dependsOn": ["build", "^build", "transit"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.e2e.config.ts"],
-      "env": ["CLOUDFLARE_ACCOUNT_ID", "AWS_REGION", "NOTATION_E2E_DOCKER"],
+      "env": [
+        "CLOUDFLARE_ACCOUNT_ID",
+        "AWS_REGION",
+        "NOTATION_E2E_DOCKER",
+        "NOTATION_E2E_CLOUDFLARE_R2_INFREQUENT_ACCESS"
+      ],
       "passThroughEnv": [
         "CLOUDFLARE_API_TOKEN",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
-        "ECR_PULL_ACCESS_KEY_ID",
-        "ECR_PULL_SECRET_ACCESS_KEY",
+        "NOTATION_E2E_CLOUDFLARE_ECR_PULL_ACCESS_KEY_ID",
+        "NOTATION_E2E_CLOUDFLARE_ECR_PULL_SECRET_ACCESS_KEY",
         "DOCKER_HOST"
       ],
       "outputs": []
